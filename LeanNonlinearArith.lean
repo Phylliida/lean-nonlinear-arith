@@ -7,3 +7,4 @@ import LeanNonlinearArith.Templates.Order
 import LeanNonlinearArith.Templates.Monotone
 import LeanNonlinearArith.Templates.Tangent
 import LeanNonlinearArith.Templates.Divisions
+import LeanNonlinearArith.Templates.Intervals

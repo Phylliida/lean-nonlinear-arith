@@ -79,7 +79,7 @@ time — likely only the idiv rows D4–D5 matter for tactus.
 
 | id | source | schema | Lean form | status |
 |----|--------|--------|-----------|--------|
-| MB1–2 | :113/:127 | m ∈ ∏ᵢ [loᵢ, hiᵢ] (interval product soundness); clause emitted when model value exits the range | interval arithmetic over ordered ring, `List` fold | todo |
+| MB1–2 | :113/:127 | m ∈ ∏ᵢ [loᵢ, hiᵢ] (interval product soundness); clause emitted when model value exits the range | interval arithmetic over ordered ring, `List` fold | proven: `Intervals.mem_intervalMul`, `Intervals.mem_intervalProd` |
 | MB3 | :199 | p even ∧ U < 0 → v^p ≤ U infeasible (even powers are nonnegative) | `even_pow_nonneg` contradiction | proven: `MonomialBounds.even_pow_nonneg` |
 | MB4 | :211/:221 | v^p ≤ U, r = U^(1/p) ∈ ℚ: p odd → v ≤ r; p even → −r ≤ v ∧ v ≤ r (each conjunct its own clause; strict variants when the range bound is open) | odd: `Odd.pow_le_pow_iff` monotone; even: `abs_le` ↔ `pow_le_pow` | proven: `MonomialBounds.le_of_odd_pow_le`, `abs_le_of_even_pow_le` |
 | MB5 | :245 | v^p ≥ L, r = L^(1/p) ∈ ℚ: p odd → v ≥ r; p even (L ≥ 0) → v ≥ r ∨ v ≤ −r (genuinely disjunctive clause) | odd monotone; even via `le_abs` | proven: `MonomialBounds.ge_of_odd_pow_ge`, `ge_or_le_of_even_pow_ge` |
@@ -89,7 +89,7 @@ time — likely only the idiv rows D4–D5 matter for tactus.
 
 | id | source | rule | Lean discharge |
 |----|--------|------|----------------|
-| H1 | horner.cpp | interval evaluation of Horner forms is sound | same interval-soundness theorem as MB1, applied to polynomial shapes |
+| H1 | horner.cpp | interval evaluation of Horner forms is sound | proven per step: each Horner step is one `Intervals.mem_intervalAdd` + one `Intervals.mem_intervalMul`, chained at instantiation |
 | G1 | nla_grobner.cpp | equality consequences in the ideal of hypothesis equalities | `linear_combination` / grind ring certificates |
 | BR1 | nla_core add_bounds | integer branch: x ≤ ⌊v⌋ ∨ x ≥ ⌈v⌉ | trivially valid case split; omega handles leaves |
 | PL1 | nla_core :1561 refine_pseudo_linear | all-but-one factor fixed → m = (∏ consts)·x | product substitution |
