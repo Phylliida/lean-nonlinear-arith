@@ -83,7 +83,7 @@ time — likely only the idiv rows D4–D5 matter for tactus.
 | MB3 | :199 | p even ∧ U < 0 → v^p ≤ U infeasible (even powers are nonnegative) | `even_pow_nonneg` contradiction | proven: `MonomialBounds.even_pow_nonneg` |
 | MB4 | :211/:221 | v^p ≤ U, r = U^(1/p) ∈ ℚ: p odd → v ≤ r; p even → −r ≤ v ∧ v ≤ r (each conjunct its own clause; strict variants when the range bound is open) | odd: `Odd.pow_le_pow_iff` monotone; even: `abs_le` ↔ `pow_le_pow` | proven: `MonomialBounds.le_of_odd_pow_le`, `abs_le_of_even_pow_le` |
 | MB5 | :245 | v^p ≥ L, r = L^(1/p) ∈ ℚ: p odd → v ≥ r; p even (L ≥ 0) → v ≥ r ∨ v ≤ −r (genuinely disjunctive clause) | odd monotone; even via `le_abs` | proven: `MonomialBounds.ge_of_odd_pow_ge`, `ge_or_le_of_even_pow_ge` |
-| MB6 | :383 | all factors fixed → m fixed (propagate fixed) | product of constants | todo |
+| MB6 | :383 | all factors fixed → m fixed (propagate fixed) | product of constants | n/a — instantiation-time subst + `norm_num` |
 
 ## module-level rules (not schema lists)
 
