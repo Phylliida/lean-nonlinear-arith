@@ -1,0 +1,236 @@
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+  --> src/rational/division.rs:44:9
+   |
+44 |         assert(((a.num * c.num) * (b.denom() * c.denom())
+   |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/division.rs:528:9
+    |
+528 |         assert((an * bd <= bn * ad && in_ < 0 && id > 0) ==>
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/division.rs:661:9
+    |
+661 |         assert(rhs.eqv_spec(mid)) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/division.rs:699:9
+    |
+699 |         assert(lhs.num * (rhs.den + 1) == rhs.num * (lhs.den + 1)) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/cauchy_schwarz.rs:176:9
+    |
+176 |         assert(D1sq * D2sq == na_d * nc_d) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/cauchy_schwarz.rs:233:9
+    |
+233 |         assert(t1 == v1 * v1) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/cauchy_schwarz.rs:236:9
+    |
+236 |         assert(t2 == v2 * v2) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/cauchy_schwarz.rs:239:9
+    |
+239 |         assert(t3 == v3 * v3) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/cauchy_schwarz.rs:511:9
+    |
+511 |         assert(h123 == nl_nr_flat) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/cauchy_schwarz.rs:606:9
+    |
+606 |         assert(p1 == x1 * y1) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/cauchy_schwarz.rs:611:9
+    |
+611 |         assert(p2 == x2 * y2) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/equivalence.rs:435:9
+    |
+435 |         assert((a.num * b.denom() == b.num * a.denom())
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/equivalence.rs:477:9
+    |
+477 |         assert((b.num * c.denom() == c.num * b.denom())
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/equivalence.rs:531:9
+    |
+531 |         assert((a.num * b.denom() == b.num * a.denom())
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/equivalence.rs:699:9
+    |
+699 |         assert(
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/equivalence.rs:855:9
+    |
+855 |         assert(
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/equivalence.rs:920:9
+    |
+920 |         assert((b.denom() * (lhs.num * b.denom())) * (a.denom() * c.denom())
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/ordering.rs:139:9
+    |
+139 |         assert(
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/ordering.rs:378:9
+    |
+378 |         assert((a.num * b.denom() <= b.num * a.denom() && c.num >= 0 && c.denom() > 0)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/ordering.rs:157:9
+    |
+157 |         assert(
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/ordering.rs:176:9
+    |
+176 |         assert(
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/ordering.rs:737:9
+    |
+737 |         assert((a.num * b.denom() < b.num * a.denom()
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/ordering.rs:769:9
+    |
+769 |         assert((a.num * b.denom() < b.num * a.denom() && c.num > 0 && c.denom() > 0)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/ordering.rs:801:9
+    |
+801 |         assert((a.num * b.denom() < b.num * a.denom() && c.num < 0 && c.denom() > 0)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/quadratic.rs:323:13
+    |
+323 |             assert(P_ba == disc_factor * tn) by (nonlinear_arith)
+    |             ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/quadratic.rs:338:13
+    |
+338 |             assert(Q_ba == -(4 * an * cn * bd * bd * tn)) by (nonlinear_arith)
+    |             ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/quadratic.rs:413:9
+    |
+413 |         assert(expand1 + expand2 == four_alpha_inner_part) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/quadratic.rs:452:9
+    |
+452 |         assert(beta_sq == bn * bn * ad_ * ad_ * cd_ * cd_) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/quadratic.rs:456:9
+    |
+456 |         assert(four_ag == 4 * an * cn * ad_ * bd_ * bd_ * cd_) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/quadratic.rs:554:9
+    |
+554 |         assert(t1 == alpha * tn * tn * td_) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/quadratic.rs:559:9
+    |
+559 |         assert(t2 == beta * tn * td_ * td_) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/quadratic.rs:564:9
+    |
+564 |         assert(t3 == gamma * td_ * td_ * td_) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/ring_algebra.rs:722:9
+    |
+722 |         assert((a.num * b.denom() <= b.num * a.denom())
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/rational/ring_algebra.rs:774:9
+    |
+774 |         assert((a.num * b.denom() <= b.num * a.denom() && c.num >= 0 && c.denom() > 0)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/runtime_rational.rs:366:13
+    |
+366 |             assert(
+    |             ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/runtime_rational.rs:507:13
+    |
+507 |             assert(
+    |             ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+    --> src/runtime_rational.rs:1100:13
+     |
+1100 |             assert(
+     |             ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/runtime_rational.rs:104:9
+    |
+104 |         assert(a as int % g as int == 0) by (nonlinear_arith)
+    |         ^^^^^^
+--
+error: assert_nonlinear_by: Resource limit (rlimit) exceeded; consider rerunning with --profile for more details
+   --> src/runtime_rational.rs:769:13
+    |
+769 |             assert(
+    |             ^^^^^^
+--
+error: could not compile `verus-rational` (lib) due to 39 previous errors
+EXIT: 101

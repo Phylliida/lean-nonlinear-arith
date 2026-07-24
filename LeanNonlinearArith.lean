@@ -1,1 +1,4 @@
 import LeanNonlinearArith.Basic
+import LeanNonlinearArith.Projection.S1Statement
+import LeanNonlinearArith.RootCounting.Spike
+import LeanNonlinearArith.Corpus.Rational
