@@ -46,13 +46,13 @@ Key structural facts:
   current Z3 falls back to the classic projection when levelwise fails. The classic
   Jovanovic–de Moura projection is the spec.
 
-Empirical sizing (verus-rational, nlsat amputated via `smt.arith.nl.nra=false`,
-no cache, 2026-07-24): 692 verified / 39 errors. So ~1/7 of nonlinear call sites in
-the most nonlinear-heavy foundational crate depend on the nlsat layer under Z3's
-scheduling — and the failing goals are mostly multiplicative equalities under
-hypotheses (Gröbner-shaped; Z3 throttles its Gröbner layer). The intrinsically
-semialgebraic residue is smaller still. The cheap layers carry most of the load;
-nlsat is a rarely-consulted capstone. (Numbers are a dated snapshot, not a pin.)
+Historical experiment (verus-rational, nlsat amputated via
+`smt.arith.nl.nra=false`, no cache, 2026-07-24): 692 verified / 39 errors.
+Recorded as evidence about Z3's internal division of labor (the generator
+layers close most sites; nlsat is consulted rarely, often for goals its own
+throttled Gröbner could have taken). Not an input to scope or sequencing: the
+project covers all cases by porting the equivalent of everything Z3 does and
+proving containment, and build order follows Z3's own pipeline architecture.
 
 ## 2. Architecture: three layers
 
@@ -156,7 +156,7 @@ identities inside psc chains (Res = A*p + B*q and friends) certify per-instance 
 |------|----------|--------------|
 | S1 statement doesn't stabilize (definitional choices: psc formulation, root ordering invariance, connectedness form) | high | write statement-only Lean file before anything else; discover mathlib gaps by forcing elaboration |
 | S2 harder than expected in Lean (no Sturm anywhere in mathlib) | high | Rolle-chain + IVT spike on a concrete census specimen; fall back to general Sturm port (AFP as map) |
-| L1 coverage overestimated (census failures need genuine semialgebraic reasoning, not just unthrottled Gröbner) | medium | extract the 39 census goals as Lean files; baseline against nlinarith/polyrith/grind before building anything |
+| L1 spec fidelity (a Z3 generator rule missed or mistranslated in the correspondence table) | medium | nla-20 table is source-referenced rule-by-rule; end-stage parity harness (nla-16) is the confirmation net |
 | Lean metaprogram performance on Q[x]/algebraic-number kernels | medium | benchmark kernel ops on census-specimen polynomials early |
 | mathlib version drift vs tactus toolchain | retired | tactus/lean-project pins lean4 v4.25.0 + mathlib v4.25.0, identical to ours; re-check only if either side bumps |
 
