@@ -2,3 +2,8 @@ import LeanNonlinearArith.Basic
 import LeanNonlinearArith.Projection.S1Statement
 import LeanNonlinearArith.RootCounting.Spike
 import LeanNonlinearArith.Corpus.Rational
+import LeanNonlinearArith.Templates.Basics
+import LeanNonlinearArith.Templates.Order
+import LeanNonlinearArith.Templates.Monotone
+import LeanNonlinearArith.Templates.Tangent
+import LeanNonlinearArith.Templates.Divisions
