@@ -64,13 +64,23 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   `1 ≤ x → 1 ≤ y → x + y ≤ xy + 1`). 31 tests green after
   the 2026-07-24 review round (loose-bvar crash fixed, redundant
   abstraction step removed — omega atomizes natively, assumption pinned
-  in tests; sr_tan_* rerouted through Templates.Tangent). Remaining, in
-  order: (a) **DESIGN-discharge-oracle.md items 1 + v0.5** — canonical
-  sandboxed tryDischarge, memoization + per-factor sign lattice +
-  literal fast path (~600 → ~25 discharge calls/goal); (b) multi-round
-  saturation with a round bound, (c) div/mod atoms (likely free via
-  omega), (d) RULES-row coverage audit, (e) oracle v1 per the design doc
-  (folds into nla-06).
+  in tests; sr_tan_* rerouted through Templates.Tangent). **Slice 5 done
+  (2026-07-24 pm): discharge oracle items 1 + 2a + v0.5** — canonical
+  sandboxed tryDischarge (env kept for omega's aux constants,
+  `mkExpectedTypeHint` for defeq-typed extractions), memoized discharge
+  cache (negatives dropped per noting round), per-factor sign lattice
+  (≤3 probes, rules read it with zero tactic calls), literal-vs-literal
+  fast path in meta code, mineBounds consumeMData/instantiateMVars
+  hygiene, and corner min/max folded to literals at generation time (the
+  dominant bug: noted min/max facts made the omega leaf case-split
+  exponentially — 168s → 76ms). Stress goal (8 monomials, lb+ub per
+  factor): baseline heartbeat-timeout → ~2.1s (32 tactic calls, 162
+  cache hits); pinned as a regression test, 32 tests green.
+  `nla_saturate_stats` reports phase timings + oracle counters. See
+  DESIGN-discharge-oracle.md §Outcome. Remaining, in order: (a)
+  multi-round saturation with a round bound, (b) div/mod atoms (likely
+  free via omega), (c) RULES-row coverage audit, (d) oracle v1 per the
+  design doc (folds into nla-06).
   Original design sketch (2026-07-24):
   * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
     = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;

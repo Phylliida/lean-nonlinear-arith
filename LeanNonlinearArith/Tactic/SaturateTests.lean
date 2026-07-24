@@ -101,6 +101,21 @@ example (x y : ℤ) (h1 : x ≤ 2) (h2 : y ≤ 3) : 3 * x + 2 * y - 6 ≤ x * y 
 example (x y : ℤ) (h1 : 0 ≤ x) (h2 : y ≤ 5) : x * y ≤ 5 * x := by
   nla_saturate
 
+/-! ## discharge-oracle scaling (DESIGN-discharge-oracle §3)
+
+The cost-model stress goal: 8 monomials, lb+ub mined per factor. Before the
+v0.5 oracle this blew the default heartbeat budget (~600 un-memoized omega
+calls in generation, then an exponential min/max case-split in the omega
+leaf); now it runs in ~2s. If this times out again, a scaling regression
+crept in. -/
+
+example (a b c d e f : ℤ)
+    (ha : 1 ≤ a) (ha' : a ≤ 10) (hb : 2 ≤ b) (hb' : b ≤ 8)
+    (hc : 0 ≤ c) (hc' : c ≤ 5) (hd : -3 ≤ d) (hd' : d ≤ 3)
+    (he : 1 ≤ e) (he' : e ≤ 4) (hf : -2 ≤ f) (hf' : f ≤ 2) :
+    a * b + c * d + e * f + a * c + b * e + d * f + a * e + b * c ≤ 500 := by
+  nla_saturate
+
 /-! ## pinned assumptions (if these break, the tactic's leaf design breaks) -/
 
 -- omega atomizes syntactically-identical nonlinear terms; nla_saturate's leaf

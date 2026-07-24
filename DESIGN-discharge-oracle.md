@@ -91,3 +91,37 @@ completeness (2b), scaling (3), and Z3-parity model guidance (nla-06).
 
 Sequencing recommendation: 1 and v0.5 next session (contained, ~a morning);
 v1 when nla-06 opens or when the parity harness shows v0.5 isn't enough.
+
+## Outcome (2026-07-24, implemented)
+
+Items 1, 2a, and v0.5 landed. Measured on the §3 cost-model stress goal
+(8 monomials, lb+ub per factor): baseline **timed out** at the default
+heartbeat budget; now **~2.1s total** (generate 1.8s · 32 tactic calls ·
+162 cache hits · 23 literal fast-paths · omega leaf 76ms). The ~600→~25
+call estimate was accurate (32 actual). `nla_saturate_stats` reports phase
+timings and oracle counters.
+
+Two assumptions in this document were wrong, both found by the stress goal:
+
+1. **"The extracted term is self-contained data" — false in the environment
+   dimension.** omega can mint auxiliary env constants (`_example._proof_N`)
+   that the extracted proof references; full rollback deletes them and the
+   kernel rejects the final proof. Fix: keep the post-tactic *environment*
+   (monotone, benign) while restoring the rest of the state
+   (`let env ← getEnv; restoreState s; setEnv env`). The `hasExprMVar` guard
+   stays for the metavariable dimension.
+
+2. **The proof's syntactic type is not the probed type.** `assumption`
+   closes `0 < a` with `ha : 1 ≤ a` by ℤ defeq (`Int.lt` unfolds to `+1 ≤`),
+   so meta-level weakenings (`le_of_lt` on a lattice fact) failed to unify.
+   Fix: ascribe the probed type with `mkExpectedTypeHint` on extraction.
+
+And one bottleneck this document missed entirely, dwarfing the call-count
+problem: **noted facts containing `min`/`max` (the corner bounds) make the
+omega leaf case-split per occurrence** — exponential in the number of corner
+facts (measured 168s leaf; they also poisoned every later premise-discharge
+omega, 5.4s generate). Fix: fold the corner `min`/`max` to a single literal
+at generation time (`le_trans` with a `decide`d literal comparison). Design
+rule going forward: **never note a fact whose statement contains `min`,
+`max`, `if`, or any other case-splitting connective** — resolve them in meta
+code where the values are literals.
