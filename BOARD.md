@@ -51,11 +51,15 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   sign/zero/square generation from a fixed `sr_*` rule vocabulary, premises
   discharged by `assumption <|> omega` *inside the evolving goal context*
   (nested monomials feed outer premises), revert/generalize/intros
-  abstraction, omega leaf. Remaining slices: (a) `^`/`ring_nf`
-  normalization front-end, (b) order/monotone/tangent/interval generators
-  (constants mined from hypotheses), (c) multi-round saturation with a
-  round bound, (d) n-ary monomial canonization up to permutation (emonics
-  proper — v0 relies on syntactic assoc form).
+  abstraction, omega leaf. **Slice 2 done (same day):** mined-constant
+  order/interval generation — `mineBounds` extracts literal bounds from
+  hypotheses (strict ℤ bounds tightened by one), generators instantiate
+  `sr_lb_mul`/`sr_ub_mul`/`sr_ub_neg_mul` plus the full corner-product
+  Intervals templates; 17 tests green, ~300ms/goal. Remaining slices:
+  (a) `^`/`ring_nf` normalization front-end, (b) tangent/proportion/zero-
+  chain generators, (c) multi-round saturation with a round bound,
+  (d) n-ary monomial canonization up to permutation (emonics proper — v0
+  relies on syntactic assoc form).
   Original design sketch (2026-07-24):
   * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
     = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;
