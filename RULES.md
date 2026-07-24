@@ -133,14 +133,16 @@ interval division incl. powers (`monomial_bounds.cpp:292,318`).
 | B7, B8, B9b | class D (conditional clauses); B8's sign-determined instances partially served by order/corner rows |
 | B9, PL1, T1, MB6, O3-const | **was a gap, fixed this slice** — factor mined to a point (`lo = hi = c`) → note `a*b = c*b` / `a*b = a*c` (const-substitution; conclusion omega-linear) |
 | O1 | covered when anchored — tangent at `(pivot, 0)` is exactly O1; the `0` anchor is mined from sign hypotheses *and from previously noted facts* (mineBounds runs in the evolving context); indeterminate-sign variants → class D |
-| O2, O3-symbolic, O4 | **class C gap (boarded)** — downward/cancellation rules need monomial-pair scanning (shared-factor detection); specimen: `(h : x*z ≤ y*z) (hz : 0 < z) : x ≤ y` closes under Z3, not yet here |
+| O2, O3-symbolic | **fixed (class C slice)** — pair phase scans hypotheses for comparisons (≤/</=, GE/GT swapped) between products sharing a factor, cancels via lattice sign (`sr_cancel_*`, all four `mul_comm` alignments); the specimen closes. Residuals: comparisons derivable but not hypothesis-present (oracle v1 territory, same as derived bounds), and `≠ 0`-only factor signs (class D) |
+| O4 | covered for syntactically equal shared factors via the pair phase (ring_nf canonizes); Z3's `evars` ±-equivalences beyond that → class D residual |
 | M1, M2 | covered at mined bounds via corner rows (evaluated literals = Z3's baked model consts); anchor-selection tightness → class E |
 | T2 | covered at mined anchors, 4 orientations; model-anchor tightness → class E |
 | D1–D3 | real division — unreachable from Verus AIR (int-only); standing exclusion, re-check at integration |
 | D4, D5 | literal divisors: omega leaf handles `ediv`/`emod` natively (covered once div atoms are collected — boarded with multi-round); symbolic divisors → class C/D |
 | MB1–2 | covered — corner rules, literal-folded exactly like Z3's `propagate_bound` (evaluated `q`, ±1 strict-int tightening on both sides) |
 | MB3 | covered — `sr_pow_even_nonneg` unconditional |
-| MB4, MB5 | **class C gap (boarded)** — down-propagation from power-atom bounds to base bounds (integer roots); templates already proven, generator missing |
+| MB4, MB5 | **fixed (class C slice)** for k = 2 — `sr_sq_root_ub_hi/lo` (both conjuncts noted separately, as Z3 emits them) and the genuinely-disjunctive `sr_sq_root_lb` (omega splits); floor/ceil √ in meta, decide-certified. k ≥ 3 roots boarded with the k ≥ 3 envelopes |
+| propagate_down (products) | **fixed (class C slice)** — `sr_down_{ub,lb}_{pos,neg}` + single-sided variants: exact interval division in meta (soundness rests on the decide-checked side conditions, so the β formula can only lose tightness), lattice unit-strengthening for strict-signed divisors, tightness gate mirroring `should_propagate_*`. Plus `sr_dsign_*`: divisor-sign quotients of the atom's sign, which the LIA leaf cannot derive. n-ary chains (inner atom fed by outer's bound) need the multi-round loop — postorder runs inner-first |
 | squares (MB1-2/T2 for `x^2`) | **was a gap, fixed this slice** — pow monomials previously got sign rules only; now secant upper + per-anchor tangent lower at mined bounds (the convex envelope; McCormick for `a*b`, secant/tangent for `a^2`) |
 | H1 | believed covered — per-monomial McCormick envelope + LIA leaf reproduces Horner interval brackets (Horner's factored forms don't survive `ring_nf` anyway); pinned by the Horner specimen test |
 | G1 | out of scope for L1 — nla-07 Gröbner layer |
@@ -150,9 +152,10 @@ interval division incl. powers (`monomial_bounds.cpp:292,318`).
 Gap classes:
 
 * **Class C — down-propagation & pair rules** (O2/O3/O4, MB4/MB5,
-  `propagate_down` for products): bounds on a monomial atom flow to its
-  factors; needs shared-factor pair scanning + interval division/roots.
-  Parity-required, next slice.
+  `propagate_down` for products): **done 2026-07-24** (see the fixed rows
+  above). Residuals folded elsewhere: derived-not-present comparisons →
+  oracle v1; ±-equivalences and `≠ 0` signs → class D; n-ary chains and
+  k ≥ 3 → multi-round / boarded.
 * **Class D — conditional clauses under indeterminate signs** (B6/B7/B8,
   O1-indeterminate): Z3 emits lazily model-guided disjunctive clauses; eager
   noting risks the min/max split lesson. Needs design (note clauses only for

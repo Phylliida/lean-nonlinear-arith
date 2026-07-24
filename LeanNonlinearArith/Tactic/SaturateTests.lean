@@ -113,8 +113,44 @@ example (x y : ℤ) (h1 : 3 ≤ x) (h2 : x ≤ 3) : x * y = 3 * y := by nla_satu
 -- bounds alone cannot give)
 example (x : ℤ) (h1 : 0 ≤ x) (h2 : x ≤ 2) : -2 ≤ x - x ^ 2 := by nla_saturate
 
--- square tangent at a mined anchor
-example (x : ℤ) (h : 3 ≤ x) : 6 * x - 9 ≤ x ^ 2 := by nla_saturate
+-- square tangent at a mined anchor (`_h` feeds the miner, not the proof
+-- term — the tangent is globally valid once anchored)
+example (x : ℤ) (_h : 3 ≤ x) : 6 * x - 9 ≤ x ^ 2 := by nla_saturate
+
+/-! ## class C: down-propagation and pair rules (RULES.md audit) -/
+
+-- O2 cancellation specimen: positive shared factor
+example (x y z : ℤ) (h : x * z ≤ y * z) (hz : 0 < z) : x ≤ y := by nla_saturate
+
+-- O2 with negative shared factor flips the comparison
+example (x y z : ℤ) (h : x * z ≤ y * z) (hz : z < 0) : y ≤ x := by nla_saturate
+
+-- O2 strict + shared factor on mixed sides (mul_comm alignment)
+example (x y z : ℤ) (h : z * x < y * z) (hz : 0 < z) : x < y := by nla_saturate
+
+-- O3 equality cancellation
+example (x y z : ℤ) (h : x * z = y * z) (hz : 0 < z) : x = y := by nla_saturate
+
+-- down-propagation, two-sided positive divisor: b ≤ ⌊8/2⌋
+example (z b : ℤ) (h1 : 2 ≤ z) (h2 : z ≤ 4) (h3 : z * b ≤ 8) : b ≤ 4 := by
+  nla_saturate
+
+-- down-propagation, single-sided divisor from the lattice unit bound
+example (z b : ℤ) (hz : 0 < z) (h : z * b ≤ 10) : b ≤ 10 := by nla_saturate
+
+-- down-propagation, negative divisor
+example (z b : ℤ) (h1 : -4 ≤ z) (h2 : z ≤ -2) (h3 : -8 ≤ z * b) : b ≤ 4 := by
+  nla_saturate
+
+-- down-sign: nonlinear sign division the leaf cannot do
+example (a b : ℤ) (ha : 0 < a) (h : 1 ≤ a * b) : 1 ≤ b := by nla_saturate
+
+-- MB4 square root, both conjuncts
+example (x : ℤ) (h : x ^ 2 ≤ 9) : x ≤ 3 := by nla_saturate
+example (x : ℤ) (h : x ^ 2 ≤ 9) : -3 ≤ x := by nla_saturate
+
+-- MB5 square root, disjunctive clause resolved by a sign hypothesis
+example (x : ℤ) (h : 10 ≤ x ^ 2) (hx : 0 ≤ x) : 4 ≤ x := by nla_saturate
 
 /-! ## discharge-oracle scaling (DESIGN-discharge-oracle §3)
 

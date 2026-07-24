@@ -117,6 +117,205 @@ theorem sr_sq_tangent (a : ℤ) {t q : ℤ} (ht : t = 2 * c) (hq : q = c * c) :
   subst ht; subst hq
   nlinarith [sq_nonneg (a - c)]
 
+/- Class C — cancellation (RULES O2/O3): comparison of a monomial pair
+sharing a factor of lattice-known sign transfers to the cofactors. The
+`e₁`/`e₂` premises absorb the shared factor's position within each monomial
+(`Eq.refl` or `mul_comm` at instantiation). -/
+section Cancel
+variable {p q u v w : ℤ}
+
+theorem sr_cancel_le_pos (e₁ : p = u * w) (e₂ : q = v * w)
+    (hw : 0 < w) (h : p ≤ q) : u ≤ v := by
+  subst e₁; subst e₂; exact le_of_mul_le_mul_right h hw
+
+theorem sr_cancel_lt_pos (e₁ : p = u * w) (e₂ : q = v * w)
+    (hw : 0 < w) (h : p < q) : u < v := by
+  subst e₁; subst e₂; exact lt_of_mul_lt_mul_right h hw.le
+
+theorem sr_cancel_le_neg (e₁ : p = u * w) (e₂ : q = v * w)
+    (hw : w < 0) (h : p ≤ q) : v ≤ u := by
+  subst e₁; subst e₂
+  by_contra huv
+  push_neg at huv
+  have := mul_lt_mul_of_neg_right huv hw
+  linarith
+
+theorem sr_cancel_lt_neg (e₁ : p = u * w) (e₂ : q = v * w)
+    (hw : w < 0) (h : p < q) : v < u := by
+  subst e₁; subst e₂
+  by_contra huv
+  push_neg at huv
+  have := mul_le_mul_of_nonpos_right huv hw.le
+  linarith
+
+theorem sr_cancel_eq (e₁ : p = u * w) (e₂ : q = v * w)
+    (hw : w ≠ 0) (h : p = q) : u = v := by
+  subst e₁; subst e₂; exact mul_right_cancel₀ hw h
+
+end Cancel
+
+/- Class C — down-propagation (Z3 `monomial_bounds::propagate_down` :318):
+bounds on the product atom ÷ sign-definite divisor bounds → cofactor bound.
+`β` and the side conditions are pre-evaluated literals — exact interval
+division with floor/ceil rounding happens in meta code, mirroring Z3's
+`dep_intervals`; the lemmas only certify the chosen `β`. `d` = divisor,
+`f` = cofactor, `mv` = the product atom. -/
+section DownProp
+variable {mv d f ld hd lm hm β : ℤ}
+
+theorem sr_down_ub_pos (e : mv = d * f)
+    (h₀ : 0 < ld) (h₁ : ld ≤ d) (h₂ : d ≤ hd) (h₃ : mv ≤ hm)
+    (c₁ : hm < ld * (β + 1)) (c₂ : hm < hd * (β + 1)) : f ≤ β := by
+  subst e
+  by_contra hb
+  push_neg at hb
+  have hb' : β + 1 ≤ f := by omega
+  rcases le_or_gt 0 (β + 1) with hs | hs
+  · have k₁ : d * (β + 1) ≤ d * f := mul_le_mul_of_nonneg_left hb' (by linarith)
+    have k₂ : ld * (β + 1) ≤ d * (β + 1) := mul_le_mul_of_nonneg_right h₁ hs
+    nlinarith
+  · have k₁ : d * (β + 1) ≤ d * f := mul_le_mul_of_nonneg_left hb' (by linarith)
+    have k₂ : hd * (β + 1) ≤ d * (β + 1) := mul_le_mul_of_nonpos_right h₂ hs.le
+    nlinarith
+
+theorem sr_down_lb_pos (e : mv = d * f)
+    (h₀ : 0 < ld) (h₁ : ld ≤ d) (h₂ : d ≤ hd) (h₃ : lm ≤ mv)
+    (c₁ : ld * (β - 1) < lm) (c₂ : hd * (β - 1) < lm) : β ≤ f := by
+  subst e
+  by_contra hb
+  push_neg at hb
+  have hb' : f ≤ β - 1 := by omega
+  rcases le_or_gt 0 (β - 1) with hs | hs
+  · have k₁ : d * f ≤ d * (β - 1) := mul_le_mul_of_nonneg_left hb' (by linarith)
+    have k₂ : d * (β - 1) ≤ hd * (β - 1) := mul_le_mul_of_nonneg_right h₂ hs
+    nlinarith
+  · have k₁ : d * f ≤ d * (β - 1) := mul_le_mul_of_nonneg_left hb' (by linarith)
+    have k₂ : d * (β - 1) ≤ ld * (β - 1) := mul_le_mul_of_nonpos_right h₁ hs.le
+    nlinarith
+
+/-- Single-sided variant: divisor bounded below only; sound for `0 ≤ β`. -/
+theorem sr_down_ub_pos1 (e : mv = d * f)
+    (h₀ : 0 < ld) (h₁ : ld ≤ d) (h₃ : mv ≤ hm)
+    (c₀ : 0 ≤ β) (c₁ : hm < ld * (β + 1)) : f ≤ β := by
+  subst e
+  by_contra hb
+  push_neg at hb
+  have hb' : β + 1 ≤ f := by omega
+  have k₁ : d * (β + 1) ≤ d * f := mul_le_mul_of_nonneg_left hb' (by linarith)
+  have k₂ : ld * (β + 1) ≤ d * (β + 1) := mul_le_mul_of_nonneg_right h₁ (by omega)
+  nlinarith
+
+/-- Single-sided variant: divisor bounded below only; sound for `β ≤ 0`. -/
+theorem sr_down_lb_pos1 (e : mv = d * f)
+    (h₀ : 0 < ld) (h₁ : ld ≤ d) (h₃ : lm ≤ mv)
+    (c₀ : β ≤ 0) (c₁ : ld * (β - 1) < lm) : β ≤ f := by
+  subst e
+  by_contra hb
+  push_neg at hb
+  have hb' : f ≤ β - 1 := by omega
+  have k₁ : d * f ≤ d * (β - 1) := mul_le_mul_of_nonneg_left hb' (by linarith)
+  have k₂ : d * (β - 1) ≤ ld * (β - 1) := mul_le_mul_of_nonpos_right h₁ (by omega)
+  nlinarith
+
+theorem sr_down_ub_neg (e : mv = d * f)
+    (h₀ : hd < 0) (h₁ : ld ≤ d) (h₂ : d ≤ hd) (h₃ : lm ≤ mv)
+    (c₁ : ld * (β + 1) < lm) (c₂ : hd * (β + 1) < lm) : f ≤ β := by
+  subst e
+  by_contra hb
+  push_neg at hb
+  have hb' : β + 1 ≤ f := by omega
+  have k₁ : d * f ≤ d * (β + 1) := mul_le_mul_of_nonpos_left hb' (by linarith)
+  rcases le_or_gt 0 (β + 1) with hs | hs
+  · have k₂ : d * (β + 1) ≤ hd * (β + 1) := mul_le_mul_of_nonneg_right h₂ hs
+    nlinarith
+  · have k₂ : d * (β + 1) ≤ ld * (β + 1) := mul_le_mul_of_nonpos_right h₁ hs.le
+    nlinarith
+
+theorem sr_down_lb_neg (e : mv = d * f)
+    (h₀ : hd < 0) (h₁ : ld ≤ d) (h₂ : d ≤ hd) (h₃ : mv ≤ hm)
+    (c₁ : hm < ld * (β - 1)) (c₂ : hm < hd * (β - 1)) : β ≤ f := by
+  subst e
+  by_contra hb
+  push_neg at hb
+  have hb' : f ≤ β - 1 := by omega
+  have k₁ : d * (β - 1) ≤ d * f := mul_le_mul_of_nonpos_left hb' (by linarith)
+  rcases le_or_gt 0 (β - 1) with hs | hs
+  · have k₂ : ld * (β - 1) ≤ d * (β - 1) := mul_le_mul_of_nonneg_right h₁ hs
+    nlinarith
+  · have k₂ : hd * (β - 1) ≤ d * (β - 1) := mul_le_mul_of_nonpos_right h₂ hs.le
+    nlinarith
+
+end DownProp
+
+/- Class C — down-sign (the divisor-sign quotient of the atom's sign; omega
+cannot derive these, they are nonlinear). Strict divisor, strict or weak
+atom sign. -/
+section DownSign
+variable {mv d f : ℤ}
+
+theorem sr_dsign_pp (e : mv = d * f) (hd : 0 < d) (hm : 0 < mv) : 0 < f := by
+  subst e; by_contra h; push_neg at h
+  have := mul_nonpos_of_nonneg_of_nonpos hd.le h; linarith
+
+theorem sr_dsign_pn (e : mv = d * f) (hd : 0 < d) (hm : mv < 0) : f < 0 := by
+  subst e; by_contra h; push_neg at h
+  have := mul_nonneg hd.le h; linarith
+
+theorem sr_dsign_np (e : mv = d * f) (hd : d < 0) (hm : 0 < mv) : f < 0 := by
+  subst e; by_contra h; push_neg at h
+  have := mul_nonpos_of_nonpos_of_nonneg hd.le h; linarith
+
+theorem sr_dsign_nn (e : mv = d * f) (hd : d < 0) (hm : mv < 0) : 0 < f := by
+  subst e; by_contra h; push_neg at h
+  nlinarith [mul_nonneg (show (0:ℤ) ≤ -d by linarith) (show (0:ℤ) ≤ -f by linarith)]
+
+theorem sr_dsign_pp' (e : mv = d * f) (hd : 0 < d) (hm : 0 ≤ mv) : 0 ≤ f := by
+  subst e; by_contra h; push_neg at h
+  have := mul_neg_of_pos_of_neg hd h; linarith
+
+theorem sr_dsign_pn' (e : mv = d * f) (hd : 0 < d) (hm : mv ≤ 0) : f ≤ 0 := by
+  subst e; by_contra h; push_neg at h
+  have := mul_pos hd h; linarith
+
+theorem sr_dsign_np' (e : mv = d * f) (hd : d < 0) (hm : 0 ≤ mv) : f ≤ 0 := by
+  subst e; by_contra h; push_neg at h
+  have := mul_neg_of_neg_of_pos hd h; linarith
+
+theorem sr_dsign_nn' (e : mv = d * f) (hd : d < 0) (hm : mv ≤ 0) : 0 ≤ f := by
+  subst e; by_contra h; push_neg at h
+  have := mul_pos_of_neg_of_neg hd h; linarith
+
+end DownSign
+
+/- Class C — MB4/MB5 square roots: bounds on the `a^2` atom propagate to the
+base. `r` is the pre-evaluated integer root (floor √ for upper bounds, ceil
+√ for the lower bound); MB5's conclusion is genuinely disjunctive, matching
+Z3's clause — the omega leaf case-splits on it. -/
+section SqRoot
+variable {u l r : ℤ}
+
+theorem sr_sq_root_ub_hi (h : a ^ 2 ≤ u) (hr : 0 ≤ r)
+    (c : u < (r + 1) * (r + 1)) : a ≤ r := by
+  by_contra hb; push_neg at hb
+  have hb' : r + 1 ≤ a := by omega
+  nlinarith [mul_le_mul hb' hb' (by omega) (by omega)]
+
+theorem sr_sq_root_ub_lo (h : a ^ 2 ≤ u) (hr : 0 ≤ r)
+    (c : u < (r + 1) * (r + 1)) : -r ≤ a := by
+  by_contra hb; push_neg at hb
+  have hb' : r + 1 ≤ -a := by omega
+  nlinarith [mul_le_mul hb' hb' (by omega) (by omega)]
+
+theorem sr_sq_root_lb (h : l ≤ a ^ 2)
+    (c : (r - 1) * (r - 1) < l) : a ≤ -r ∨ r ≤ a := by
+  by_contra hb
+  push_neg at hb
+  obtain ⟨h₁, h₂⟩ := hb
+  have k : a ^ 2 ≤ (r - 1) ^ 2 := sq_le_sq' (by omega) (by omega)
+  nlinarith
+
+end SqRoot
+
 end Rules
 
 /-- Premise/conclusion shapes for the binary sign rules. -/
@@ -484,6 +683,129 @@ def factsFor (cache : DCache) (m : Expr) (idx : Nat) :
                 let pf ← mkAppM ``le_trans #[pfStep, pfLo]
                 out := out.push
                   (.mkSimple s!"nla_clo_{idx}_{out.size}", ← inferType pf, pf)
+    -- class C down-propagation (Z3 monomial_bounds propagate_down :318):
+    -- atom bounds ÷ sign-definite divisor bounds → cofactor bounds. β is
+    -- computed by exact interval division in meta (floor/ceil); the side
+    -- conditions are then checked numerically and certified by decide, so
+    -- a wrong β formula can only lose tightness, never soundness.
+    let (losM, hisM) ← mineBounds m
+    let siM ← signFactsFor cache m
+    let lt' (x y : Expr) : MetaM Expr := mkAppM ``LT.lt #[x, y]
+    let mulE (x y : Expr) : MetaM Expr := mkAppM ``HMul.hMul #[x, y]
+    let bOff (v off : Int) : MetaM Expr :=
+      if off ≥ 0 then mkAppM ``HAdd.hAdd #[mkIntLit v, mkIntLit off]
+      else mkAppM ``HSub.hSub #[mkIntLit v, mkIntLit (-off)]
+    let cdiv (x y : Int) : Int := -((-x).fdiv y)
+    for (dvsr, si, cofSi, losD0, hisD0, losCof, hisCof, comm) in
+        #[(a, siA, siB, losA, hisA, losB, hisB, false),
+          (b, siB, siA, losB, hisB, losA, hisA, true)] do
+      let mkE : MetaM Expr :=
+        if comm then mkAppM ``mul_comm #[a, b] else mkEqRefl m
+      -- lattice strengthening: strict sign gives the integer unit bound
+      let losD := match si with
+        | .pos _ => if losD0.any (· ≥ 1) then losD0 else losD0.push 1
+        | _ => losD0
+      let hisD := match si with
+        | .neg _ => if hisD0.any (· ≤ -1) then hisD0 else hisD0.push (-1)
+        | _ => hisD0
+      -- positive divisor
+      for ld in losD do
+        if ld ≥ 1 then
+          let hisDpos := hisD.filter (· ≥ ld)
+          for hm in hisM do
+            if hisDpos.isEmpty then
+              let β := hm.fdiv ld
+              -- tightness gate (Z3 should_propagate_*): skip bounds already
+              -- implied by a mined bound on the cofactor
+              if β ≥ 0 && hm < ld * (β + 1) && hisCof.all (β < ·) then
+                if let some pfs := ← dischargeAll cache #[← le (mkIntLit ld) dvsr, ← le m (mkIntLit hm)] then
+                  let e ← mkE
+                  let h₀ ← mkDecideProof (← lt' (mkIntLit 0) (mkIntLit ld))
+                  let c₀ ← mkDecideProof (← le (mkIntLit 0) (mkIntLit β))
+                  let c₁ ← mkDecideProof (← lt' (mkIntLit hm) (← mulE (mkIntLit ld) (← bOff β 1)))
+                  let pf ← mkAppM ``sr_down_ub_pos1 #[e, h₀, pfs[0]!, pfs[1]!, c₀, c₁]
+                  out := out.push (.mkSimple s!"nla_dwn_{idx}_{out.size}", ← inferType pf, pf)
+            else
+              for hd in hisDpos do
+                let β := max (hm.fdiv ld) (hm.fdiv hd)
+                if hm < ld * (β + 1) && hm < hd * (β + 1) && hisCof.all (β < ·) then
+                  if let some pfs := ← dischargeAll cache
+                      #[← le (mkIntLit ld) dvsr, ← le dvsr (mkIntLit hd), ← le m (mkIntLit hm)] then
+                    let e ← mkE
+                    let h₀ ← mkDecideProof (← lt' (mkIntLit 0) (mkIntLit ld))
+                    let c₁ ← mkDecideProof (← lt' (mkIntLit hm) (← mulE (mkIntLit ld) (← bOff β 1)))
+                    let c₂ ← mkDecideProof (← lt' (mkIntLit hm) (← mulE (mkIntLit hd) (← bOff β 1)))
+                    let pf ← mkAppM ``sr_down_ub_pos #[e, h₀, pfs[0]!, pfs[1]!, pfs[2]!, c₁, c₂]
+                    out := out.push (.mkSimple s!"nla_dwn_{idx}_{out.size}", ← inferType pf, pf)
+          for lm in losM do
+            if hisDpos.isEmpty then
+              let β := cdiv lm ld
+              if β ≤ 0 && ld * (β - 1) < lm && losCof.all (· < β) then
+                if let some pfs := ← dischargeAll cache #[← le (mkIntLit ld) dvsr, ← le (mkIntLit lm) m] then
+                  let e ← mkE
+                  let h₀ ← mkDecideProof (← lt' (mkIntLit 0) (mkIntLit ld))
+                  let c₀ ← mkDecideProof (← le (mkIntLit β) (mkIntLit 0))
+                  let c₁ ← mkDecideProof (← lt' (← mulE (mkIntLit ld) (← bOff β (-1))) (mkIntLit lm))
+                  let pf ← mkAppM ``sr_down_lb_pos1 #[e, h₀, pfs[0]!, pfs[1]!, c₀, c₁]
+                  out := out.push (.mkSimple s!"nla_dwn_{idx}_{out.size}", ← inferType pf, pf)
+            else
+              for hd in hisDpos do
+                let β := min (cdiv lm ld) (cdiv lm hd)
+                if ld * (β - 1) < lm && hd * (β - 1) < lm && losCof.all (· < β) then
+                  if let some pfs := ← dischargeAll cache
+                      #[← le (mkIntLit ld) dvsr, ← le dvsr (mkIntLit hd), ← le (mkIntLit lm) m] then
+                    let e ← mkE
+                    let h₀ ← mkDecideProof (← lt' (mkIntLit 0) (mkIntLit ld))
+                    let c₁ ← mkDecideProof (← lt' (← mulE (mkIntLit ld) (← bOff β (-1))) (mkIntLit lm))
+                    let c₂ ← mkDecideProof (← lt' (← mulE (mkIntLit hd) (← bOff β (-1))) (mkIntLit lm))
+                    let pf ← mkAppM ``sr_down_lb_pos #[e, h₀, pfs[0]!, pfs[1]!, pfs[2]!, c₁, c₂]
+                    out := out.push (.mkSimple s!"nla_dwn_{idx}_{out.size}", ← inferType pf, pf)
+      -- negative divisor
+      for hd in hisD do
+        if hd ≤ -1 then
+          let losDneg := losD.filter (· ≤ hd)
+          for ld in losDneg do
+            for lm in losM do
+              let β := max (lm.fdiv ld) (lm.fdiv hd)
+              if ld * (β + 1) < lm && hd * (β + 1) < lm && hisCof.all (β < ·) then
+                if let some pfs := ← dischargeAll cache
+                    #[← le (mkIntLit ld) dvsr, ← le dvsr (mkIntLit hd), ← le (mkIntLit lm) m] then
+                  let e ← mkE
+                  let h₀ ← mkDecideProof (← lt' (mkIntLit hd) (mkIntLit 0))
+                  let c₁ ← mkDecideProof (← lt' (← mulE (mkIntLit ld) (← bOff β 1)) (mkIntLit lm))
+                  let c₂ ← mkDecideProof (← lt' (← mulE (mkIntLit hd) (← bOff β 1)) (mkIntLit lm))
+                  let pf ← mkAppM ``sr_down_ub_neg #[e, h₀, pfs[0]!, pfs[1]!, pfs[2]!, c₁, c₂]
+                  out := out.push (.mkSimple s!"nla_dwn_{idx}_{out.size}", ← inferType pf, pf)
+            for hm in hisM do
+              let β := min (cdiv hm ld) (cdiv hm hd)
+              if hm < ld * (β - 1) && hm < hd * (β - 1) && losCof.all (· < β) then
+                if let some pfs := ← dischargeAll cache
+                    #[← le (mkIntLit ld) dvsr, ← le dvsr (mkIntLit hd), ← le m (mkIntLit hm)] then
+                  let e ← mkE
+                  let h₀ ← mkDecideProof (← lt' (mkIntLit hd) (mkIntLit 0))
+                  let c₁ ← mkDecideProof (← lt' (mkIntLit hm) (← mulE (mkIntLit ld) (← bOff β (-1))))
+                  let c₂ ← mkDecideProof (← lt' (mkIntLit hm) (← mulE (mkIntLit hd) (← bOff β (-1))))
+                  let pf ← mkAppM ``sr_down_lb_neg #[e, h₀, pfs[0]!, pfs[1]!, pfs[2]!, c₁, c₂]
+                  out := out.push (.mkSimple s!"nla_dwn_{idx}_{out.size}", ← inferType pf, pf)
+      -- down-sign: divisor-sign quotient of the atom's sign (nonlinear,
+      -- invisible to the omega leaf); skipped when the cofactor's lattice
+      -- already serves the conclusion
+      let pick : Option (Name × Expr × Expr × Shape) :=
+        match si, siM with
+        | .pos pd, .pos pm    => some (``sr_dsign_pp, pd, pm, .pos)
+        | .pos pd, .neg pm    => some (``sr_dsign_pn, pd, pm, .neg)
+        | .neg pd, .pos pm    => some (``sr_dsign_np, pd, pm, .neg)
+        | .neg pd, .neg pm    => some (``sr_dsign_nn, pd, pm, .pos)
+        | .pos pd, .nonneg pm => some (``sr_dsign_pp', pd, pm, .nonneg)
+        | .pos pd, .nonpos pm => some (``sr_dsign_pn', pd, pm, .nonpos)
+        | .neg pd, .nonneg pm => some (``sr_dsign_np', pd, pm, .nonpos)
+        | .neg pd, .nonpos pm => some (``sr_dsign_nn', pd, pm, .nonneg)
+        | _, _ => none
+      if let some (lem, pd, pm, sh) := pick then
+        if (← cofSi.shapePf? sh).isNone then
+          let e ← mkE
+          let pf ← mkAppM lem #[e, pd, pm]
+          out := out.push (.mkSimple s!"nla_dsg_{idx}_{out.size}", ← inferType pf, pf)
     return out
 
 /-- Facts for a power monomial `a ^ k` (literal `k ≥ 2`): parity/zero/sign
@@ -547,10 +869,109 @@ def factsForPow (cache : DCache) (m : Expr) (idx : Nat) :
           #[mkIntLit (c * c), ← mkAppM ``HMul.hMul #[mkIntLit c, mkIntLit c]])
         let pf ← mkAppM ``sr_sq_tangent #[a, ht, hq]
         out := out.push (.mkSimple s!"nla_sqt_{idx}_{out.size}", ← inferType pf, pf)
+      -- MB4/MB5 down-propagation: integer roots of atom bounds → base
+      -- bounds. MB4's two conjuncts are noted separately (Z3 emits each as
+      -- its own clause); MB5's conclusion is genuinely disjunctive and the
+      -- omega leaf case-splits on it. Roots are floor/ceil √ in meta,
+      -- certified by decide.
+      let (losP, hisP) ← mineBounds m
+      for u in hisP do
+        if u ≥ 0 then
+          let r : Int := Int.ofNat (Nat.sqrt u.toNat)
+          -- tightness gate: skip roots already implied by mined base bounds
+          if u < (r + 1) * (r + 1) && (his.all (r < ·) || los.all (-r < ·)) then
+            if let some ph := ← tryDischarge cache (← le m (mkIntLit u)) then
+              let hr ← mkDecideProof (← le (mkIntLit 0) (mkIntLit r))
+              let rp1 ← mkAppM ``HAdd.hAdd #[mkIntLit r, mkIntLit 1]
+              let cnd ← mkDecideProof
+                (← mkAppM ``LT.lt #[mkIntLit u, ← mkAppM ``HMul.hMul #[rp1, rp1]])
+              let pfHi ← mkAppM ``sr_sq_root_ub_hi #[ph, hr, cnd]
+              out := out.push (.mkSimple s!"nla_rt_{idx}_{out.size}", ← inferType pfHi, pfHi)
+              let pfLo ← mkAppM ``sr_sq_root_ub_lo #[ph, hr, cnd]
+              out := out.push (.mkSimple s!"nla_rt_{idx}_{out.size}", ← inferType pfLo, pfLo)
+      for l in losP do
+        if l ≥ 1 then
+          let r : Int := Int.ofNat (Nat.sqrt (l - 1).toNat + 1)
+          if (r - 1) * (r - 1) < l then
+            if let some ph := ← tryDischarge cache (← le (mkIntLit l) m) then
+              let rm1 ← mkAppM ``HSub.hSub #[mkIntLit r, mkIntLit 1]
+              let cnd ← mkDecideProof
+                (← mkAppM ``LT.lt #[← mkAppM ``HMul.hMul #[rm1, rm1], mkIntLit l])
+              let pf ← mkAppM ``sr_sq_root_lb #[ph, cnd]
+              out := out.push (.mkSimple s!"nla_rt_{idx}_{out.size}", ← inferType pf, pf)
     return out
 
+/-- Class C pair phase (RULES O2/O3): scan hypotheses for comparisons
+between two product monomials sharing a factor; cancel the shared factor
+when its lattice sign is known. Runs after the per-monomial loop so noted
+facts participate in the scan and in the lattice probes. Rel encoding:
+0 = ≤, 1 = <, 2 = = (GE/GT pre-swapped). -/
+def generatePairs (cache : DCache) : TacticM Unit := do
+  let g ← getMainGoal
+  let facts ← g.withContext do
+    let mut out : Array (Name × Expr × Expr) := #[]
+    for decl in ← getLCtx do
+      if decl.isImplementationDetail then continue
+      let ty ← instantiateMVars decl.type
+      let (x?, y?, rel) :=
+        match ty.getAppFnArgs with
+        | (``LE.le, #[t, _, lh, rh]) =>
+          if t.isConstOf ``Int then (some lh, some rh, 0) else (none, none, 0)
+        | (``LT.lt, #[t, _, lh, rh]) =>
+          if t.isConstOf ``Int then (some lh, some rh, 1) else (none, none, 0)
+        | (``GE.ge, #[t, _, lh, rh]) =>
+          if t.isConstOf ``Int then (some rh, some lh, 0) else (none, none, 0)
+        | (``GT.gt, #[t, _, lh, rh]) =>
+          if t.isConstOf ``Int then (some rh, some lh, 1) else (none, none, 0)
+        | (``Eq, #[t, lh, rh]) =>
+          if t.isConstOf ``Int then (some lh, some rh, 2) else (none, none, 0)
+        | _ => (none, none, 0)
+      let some x := x? | continue
+      let some y := y? | continue
+      let x := x.consumeMData
+      let y := y.consumeMData
+      if x == y then continue
+      let some (x₁, x₂) := isIntMul? x | continue
+      let some (y₁, y₂) := isIntMul? y | continue
+      -- normalize the hyp proof to ≤/</= orientation (GE/GT are defeq
+      -- through the instance; the hint makes it syntactic — slice-5 lesson)
+      let relTy ← match rel with
+        | 0 => mkAppM ``LE.le #[x, y]
+        | 1 => mkAppM ``LT.lt #[x, y]
+        | _ => mkAppM ``Eq #[x, y]
+      let hPf ← mkExpectedTypeHint (.fvar decl.fvarId) relTy
+      -- all shared-factor alignments; comm flags select Eq.refl vs mul_comm
+      -- for the position-absorbing premises
+      let mut combos : Array (Expr × Expr × Expr × Bool × Bool) := #[]
+      if x₂ == y₂ then combos := combos.push (x₁, y₁, x₂, false, false)
+      if x₂ == y₁ then combos := combos.push (x₁, y₂, x₂, false, true)
+      if x₁ == y₂ then combos := combos.push (x₂, y₁, x₁, true, false)
+      if x₁ == y₁ then combos := combos.push (x₂, y₂, x₁, true, true)
+      for (u, v, w, comm₁, comm₂) in combos do
+        let siW ← signFactsFor cache w
+        let e₁ ← if comm₁ then mkAppM ``mul_comm #[w, u] else mkEqRefl x
+        let e₂ ← if comm₂ then mkAppM ``mul_comm #[w, v] else mkEqRefl y
+        let note? : Option Expr ← match rel, siW with
+          | 0, .pos pw => some <$> mkAppM ``sr_cancel_le_pos #[e₁, e₂, pw, hPf]
+          | 0, .neg pw => some <$> mkAppM ``sr_cancel_le_neg #[e₁, e₂, pw, hPf]
+          | 1, .pos pw => some <$> mkAppM ``sr_cancel_lt_pos #[e₁, e₂, pw, hPf]
+          | 1, .neg pw => some <$> mkAppM ``sr_cancel_lt_neg #[e₁, e₂, pw, hPf]
+          | 2, .pos pw => do
+            let ne ← mkAppM ``ne_of_gt #[pw]
+            some <$> mkAppM ``sr_cancel_eq #[e₁, e₂, ne, hPf]
+          | 2, .neg pw => do
+            let ne ← mkAppM ``ne_of_lt #[pw]
+            some <$> mkAppM ``sr_cancel_eq #[e₁, e₂, ne, hPf]
+          | _, _ => pure none
+        if let some pf := note? then
+          out := out.push (.mkSimple s!"nla_cnc_{out.size}", ← inferType pf, pf)
+    pure out
+  for (nm, tyF, pf) in facts do
+    noteFact nm tyF pf
+
 /-- Generation round: instantiate the rule vocabulary for every monomial,
-inner monomials first so their facts feed outer premises. -/
+inner monomials first so their facts feed outer premises; then the pair
+phase over the completed context. -/
 def generate (ms : Array Expr) : TacticM Unit := do
   let cache : DCache ← IO.mkRef {}
   let mut idx := 0
@@ -564,6 +985,7 @@ def generate (ms : Array Expr) : TacticM Unit := do
       -- negative entries; positive proofs stay valid (fvars persist)
       cache.modify (·.filter fun _ v => v.isSome)
     idx := idx + 1
+  generatePairs cache
 
 def saturateCore (stats : Bool := false) : TacticM Unit := do
   let t0 ← IO.monoMsNow
