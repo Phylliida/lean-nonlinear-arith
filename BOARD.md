@@ -77,10 +77,23 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   factor): baseline heartbeat-timeout → ~2.1s (32 tactic calls, 162
   cache hits); pinned as a regression test, 32 tests green.
   `nla_saturate_stats` reports phase timings + oracle counters. See
-  DESIGN-discharge-oracle.md §Outcome. Remaining, in order: (a)
-  multi-round saturation with a round bound, (b) div/mod atoms (likely
-  free via omega), (c) RULES-row coverage audit, (d) oracle v1 per the
-  design doc (folds into nla-06).
+  DESIGN-discharge-oracle.md §Outcome. **Slice 6 done (2026-07-24 pm):
+  generator parity audit** (PARITY DIRECTIVE: identical behavior to Z3,
+  no divergence anywhere — every RULES row checked generator-side, table
+  in RULES.md §generator coverage audit). Three gaps found and fixed
+  same-slice: B5 zero-product split (disjunctive noting, omega
+  `Or.elim`-splits), const-substitution B9/PL1/T1/MB6 (factor mined to a
+  point, other factor unbounded), square envelopes (secant + tangent for
+  `x^2` — pow monomials previously had NO mined-bound rules; closes the
+  Horner/H1 specimen). 36 tests green. Remaining parity work, in order:
+  (a) **class C — down-propagation + pair rules** (O2/O3/O4 cancellation,
+  MB4/MB5 integer roots, `propagate_down` interval division; specimen:
+  `x*z ≤ y*z ∧ 0 < z → x ≤ y`), (b) **class D — conditional clauses for
+  lattice-unknown signs** (B6/B7/B8/O1; needs design, ties into
+  multi-round + nla-06; specimen: `x ≠ 0 ∧ y ≠ 0 → x*y ≠ 0`), (c)
+  multi-round saturation with a round bound, (d) div/mod atom collection
+  (literal divisors then free via omega leaf), (e) k ≥ 3 power
+  envelopes, (f) oracle v1 per the design doc (folds into nla-06).
   Original design sketch (2026-07-24):
   * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
     = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;

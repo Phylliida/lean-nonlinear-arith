@@ -101,6 +101,21 @@ example (x y : ℤ) (h1 : x ≤ 2) (h2 : y ≤ 3) : 3 * x + 2 * y - 6 ≤ x * y 
 example (x y : ℤ) (h1 : 0 ≤ x) (h2 : y ≤ 5) : x * y ≤ 5 * x := by
   nla_saturate
 
+/-! ## generator parity rows (RULES.md audit, 2026-07-24) -/
+
+-- B5 zero-product split: disjunctive conclusion, omega case-splits
+example (x y : ℤ) (h : x * y = 0) (hx : x ≠ 0) : y = 0 := by nla_saturate
+
+-- const-substitution (B9/PL1/T1/MB6): other factor completely unbounded
+example (x y : ℤ) (h1 : 3 ≤ x) (h2 : x ≤ 3) : x * y = 3 * y := by nla_saturate
+
+-- square secant (Horner/H1 specimen: needs x² ≤ 2x on [0,2], which interval
+-- bounds alone cannot give)
+example (x : ℤ) (h1 : 0 ≤ x) (h2 : x ≤ 2) : -2 ≤ x - x ^ 2 := by nla_saturate
+
+-- square tangent at a mined anchor
+example (x : ℤ) (h : 3 ≤ x) : 6 * x - 9 ≤ x ^ 2 := by nla_saturate
+
 /-! ## discharge-oracle scaling (DESIGN-discharge-oracle §3)
 
 The cost-model stress goal: 8 monomials, lb+ub mined per factor. Before the

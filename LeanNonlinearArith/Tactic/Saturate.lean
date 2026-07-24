@@ -94,6 +94,29 @@ theorem sr_pow_odd_nonpos (hk : Odd k) (ha : a ≤ 0) : a ^ k ≤ 0 := hk.pow_no
 theorem sr_pow_zero (hk : k ≠ 0) (ha : a = 0) : a ^ k = 0 := by
   rw [ha]; exact zero_pow hk
 
+/- Const-substitution (RULES rows B9/PL1/T1/MB6): a factor mined to a point
+collapses the product to an omega-linear term. -/
+theorem sr_subst_left (b : ℤ) (ha : a = la) : a * b = la * b := by rw [ha]
+theorem sr_subst_right (a : ℤ) (hb : b = lb) : a * b = a * lb := by rw [hb]
+
+/- Zero-product split (RULES row B5): genuinely disjunctive conclusion; the
+omega leaf case-splits on noted `∨` hypotheses. -/
+theorem sr_zero_split (h : a * b = 0) : a = 0 ∨ b = 0 := mul_eq_zero.mp h
+
+/- Square envelopes (RULES squares row): secant chord above the parabola on
+a mined interval, tangent line below at a mined anchor. `s`/`p`/`t`/`q` are
+pre-evaluated literals (parity: Z3 bakes evaluated constants; unevaluated
+ground terms in noted facts are a leaf hazard — see the corner-fold rule). -/
+theorem sr_sq_secant {lo hi s p : ℤ} (h₁ : lo ≤ a) (h₂ : a ≤ hi)
+    (hs : s = lo + hi) (hp : p = lo * hi) : a ^ 2 ≤ s * a - p := by
+  subst hs; subst hp
+  nlinarith [mul_nonneg (sub_nonneg.mpr h₁) (sub_nonneg.mpr h₂)]
+
+theorem sr_sq_tangent (a : ℤ) {t q : ℤ} (ht : t = 2 * c) (hq : q = c * c) :
+    t * a - q ≤ a ^ 2 := by
+  subst ht; subst hq
+  nlinarith [sq_nonneg (a - c)]
+
 end Rules
 
 /-- Premise/conclusion shapes for the binary sign rules. -/
@@ -360,6 +383,12 @@ def factsFor (cache : DCache) (m : Expr) (idx : Nat) :
     else if let .zero pb := siB then
       let pf ← mkAppM ``sr_zero_right #[a, pb]
       out := out.push (.mkSimple s!"nla_zero_{idx}", ← inferType pf, pf)
+    else
+      -- B5 zero-product split: m provably zero with neither factor's zero
+      -- known — note the disjunction; the omega leaf splits on `∨` hyps
+      if let some pm := ← tryDischarge cache (← mkAppM ``Eq #[m, mkIntLit 0]) then
+        let pf ← mkAppM ``sr_zero_split #[pm]
+        out := out.push (.mkSimple s!"nla_zsplit_{idx}", ← inferType pf, pf)
     -- binary sign rules: first rule both of whose premise shapes the
     -- lattice can serve wins
     for (lem, sa, sb) in signRules do
@@ -373,6 +402,21 @@ def factsFor (cache : DCache) (m : Expr) (idx : Nat) :
     let (losB, hisB) ← mineBounds b
     let zero := mkIntLit 0
     let le (x y : Expr) : MetaM Expr := mkAppM ``LE.le #[x, y]
+    -- const-substitution (RULES B9/PL1/T1/MB6): factor mined to a point →
+    -- product collapses to an omega-linear term (unlike the tangent pairs,
+    -- this needs nothing about the other factor)
+    for c in losA do
+      if hisA.contains c then
+        if let some pfs := ← dischargeAll cache #[← le (mkIntLit c) a, ← le a (mkIntLit c)] then
+          let pfEq ← mkAppM ``le_antisymm #[pfs[1]!, pfs[0]!]
+          let pf ← mkAppM ``sr_subst_left #[b, pfEq]
+          out := out.push (.mkSimple s!"nla_cst_{idx}_{out.size}", ← inferType pf, pf)
+    for c in losB do
+      if hisB.contains c then
+        if let some pfs := ← dischargeAll cache #[← le (mkIntLit c) b, ← le b (mkIntLit c)] then
+          let pfEq ← mkAppM ``le_antisymm #[pfs[1]!, pfs[0]!]
+          let pf ← mkAppM ``sr_subst_right #[a, pfEq]
+          out := out.push (.mkSimple s!"nla_cst_{idx}_{out.size}", ← inferType pf, pf)
     for lav in losA do
       for lbv in losB do
         let la := mkIntLit lav
@@ -479,6 +523,30 @@ def factsForPow (cache : DCache) (m : Expr) (idx : Nat) :
         let pf ← mkAppM ``sr_pow_odd_nonpos #[hk, pa]
         out := out.push (.mkSimple s!"nla_pow_{idx}_s", ← inferType pf, pf)
     | .unknown => pure ()
+    -- square envelopes (RULES squares row): secant above on each mined
+    -- interval, tangent below at each mined anchor; `s`/`p`/`t`/`q`
+    -- pre-evaluated to literals (corner-fold rule: no unevaluated ground
+    -- terms in noted facts)
+    if k == 2 then
+      let (los, his) ← mineBounds a
+      let le (x y : Expr) : MetaM Expr := mkAppM ``LE.le #[x, y]
+      for lo in los do
+        for hi in his do
+          let prems := #[← le (mkIntLit lo) a, ← le a (mkIntLit hi)]
+          if let some pfs := ← dischargeAll cache prems then
+            let hs ← mkDecideProof (← mkAppM ``Eq
+              #[mkIntLit (lo + hi), ← mkAppM ``HAdd.hAdd #[mkIntLit lo, mkIntLit hi]])
+            let hp ← mkDecideProof (← mkAppM ``Eq
+              #[mkIntLit (lo * hi), ← mkAppM ``HMul.hMul #[mkIntLit lo, mkIntLit hi]])
+            let pf ← mkAppM ``sr_sq_secant #[pfs[0]!, pfs[1]!, hs, hp]
+            out := out.push (.mkSimple s!"nla_sqs_{idx}_{out.size}", ← inferType pf, pf)
+      for c in (los ++ his).toList.eraseDups do
+        let ht ← mkDecideProof (← mkAppM ``Eq
+          #[mkIntLit (2 * c), ← mkAppM ``HMul.hMul #[mkIntLit 2, mkIntLit c]])
+        let hq ← mkDecideProof (← mkAppM ``Eq
+          #[mkIntLit (c * c), ← mkAppM ``HMul.hMul #[mkIntLit c, mkIntLit c]])
+        let pf ← mkAppM ``sr_sq_tangent #[a, ht, hq]
+        out := out.push (.mkSimple s!"nla_sqt_{idx}_{out.size}", ← inferType pf, pf)
     return out
 
 /-- Generation round: instantiate the rule vocabulary for every monomial,

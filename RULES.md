@@ -110,8 +110,60 @@ the bounded variable is integral, `v > q` strengthens to `v ≥ q+1` (integral
 recorded here so the row inventory is complete, but it is not a nonlinear
 schema.
 
+## generator coverage audit (nla-05, 2026-07-24)
+
+The table above is the "schema is proven" half of containment. This section
+is the other half: does the **generator** (`Tactic/Saturate.lean`)
+instantiate each reachable row at least as strongly as Z3's emission site?
+Standard (parity directive): no divergence anywhere; Z3's schedulers only
+select from the closure, so generator ⊇ emission site per row suffices.
+
+Verified mechanism facts used below: omega case-splits on disjunctive
+hypotheses (`Frontend.lean:410,640` via `Or.elim`); omega unfolds literal
+powers to products (`Frontend.lean:218-224`), so `x^2` and a noted fact
+about `x*x` share an atom; Z3 down-propagates m-bounds to factor bounds by
+interval division incl. powers (`monomial_bounds.cpp:292,318`).
+
+| row(s) | generator status |
+|--------|------------------|
+| B1 | covered by construction — `ring_nf at *` canonizes sign-flipped monomials to one atom (± a linear sign omega absorbs); stronger than Z3's emitted equation |
+| B2, B3, B4, B10 | covered — sign lattice + zero rules, n-ary via postorder composition (nested-monomial noting) |
+| B5 | **was a gap, fixed this slice** — `m = 0` provable with neither factor's zero known → note `a = 0 ∨ b = 0` (`mul_eq_zero.mp`); omega splits |
+| B6 | covered in the premise-discharged direction (zero rule notes the consequent); indeterminate direction → class D |
+| B7, B8, B9b | class D (conditional clauses); B8's sign-determined instances partially served by order/corner rows |
+| B9, PL1, T1, MB6, O3-const | **was a gap, fixed this slice** — factor mined to a point (`lo = hi = c`) → note `a*b = c*b` / `a*b = a*c` (const-substitution; conclusion omega-linear) |
+| O1 | covered when anchored — tangent at `(pivot, 0)` is exactly O1; the `0` anchor is mined from sign hypotheses *and from previously noted facts* (mineBounds runs in the evolving context); indeterminate-sign variants → class D |
+| O2, O3-symbolic, O4 | **class C gap (boarded)** — downward/cancellation rules need monomial-pair scanning (shared-factor detection); specimen: `(h : x*z ≤ y*z) (hz : 0 < z) : x ≤ y` closes under Z3, not yet here |
+| M1, M2 | covered at mined bounds via corner rows (evaluated literals = Z3's baked model consts); anchor-selection tightness → class E |
+| T2 | covered at mined anchors, 4 orientations; model-anchor tightness → class E |
+| D1–D3 | real division — unreachable from Verus AIR (int-only); standing exclusion, re-check at integration |
+| D4, D5 | literal divisors: omega leaf handles `ediv`/`emod` natively (covered once div atoms are collected — boarded with multi-round); symbolic divisors → class C/D |
+| MB1–2 | covered — corner rules, literal-folded exactly like Z3's `propagate_bound` (evaluated `q`, ±1 strict-int tightening on both sides) |
+| MB3 | covered — `sr_pow_even_nonneg` unconditional |
+| MB4, MB5 | **class C gap (boarded)** — down-propagation from power-atom bounds to base bounds (integer roots); templates already proven, generator missing |
+| squares (MB1-2/T2 for `x^2`) | **was a gap, fixed this slice** — pow monomials previously got sign rules only; now secant upper + per-anchor tangent lower at mined bounds (the convex envelope; McCormick for `a*b`, secant/tangent for `a^2`) |
+| H1 | believed covered — per-monomial McCormick envelope + LIA leaf reproduces Horner interval brackets (Horner's factored forms don't survive `ring_nf` anyway); pinned by the Horner specimen test |
+| G1 | out of scope for L1 — nla-07 Gröbner layer |
+| BR1 | covered — omega leaf is LIA-complete over the atomized vocabulary |
+| powers k ≥ 3 | **boarded** — envelope rules currently k = 2 only; Z3's interval pow is k-generic |
+
+Gap classes:
+
+* **Class C — down-propagation & pair rules** (O2/O3/O4, MB4/MB5,
+  `propagate_down` for products): bounds on a monomial atom flow to its
+  factors; needs shared-factor pair scanning + interval division/roots.
+  Parity-required, next slice.
+* **Class D — conditional clauses under indeterminate signs** (B6/B7/B8,
+  O1-indeterminate): Z3 emits lazily model-guided disjunctive clauses; eager
+  noting risks the min/max split lesson. Needs design (note clauses only for
+  lattice-unknown factors; ties into multi-round and nla-06). Specimen:
+  `(hx : x ≠ 0) (hy : y ≠ 0) : x*y ≠ 0`.
+* **Class E — mined vs model anchors** (M/T tightness): DESIGN-discharge-
+  oracle §2b / oracle v1 / nla-06.
+
 ## next actions
 
-All emission sites are now read and rowed; no `read pending` rows remain.
-Next: nla-04 — prove the `Templates/` lemma family per row, flipping each
-status to `proven`; every row cites its Lean lemma name when done.
+All emission sites are read, rowed, template-proven (nla-04), and now
+generator-audited (above). Open parity work, in order: class C
+(down-propagation + pair rules), class D design, multi-round loop, div/mod
+collection, k ≥ 3 envelopes, oracle v1.
