@@ -1,4 +1,5 @@
 import Mathlib
+import LeanNonlinearArith.Templates.Intervals
 
 /-!
 # nla-05 slice 1: the saturation tactic, smallest end-to-end version
@@ -38,6 +39,19 @@ theorem sr_neg_pos (ha : a < 0) (hb : 0 < b) : a * b < 0 := by nlinarith
 theorem sr_zero_left (b : ℤ) (ha : a = 0) : a * b = 0 := by rw [ha, zero_mul]
 theorem sr_zero_right (a : ℤ) (hb : b = 0) : a * b = 0 := by rw [hb, mul_zero]
 theorem sr_sq (a : ℤ) : 0 ≤ a * a := mul_self_nonneg a
+
+/- Order rules with mined constants (RULES rows O1/M1-style bound
+propagation). Premise order: a-bound, b-bound, then side conditions. -/
+variable {la lb ha' hb' : ℤ}
+
+theorem sr_lb_mul (h₁ : la ≤ a) (h₂ : lb ≤ b) (h₃ : 0 ≤ la) (h₄ : 0 ≤ lb) :
+    la * lb ≤ a * b := by nlinarith
+
+theorem sr_ub_mul (h₁ : a ≤ ha') (h₂ : b ≤ hb') (h₃ : 0 ≤ a) (h₄ : 0 ≤ b) :
+    a * b ≤ ha' * hb' := by nlinarith
+
+theorem sr_ub_neg_mul (h₁ : a ≤ ha') (h₂ : b ≤ hb') (h₃ : ha' ≤ 0) (h₄ : hb' ≤ 0) :
+    ha' * hb' ≤ a * b := by nlinarith
 
 end Rules
 
@@ -94,6 +108,38 @@ partial def collectMonomials (e : Expr) : StateRefT (Array Expr) MetaM Unit := d
   | .letE _ t v b _ => collectMonomials t; collectMonomials v; collectMonomials b
   | _ => pure ()
 
+/-- Mine literal bounds for `factor` from the propositional hypotheses:
+returns (lower-bound literals, upper-bound literals). Strict bounds count —
+premise discharge (omega) absorbs the strictness. Call inside the goal ctx. -/
+def mineBounds (factor : Expr) : MetaM (Array Int × Array Int) := do
+  let mut los : Array Int := #[]
+  let mut his : Array Int := #[]
+  for decl in ← getLCtx do
+    if decl.isImplementationDetail then continue
+    let ty := decl.type
+    -- (l ⋈ r, strict); GE/GT normalized by swapping
+    let (lhs?, rhs?, strict) :=
+      match ty.getAppFnArgs with
+      | (``LE.le, #[_, _, l, r]) => (some l, some r, false)
+      | (``LT.lt, #[_, _, l, r]) => (some l, some r, true)
+      | (``GE.ge, #[_, _, l, r]) => (some r, some l, false)
+      | (``GT.gt, #[_, _, l, r]) => (some r, some l, true)
+      | _ => (none, none, false)
+    match lhs?, rhs? with
+    | some l, some r =>
+      -- lit ⋈ factor: lower bound (strict ℤ bound tightens by one)
+      if let some v := l.int? then
+        if r == factor then
+          let v := if strict then v + 1 else v
+          if !los.contains v then los := los.push v
+      -- factor ⋈ lit: upper bound
+      if let some v := r.int? then
+        if l == factor then
+          let v := if strict then v - 1 else v
+          if !his.contains v then his := his.push v
+    | _, _ => pure ()
+  return (los, his)
+
 /-- Try to prove `ty` in the current goal's context by `assumption <|> omega`.
 Returns the proof term on success. -/
 def tryDischarge (ty : Expr) : TacticM (Option Expr) := do
@@ -110,6 +156,15 @@ def tryDischarge (ty : Expr) : TacticM (Option Expr) := do
   catch _ =>
     restoreState s
     return none
+
+/-- Discharge every premise or fail. -/
+def dischargeAll (tys : Array Expr) : TacticM (Option (Array Expr)) := do
+  let mut pfs : Array Expr := #[]
+  for ty in tys do
+    match ← tryDischarge ty with
+    | some pf => pfs := pfs.push pf
+    | none => return none
+  return some pfs
 
 /-- Note a fact into the goal context. -/
 def noteFact (name : Name) (concl proof : Expr) : TacticM Unit := do
@@ -147,6 +202,48 @@ def factsFor (m : Expr) (idx : Nat) : TacticM (Array (Name × Expr × Expr)) := 
       let pf ← mkAppM lem #[pa, pb]
       out := out.push (.mkSimple s!"nla_sign_{idx}", ← inferType pf, pf)
       break
+    -- order rules with mined constants (O1/M1-style bound propagation)
+    let (losA, hisA) ← mineBounds a
+    let (losB, hisB) ← mineBounds b
+    let zero := mkIntLit 0
+    let le (x y : Expr) : MetaM Expr := mkAppM ``LE.le #[x, y]
+    for lav in losA do
+      for lbv in losB do
+        let la := mkIntLit lav
+        let lb := mkIntLit lbv
+        let prems := #[← le la a, ← le lb b, ← le zero la, ← le zero lb]
+        if let some pfs := ← dischargeAll prems then
+          let pf ← mkAppM ``sr_lb_mul pfs
+          out := out.push (.mkSimple s!"nla_lb_{idx}_{out.size}", ← inferType pf, pf)
+    for hiav in hisA do
+      for hibv in hisB do
+        let hia := mkIntLit hiav
+        let hib := mkIntLit hibv
+        let premsN := #[← le a hia, ← le b hib, ← le zero a, ← le zero b]
+        if let some pfs := ← dischargeAll premsN then
+          let pf ← mkAppM ``sr_ub_mul pfs
+          out := out.push (.mkSimple s!"nla_ub_{idx}_{out.size}", ← inferType pf, pf)
+        let premsP := #[← le a hia, ← le b hib, ← le hia zero, ← le hib zero]
+        if let some pfs := ← dischargeAll premsP then
+          let pf ← mkAppM ``sr_ub_neg_mul pfs
+          out := out.push (.mkSimple s!"nla_ubn_{idx}_{out.size}", ← inferType pf, pf)
+    -- full intervals: corner-product bounds (Templates.Intervals)
+    for lav in losA do
+      for hiav in hisA do
+        for lbv in losB do
+          for hibv in hisB do
+            let la := mkIntLit lav
+            let hia := mkIntLit hiav
+            let lb := mkIntLit lbv
+            let hib := mkIntLit hibv
+            let prems := #[← le la a, ← le a hia, ← le lb b, ← le b hib]
+            if let some pfs := ← dischargeAll prems then
+              let pfHi ← mkAppM ``Templates.Intervals.mul_le_max_corners pfs
+              out := out.push
+                (.mkSimple s!"nla_chi_{idx}_{out.size}", ← inferType pfHi, pfHi)
+              let pfLo ← mkAppM ``Templates.Intervals.min_corners_le_mul pfs
+              out := out.push
+                (.mkSimple s!"nla_clo_{idx}_{out.size}", ← inferType pfLo, pfLo)
     return out
 
 /-- Generation round: instantiate the rule vocabulary for every monomial,
