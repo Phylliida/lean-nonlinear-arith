@@ -61,13 +61,16 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   most of the emonics port) + power monomials with decide-discharged
   parity side conditions + tangent-plane generation anchored at mined
   constants (four orientations, linear conclusions; closes the classic
-  `1 ≤ x → 1 ≤ y → x + y ≤ xy + 1`). 29 tests green. Remaining:
-  (a) multi-round saturation with a round bound (needed once generators
-  emit facts about new products), (b) proportion/abs rules if Verus
-  corpora need them, (c) div/mod atoms (omega already speaks ediv/emod —
-  likely free), (d) the RULES-row coverage audit: walk the table and
-  check each proven row has a generator or an explicit
-  instantiation-time story.
+  `1 ≤ x → 1 ≤ y → x + y ≤ xy + 1`). 31 tests green after
+  the 2026-07-24 review round (loose-bvar crash fixed, redundant
+  abstraction step removed — omega atomizes natively, assumption pinned
+  in tests; sr_tan_* rerouted through Templates.Tangent). Remaining, in
+  order: (a) **DESIGN-discharge-oracle.md items 1 + v0.5** — canonical
+  sandboxed tryDischarge, memoization + per-factor sign lattice +
+  literal fast path (~600 → ~25 discharge calls/goal); (b) multi-round
+  saturation with a round bound, (c) div/mod atoms (likely free via
+  omega), (d) RULES-row coverage audit, (e) oracle v1 per the design doc
+  (folds into nla-06).
   Original design sketch (2026-07-24):
   * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
     = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;
