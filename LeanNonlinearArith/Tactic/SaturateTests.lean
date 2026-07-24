@@ -57,3 +57,28 @@ example (x y : ℤ) (h1 : -1 ≤ x) (h2 : x ≤ 1) (h3 : -1 ≤ y) (h4 : y ≤ 1
 
 -- strict hypotheses feed non-strict mining via omega
 example (x y : ℤ) (hx : 1 < x) (hy : 2 < y) : 6 ≤ x * y := by nla_saturate
+
+/-! ## slice 3: ring_nf front-end + power monomials -/
+
+-- even power, no hypotheses
+example (x : ℤ) : 0 ≤ x ^ 2 := by nla_saturate
+
+-- odd powers with sign hypotheses
+example (x : ℤ) (h : 0 < x) : 0 < x ^ 3 := by nla_saturate
+example (x : ℤ) (h : x < 0) : x ^ 3 < 0 := by nla_saturate
+
+-- zero base
+example (x : ℤ) (h : x = 0) : x ^ 2 = 0 := by nla_saturate
+
+-- ring_nf turns x*x into x^2
+example (x : ℤ) : 0 ≤ x * x + 1 := by nla_saturate
+
+-- commutative canonization: y*x and x*y meet after ring_nf
+example (x y : ℤ) (h : y * x ≤ 5) :
+    x * y ≤ 5 := by nla_saturate
+
+-- sum of squares
+example (x y : ℤ) : 0 ≤ x ^ 2 + y ^ 2 := by nla_saturate
+
+-- mixed: power and product together
+example (x y : ℤ) (hx : 0 < x) (hy : 0 < y) : 0 < x ^ 2 * y := by nla_saturate

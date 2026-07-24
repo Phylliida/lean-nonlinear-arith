@@ -1,5 +1,6 @@
 import Mathlib
 import LeanNonlinearArith.Templates.Intervals
+import LeanNonlinearArith.Templates.Divisions
 
 /-!
 # nla-05 slice 1: the saturation tactic, smallest end-to-end version
@@ -53,6 +54,20 @@ theorem sr_ub_mul (h₁ : a ≤ ha') (h₂ : b ≤ hb') (h₃ : 0 ≤ a) (h₄ :
 theorem sr_ub_neg_mul (h₁ : a ≤ ha') (h₂ : b ≤ hb') (h₃ : ha' ≤ 0) (h₄ : hb' ≤ 0) :
     ha' * hb' ≤ a * b := by nlinarith
 
+/- Power rules (ring_nf normalizes repeated factors to `^`). Parity/nonzero
+side conditions on the literal exponent are discharged by `decide` at
+generation time. -/
+variable {k : ℕ}
+
+theorem sr_pow_even_nonneg (hk : Even k) (a : ℤ) : 0 ≤ a ^ k :=
+  LeanNonlinearArith.Templates.MonomialBounds.even_pow_nonneg a k hk
+theorem sr_pow_pos (k : ℕ) (ha : 0 < a) : 0 < a ^ k := pow_pos ha k
+theorem sr_pow_nonneg (k : ℕ) (ha : 0 ≤ a) : 0 ≤ a ^ k := pow_nonneg ha k
+theorem sr_pow_odd_neg (hk : Odd k) (ha : a < 0) : a ^ k < 0 := hk.pow_neg ha
+theorem sr_pow_odd_nonpos (hk : Odd k) (ha : a ≤ 0) : a ^ k ≤ 0 := hk.pow_nonpos ha
+theorem sr_pow_zero (hk : k ≠ 0) (ha : a = 0) : a ^ k = 0 := by
+  rw [ha]; exact zero_pow hk
+
 end Rules
 
 /-- Premise/conclusion shapes for the binary sign rules. -/
@@ -86,6 +101,18 @@ def isIntMul? (e : Expr) : Option (Expr × Expr) :=
     if ty.isConstOf ``Int then some (a, b) else none
   | _ => none
 
+/-- Destructure `base ^ k` with `base : ℤ` non-literal and `k` a `ℕ` literal
+`≥ 2` (lower exponents are linear). -/
+def isIntPow? (e : Expr) : Option (Expr × Nat) :=
+  match e.getAppFnArgs with
+  | (``HPow.hPow, #[tyB, tyE, _, _, a, n]) =>
+    if tyB.isConstOf ``Int && tyE.isConstOf ``Nat then
+      match n.nat? with
+      | some k => if k ≥ 2 && !(e.int?).isSome then some (a, k) else none
+      | none => none
+    else none
+  | _ => none
+
 /-- Integer literal test (numerals and their negations). -/
 def isIntLit (e : Expr) : Bool :=
   (e.int?).isSome
@@ -102,6 +129,10 @@ partial def collectMonomials (e : Expr) : StateRefT (Array Expr) MetaM Unit := d
         let acc ← get
         if !acc.contains e then
           modify (·.push e)
+    if let some _ := isIntPow? e then
+      let acc ← get
+      if !acc.contains e then
+        modify (·.push e)
   | .mdata _ b => collectMonomials b
   | .forallE _ d b _ => collectMonomials d; collectMonomials b
   | .lam _ d b _ => collectMonomials d; collectMonomials b
@@ -246,12 +277,50 @@ def factsFor (m : Expr) (idx : Nat) : TacticM (Array (Name × Expr × Expr)) := 
                 (.mkSimple s!"nla_clo_{idx}_{out.size}", ← inferType pfLo, pfLo)
     return out
 
+/-- Facts for a power monomial `a ^ k` (literal `k ≥ 2`): parity/zero/sign
+rules, side conditions on the exponent by `decide`. -/
+def factsForPow (m : Expr) (idx : Nat) : TacticM (Array (Name × Expr × Expr)) := do
+  let g ← getMainGoal
+  g.withContext do
+    let some (a, k) := isIntPow? m | return #[]
+    let mut out : Array (Name × Expr × Expr) := #[]
+    let kE := mkNatLit k
+    -- even exponent: unconditionally nonnegative
+    if k % 2 == 0 then
+      let hk ← mkDecideProof (← mkAppM ``Even #[kE])
+      let pf ← mkAppM ``sr_pow_even_nonneg #[hk, a]
+      out := out.push (.mkSimple s!"nla_pow_{idx}", ← inferType pf, pf)
+    -- zero base
+    if let some pa := ← tryDischarge (← mkAppM ``Eq #[a, mkIntLit 0]) then
+      let hk ← mkDecideProof (← mkAppM ``Ne #[kE, mkNatLit 0])
+      let pf ← mkAppM ``sr_pow_zero #[hk, pa]
+      out := out.push (.mkSimple s!"nla_pow_{idx}_z", ← inferType pf, pf)
+    -- strict/nonneg/odd-negative sign rules, first hit wins
+    else if let some pa := ← tryDischarge (← shapeProp .pos a) then
+      let pf ← mkAppM ``sr_pow_pos #[kE, pa]
+      out := out.push (.mkSimple s!"nla_pow_{idx}_s", ← inferType pf, pf)
+    else if let some pa := ← tryDischarge (← shapeProp .nonneg a) then
+      let pf ← mkAppM ``sr_pow_nonneg #[kE, pa]
+      out := out.push (.mkSimple s!"nla_pow_{idx}_s", ← inferType pf, pf)
+    else if k % 2 == 1 then
+      if let some pa := ← tryDischarge (← shapeProp .neg a) then
+        let hk ← mkDecideProof (← mkAppM ``Odd #[kE])
+        let pf ← mkAppM ``sr_pow_odd_neg #[hk, pa]
+        out := out.push (.mkSimple s!"nla_pow_{idx}_s", ← inferType pf, pf)
+      else if let some pa := ← tryDischarge (← shapeProp .nonpos a) then
+        let hk ← mkDecideProof (← mkAppM ``Odd #[kE])
+        let pf ← mkAppM ``sr_pow_odd_nonpos #[hk, pa]
+        out := out.push (.mkSimple s!"nla_pow_{idx}_s", ← inferType pf, pf)
+    return out
+
 /-- Generation round: instantiate the rule vocabulary for every monomial,
 inner monomials first so their facts feed outer premises. -/
 def generate (ms : Array Expr) : TacticM Unit := do
   let mut idx := 0
   for m in ms do
-    for (nm, ty, pf) in ← factsFor m idx do
+    let facts ← if (isIntMul? m).isSome then factsFor m idx
+                else factsForPow m idx
+    for (nm, ty, pf) in facts do
       noteFact nm ty pf
     idx := idx + 1
 
@@ -268,6 +337,9 @@ def abstractMonomials (ms : Array Expr) : TacticM Unit := do
   replaceMainGoal [g]
 
 elab "nla_saturate" : tactic => do
+  -- 0. normalize: sum-of-monomials form; doubles as commutative canonization
+  evalTactic (← `(tactic| try ring_nf at *))
+  if (← getGoals).isEmpty then return
   -- 1. collect from hypotheses and goal
   let g ← getMainGoal
   let ms ← g.withContext do
