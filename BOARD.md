@@ -55,11 +55,18 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   order/interval generation — `mineBounds` extracts literal bounds from
   hypotheses (strict ℤ bounds tightened by one), generators instantiate
   `sr_lb_mul`/`sr_ub_mul`/`sr_ub_neg_mul` plus the full corner-product
-  Intervals templates; 17 tests green, ~300ms/goal. Remaining slices:
-  (a) `^`/`ring_nf` normalization front-end, (b) tangent/proportion/zero-
-  chain generators, (c) multi-round saturation with a round bound,
-  (d) n-ary monomial canonization up to permutation (emonics proper — v0
-  relies on syntactic assoc form).
+  Intervals templates; 17 tests green, ~300ms/goal. **Slices 3+4 done (same day):** ring_nf
+  normalization front-end (doubles as commutative canonization — obsoletes
+  most of the emonics port) + power monomials with decide-discharged
+  parity side conditions + tangent-plane generation anchored at mined
+  constants (four orientations, linear conclusions; closes the classic
+  `1 ≤ x → 1 ≤ y → x + y ≤ xy + 1`). 29 tests green. Remaining:
+  (a) multi-round saturation with a round bound (needed once generators
+  emit facts about new products), (b) proportion/abs rules if Verus
+  corpora need them, (c) div/mod atoms (omega already speaks ediv/emod —
+  likely free), (d) the RULES-row coverage audit: walk the table and
+  check each proven row has a generator or an explicit
+  instantiation-time story.
   Original design sketch (2026-07-24):
   * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
     = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;
