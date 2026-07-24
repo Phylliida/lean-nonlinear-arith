@@ -1,6 +1,7 @@
 import Mathlib
 import LeanNonlinearArith.Templates.Intervals
 import LeanNonlinearArith.Templates.Divisions
+import LeanNonlinearArith.Templates.Tangent
 
 /-!
 # nla-05 slice 1: the saturation tactic, smallest end-to-end version
@@ -60,13 +61,21 @@ model points, we anchor at hypothesis constants). Conclusions are linear in
 variable {c d : ℤ}
 
 theorem sr_tan_ll (h₁ : c ≤ a) (h₂ : d ≤ b) : c * b + d * a - c * d ≤ a * b := by
-  nlinarith
+  have := LeanNonlinearArith.Templates.Tangent.plane_ge a b c d
+    (mul_nonneg (by linarith) (by linarith))
+  linarith
 theorem sr_tan_hh (h₁ : a ≤ c) (h₂ : b ≤ d) : c * b + d * a - c * d ≤ a * b := by
-  nlinarith
+  have := LeanNonlinearArith.Templates.Tangent.plane_ge a b c d
+    (sr_nonpos_nonpos (by linarith) (by linarith))
+  linarith
 theorem sr_tan_lh (h₁ : c ≤ a) (h₂ : b ≤ d) : a * b ≤ c * b + d * a - c * d := by
-  nlinarith
+  have := LeanNonlinearArith.Templates.Tangent.plane_le a b c d
+    (sr_nonneg_nonpos (by linarith) (by linarith))
+  linarith
 theorem sr_tan_hl (h₁ : a ≤ c) (h₂ : d ≤ b) : a * b ≤ c * b + d * a - c * d := by
-  nlinarith
+  have := LeanNonlinearArith.Templates.Tangent.plane_le a b c d
+    (sr_nonpos_nonneg (by linarith) (by linarith))
+  linarith
 
 /- Power rules (ring_nf normalizes repeated factors to `^`). Parity/nonzero
 side conditions on the literal exponent are discharged by `decide` at
@@ -138,15 +147,18 @@ partial def collectMonomials (e : Expr) : StateRefT (Array Expr) MetaM Unit := d
   | .app .. => do
     for arg in e.getAppArgs do
       collectMonomials arg
-    if let some (a, b) := isIntMul? e then
-      if !isIntLit a && !isIntLit b then
-        let acc ← get
-        if !acc.contains e then
-          modify (·.push e)
-    if let some _ := isIntPow? e then
-      let acc ← get
-      if !acc.contains e then
-        modify (·.push e)
+    -- terms under binders have loose bvars: not generalizable, skip
+    if !e.hasLooseBVars then
+      if let some (a, b) := isIntMul? e then
+        if !isIntLit a && !isIntLit b then
+          let acc ← get
+          if !acc.contains e then
+            modify (·.push e)
+      if let some (a, _) := isIntPow? e then
+        if !isIntLit a then
+          let acc ← get
+          if !acc.contains e then
+            modify (·.push e)
   | .mdata _ b => collectMonomials b
   | .forallE _ d b _ => collectMonomials d; collectMonomials b
   | .lam _ d b _ => collectMonomials d; collectMonomials b
@@ -211,10 +223,11 @@ def dischargeAll (tys : Array Expr) : TacticM (Option (Array Expr)) := do
     | none => return none
   return some pfs
 
-/-- Note a fact into the goal context. -/
+/-- Note a fact into the goal context. The name is freshened so generated
+hypotheses can never capture or collide with user hypotheses. -/
 def noteFact (name : Name) (concl proof : Expr) : TacticM Unit := do
   let g ← getMainGoal
-  let (_, g') ← g.note name proof (some concl)
+  let (_, g') ← g.note (← mkFreshUserName name) proof (some concl)
   replaceMainGoal [g']
 
 /-- Facts derived for one monomial, computed inside the current goal's
@@ -355,18 +368,6 @@ def generate (ms : Array Expr) : TacticM Unit := do
       noteFact nm ty pf
     idx := idx + 1
 
-/-- Abstract every monomial to a fresh variable: revert propositional
-hypotheses, generalize (inner-first), reintroduce. -/
-def abstractMonomials (ms : Array Expr) : TacticM Unit := do
-  let g ← getMainGoal
-  let props ← g.getNondepPropHyps
-  let (_, g) ← g.revert props
-  let args : Array GeneralizeArg := ms.map fun m =>
-    { expr := m, xName? := none, hName? := none }
-  let (_, g) ← g.generalize args
-  let (_, g) ← g.intros
-  replaceMainGoal [g]
-
 elab "nla_saturate" : tactic => do
   -- 0. normalize: sum-of-monomials form; doubles as commutative canonization
   evalTactic (← `(tactic| try ring_nf at *))
@@ -382,8 +383,8 @@ elab "nla_saturate" : tactic => do
     pure ms
   -- 2. generate
   generate ms
-  -- 3. abstract + 4. leaf
-  abstractMonomials ms
+  -- 3. leaf: omega atomizes the (ring_nf-canonized) monomials natively —
+  -- no explicit generalization needed; SaturateTests pins this assumption
   evalTactic (← `(tactic| omega))
 
 end LeanNonlinearArith.Tactic

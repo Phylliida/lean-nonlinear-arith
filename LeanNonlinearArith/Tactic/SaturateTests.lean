@@ -100,3 +100,14 @@ example (x y : ℤ) (h1 : x ≤ 2) (h2 : y ≤ 3) : 3 * x + 2 * y - 6 ≤ x * y 
 -- mixed anchor: product bounded by a scaled factor
 example (x y : ℤ) (h1 : 0 ≤ x) (h2 : y ≤ 5) : x * y ≤ 5 * x := by
   nla_saturate
+
+/-! ## pinned assumptions (if these break, the tactic's leaf design breaks) -/
+
+-- omega atomizes syntactically-identical nonlinear terms; nla_saturate's leaf
+-- relies on this instead of explicit generalization
+example (x y : ℤ) (h : x * y ≤ 5) : x * y ≤ 6 := by omega
+
+-- robustness: quantified hypotheses with products under binders are ignored,
+-- not fatal
+example (x y : ℤ) (hq : ∀ i : ℤ, x * i ≤ x * i) (hx : 0 ≤ x) (hy : 0 ≤ y) :
+    0 ≤ x * y := by nla_saturate
