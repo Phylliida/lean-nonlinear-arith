@@ -44,8 +44,19 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   sorry-free; RULES.md fully resolved (27 rows proven or n/a-with-reason,
   zero todo). L1's mathematical content is finished — nla-05..07 are
   metaprogramming over a fixed lemma kit.
-- **nla-05** `todo` Monomial bookkeeping (emonics port) + generator loop.
-  Design sketch (2026-07-24):
+- **nla-05** `active` Monomial bookkeeping (emonics port) + generator loop.
+  **Slice 1 done (2026-07-24):** `Tactic/Saturate.lean` — `nla_saturate` v0
+  proves the architecture end-to-end on 11 regression tests
+  (`Tactic/SaturateTests.lean`): postorder monomial collection over ℤ,
+  sign/zero/square generation from a fixed `sr_*` rule vocabulary, premises
+  discharged by `assumption <|> omega` *inside the evolving goal context*
+  (nested monomials feed outer premises), revert/generalize/intros
+  abstraction, omega leaf. Remaining slices: (a) `^`/`ring_nf`
+  normalization front-end, (b) order/monotone/tangent/interval generators
+  (constants mined from hypotheses), (c) multi-round saturation with a
+  round bound, (d) n-ary monomial canonization up to permutation (emonics
+  proper — v0 relies on syntactic assoc form).
+  Original design sketch (2026-07-24):
   * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
     = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;
   * *state*: hypothesis set as linear atoms over the monomial-extended

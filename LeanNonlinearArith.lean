@@ -8,3 +8,5 @@ import LeanNonlinearArith.Templates.Monotone
 import LeanNonlinearArith.Templates.Tangent
 import LeanNonlinearArith.Templates.Divisions
 import LeanNonlinearArith.Templates.Intervals
+import LeanNonlinearArith.Tactic.Saturate
+import LeanNonlinearArith.Tactic.SaturateTests
