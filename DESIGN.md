@@ -135,9 +135,12 @@ identities inside psc chains (Res = A*p + B*q and friends) certify per-instance 
   pay-once economics. Optional later: `try this`-style output freezing a found
   trace into source as an explicit certificate term.
 - **mathlib dependency** is accepted (ℝ, IVT, Rolle are non-negotiable for the kit;
-  mathlib is pure Lean). Scope imports narrowly for build-time hygiene. The
-  alternative (algebraic real closure of ℚ, no analysis) is noted and rejected as a
-  far larger formalization.
+  mathlib is pure Lean). This is not even a new dependency at the integration
+  target: tactus's own Lean environment (`tactus/lean-project/`) already requires
+  mathlib, pinned to lean4 v4.25.0 + mathlib v4.25.0 — exactly this library's pin.
+  Integration is a `require` line, not an environment change. Scope imports
+  narrowly for build-time hygiene. The alternative (algebraic real closure of ℚ,
+  no analysis) is noted and rejected as a far larger formalization.
 - **Int goals relax to ℝ** at the front end (validity over ℝ implies validity over
   ℤ for the polynomial fragment); integer-specific reasoning stays with omega and
   branch splits.
@@ -155,7 +158,7 @@ identities inside psc chains (Res = A*p + B*q and friends) certify per-instance 
 | S2 harder than expected in Lean (no Sturm anywhere in mathlib) | high | Rolle-chain + IVT spike on a concrete census specimen; fall back to general Sturm port (AFP as map) |
 | L1 coverage overestimated (census failures need genuine semialgebraic reasoning, not just unthrottled Gröbner) | medium | extract the 39 census goals as Lean files; baseline against nlinarith/polyrith/grind before building anything |
 | Lean metaprogram performance on Q[x]/algebraic-number kernels | medium | benchmark kernel ops on census-specimen polynomials early |
-| mathlib version drift vs tactus toolchain | low | pin to v4.25.0 (matches local caches); revisit at integration |
+| mathlib version drift vs tactus toolchain | retired | tactus/lean-project pins lean4 v4.25.0 + mathlib v4.25.0, identical to ours; re-check only if either side bumps |
 
 ## 6. References
 
