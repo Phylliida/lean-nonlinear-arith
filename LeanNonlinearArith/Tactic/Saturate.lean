@@ -54,6 +54,20 @@ theorem sr_ub_mul (h₁ : a ≤ ha') (h₂ : b ≤ hb') (h₃ : 0 ≤ a) (h₄ :
 theorem sr_ub_neg_mul (h₁ : a ≤ ha') (h₂ : b ≤ hb') (h₃ : ha' ≤ 0) (h₄ : hb' ≤ 0) :
     ha' * hb' ≤ a * b := by nlinarith
 
+/- Tangent-plane rules at mined constant points (RULES row T2; Z3 anchors at
+model points, we anchor at hypothesis constants). Conclusions are linear in
+`a`, `b` once `a*b` is abstracted. `c`/`d` are the anchor constants. -/
+variable {c d : ℤ}
+
+theorem sr_tan_ll (h₁ : c ≤ a) (h₂ : d ≤ b) : c * b + d * a - c * d ≤ a * b := by
+  nlinarith
+theorem sr_tan_hh (h₁ : a ≤ c) (h₂ : b ≤ d) : c * b + d * a - c * d ≤ a * b := by
+  nlinarith
+theorem sr_tan_lh (h₁ : c ≤ a) (h₂ : b ≤ d) : a * b ≤ c * b + d * a - c * d := by
+  nlinarith
+theorem sr_tan_hl (h₁ : a ≤ c) (h₂ : d ≤ b) : a * b ≤ c * b + d * a - c * d := by
+  nlinarith
+
 /- Power rules (ring_nf normalizes repeated factors to `^`). Parity/nonzero
 side conditions on the literal exponent are discharged by `decide` at
 generation time. -/
@@ -258,6 +272,23 @@ def factsFor (m : Expr) (idx : Nat) : TacticM (Array (Name × Expr × Expr)) := 
         if let some pfs := ← dischargeAll premsP then
           let pf ← mkAppM ``sr_ub_neg_mul pfs
           out := out.push (.mkSimple s!"nla_ubn_{idx}_{out.size}", ← inferType pf, pf)
+    -- tangent planes anchored at mined constants (linear conclusions)
+    let tangentCombos : List (Name × Array Int × Array Int × Bool × Bool) :=
+      [(``sr_tan_ll, losA, losB, true,  true),
+       (``sr_tan_hh, hisA, hisB, false, false),
+       (``sr_tan_lh, losA, hisB, true,  false),
+       (``sr_tan_hl, hisA, losB, false, true)]
+    for (lem, csA, csB, aLower, bLower) in tangentCombos do
+      for cv in csA do
+        for dv in csB do
+          let cE := mkIntLit cv
+          let dE := mkIntLit dv
+          let pA ← if aLower then le cE a else le a cE
+          let pB ← if bLower then le dE b else le b dE
+          if let some pfs := ← dischargeAll #[pA, pB] then
+            let pf ← mkAppM lem pfs
+            out := out.push
+              (.mkSimple s!"nla_tan_{idx}_{out.size}", ← inferType pf, pf)
     -- full intervals: corner-product bounds (Templates.Intervals)
     for lav in losA do
       for hiav in hisA do

@@ -82,3 +82,21 @@ example (x y : ℤ) : 0 ≤ x ^ 2 + y ^ 2 := by nla_saturate
 
 -- mixed: power and product together
 example (x y : ℤ) (hx : 0 < x) (hy : 0 < y) : 0 < x ^ 2 * y := by nla_saturate
+
+/-! ## slice 4: tangent planes at mined constants -/
+
+-- the classic: tangent at (1,1)
+example (x y : ℤ) (hx : 1 ≤ x) (hy : 1 ≤ y) : x + y ≤ x * y + 1 := by
+  nla_saturate
+
+-- explicit tangent bound, lower anchors
+example (x y : ℤ) (hx : 2 ≤ x) (hy : 3 ≤ y) : 3 * x + 2 * y - 6 ≤ x * y := by
+  nla_saturate
+
+-- upper anchors give the same plane from the other side
+example (x y : ℤ) (h1 : x ≤ 2) (h2 : y ≤ 3) : 3 * x + 2 * y - 6 ≤ x * y := by
+  nla_saturate
+
+-- mixed anchor: product bounded by a scaled factor
+example (x y : ℤ) (h1 : 0 ≤ x) (h2 : y ≤ 5) : x * y ≤ 5 * x := by
+  nla_saturate
