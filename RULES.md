@@ -34,7 +34,8 @@ value at emission time — universally quantified in the schema).
 | B6 | non-zero derived :294 | (contrapositive of B3 against m bounded away from 0) | same lemma, clause orientation | todo |
 | B7 | neutral :316 | \|x·a\| = \|x\| ∧ x ≠ 0 → a = 1 ∨ a = −1 (all-int for >2 factors; pairs over ℝ) | `Int.eq_one_or_self_of...`-style cancellation | todo |
 | B8 | proportion generate_pl :388/:416 | over ℤ: (∀ j≠k, xⱼ ≠ 0) → \|m\| ≥ \|xₖ\| | `Int.le_of_dvd`-style abs bound | todo |
-| B9 | :514 / :559 / :644 (`__FUNCTION__` sites) | model-based neutral/zero variants — **needs detailed read**; expected to reduce to B2/B5/B7 validity | — | read pending |
+| B9 | neutral-from-factors :509(:514) / :635(:644) | at most one factor f_i off ±1: (∧_{j≠i} f_j = c_j, c_j ∈ {1,−1}) → m = (∏c_j)·f_i (or m = ∏c_j when all are ±1) | ±1-substitution collapse of `List.prod` | todo |
+| B9b | neutral monic-to-factor :529(:559) | \|m\| = \|u\| ∧ m ≠ 0 → \|v\| = 1 — same validity as B7, model-based clause orientation. **Apparent dead code in current Z3**: guard `j == null_lpvar` at :544 can never hold (`j = var(fc)`), so `u` is never assigned and the function always returns false. Covered by B7 regardless; no port obligation. | B7 | noted |
 | B10 | zero chain :670 | x = 0 → x·… = 0 (n-ary B3) | B3 generalized | todo |
 
 ## order — nla_order_lemmas.cpp
@@ -79,7 +80,9 @@ time — likely only the idiv rows D4–D5 matter for tactus.
 | id | source | schema | Lean form | status |
 |----|--------|--------|-----------|--------|
 | MB1–2 | :113/:127 | m ∈ ∏ᵢ [loᵢ, hiᵢ] (interval product soundness); clause emitted when model value exits the range | interval arithmetic over ordered ring, `List` fold | todo |
-| MB3–5 | :199/:211/:221/:245 | power/root cases: xᵏ range bounds (odd/even k monotonicity) | `pow_le_pow` family | todo |
+| MB3 | :199 | p even ∧ U < 0 → v^p ≤ U infeasible (even powers are nonnegative) | `even_pow_nonneg` contradiction | todo |
+| MB4 | :211/:221 | v^p ≤ U, r = U^(1/p) ∈ ℚ: p odd → v ≤ r; p even → −r ≤ v ∧ v ≤ r (each conjunct its own clause; strict variants when the range bound is open) | odd: `Odd.pow_le_pow_iff` monotone; even: `abs_le` ↔ `pow_le_pow` | todo |
+| MB5 | :245 | v^p ≥ L, r = L^(1/p) ∈ ℚ: p odd → v ≥ r; p even (L ≥ 0) → v ≥ r ∨ v ≤ −r (genuinely disjunctive clause) | odd monotone; even via `le_abs` | todo |
 | MB6 | :383 | all factors fixed → m fixed (propagate fixed) | product of constants | todo |
 
 ## module-level rules (not schema lists)
@@ -101,9 +104,14 @@ time — likely only the idiv rows D4–D5 matter for tactus.
 * nlsat is not in this table by design — it is the L2/L3 trace-checking story
   (DESIGN.md §2), not a lemma schema.
 
+Additional note on integer bound tightening (`propagate_bound` :159): when
+the bounded variable is integral, `v > q` strengthens to `v ≥ q+1` (integral
+`q`) or `v ≥ ⌈q⌉`. This is LIA-valid rounding, subsumed by the omega leaf —
+recorded here so the row inventory is complete, but it is not a nonlinear
+schema.
+
 ## next actions
 
-1. Read basics :464–:680 in detail and resolve row B9 (three sites).
-2. Read monomial_bounds :140–:260 (root/power cases) to pin MB3–5 exactly.
-3. Then nla-04: prove the `Templates/` lemma family per row, flipping each
-   status to `proven`; every row cites its lemma name when done.
+All emission sites are now read and rowed; no `read pending` rows remain.
+Next: nla-04 — prove the `Templates/` lemma family per row, flipping each
+status to `proven`; every row cites its Lean lemma name when done.
