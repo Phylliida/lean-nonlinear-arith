@@ -1,0 +1,109 @@
+# RULES.md — Z3 nla generator ↔ Lean lemma correspondence (nla-20)
+
+This table is the "Z3 ⊆ calculus" half of the containment argument: every
+lemma Z3's nonlinear module can emit is an instance of a schema below, and
+every schema gets a proven Lean lemma family in `Templates/`. Provenance is
+`z3/src/math/lp/` at the workspace checkout (2026-02); the shipped verus-dev
+Z3 is 4.12.5 — version deltas are flagged where they exist.
+
+Two standing facts that make the table sufficient:
+
+1. **Emission conditions are not soundness conditions.** Z3 consults the
+   current rational model, throttles (`nla_throttle`), and randomizes order to
+   decide *which* instances to emit; the clauses themselves are valid
+   unconditionally. The Lean port proves each schema universally and may
+   instantiate more freely — superset by construction.
+2. **Canonization is hypothesis-side.** `lemma &= m` / `lemma &= f` attach the
+   monomial-defining equations and ±sign var-equivalences (emons/evars) as
+   antecedents. The Lean saturation loop supplies the same equations from its
+   own monomial bookkeeping (nla-05); no schema depends on canonization magic.
+
+Notation: `m = x₁·…·xₙ` is a monomial variable with its defining product;
+`v(x)` denotes a rational constant baked into an emitted instance (the model
+value at emission time — universally quantified in the schema).
+
+## basics — nla_basics_lemmas.cpp
+
+| id | source | schema (valid formula) | Lean form | status |
+|----|--------|------------------------|-----------|--------|
+| B1 | generate_sign_lemma :151 | m, n same var multiset up to sign flips with aggregate sign s ⟹ m = s·n | `List.prod` under permutation + negations | todo |
+| B2 | sign model-based :81, strict-case-zero :183 | strict signs of all factors determine strict sign of product (zero factor ⟹ zero product as degenerate case) | sign-of-product = product-of-signs over `LinearOrderedCommRing` | todo |
+| B3 | trivial zero :177 | x = 0 → x·y = 0 | `zero_mul`/`mul_eq_zero_of_left` | todo |
+| B4 | fixed zero :196 | factor fixed to 0 (bound hyps) → m = 0 | B3 + bound hypotheses | todo |
+| B5 | mon zero :222, :459 | m = 0 → ⋁ᵢ xᵢ = 0 | `prod_eq_zero_iff` (no zero divisors) | todo |
+| B6 | non-zero derived :294 | (contrapositive of B3 against m bounded away from 0) | same lemma, clause orientation | todo |
+| B7 | neutral :316 | \|x·a\| = \|x\| ∧ x ≠ 0 → a = 1 ∨ a = −1 (all-int for >2 factors; pairs over ℝ) | `Int.eq_one_or_self_of...`-style cancellation | todo |
+| B8 | proportion generate_pl :388/:416 | over ℤ: (∀ j≠k, xⱼ ≠ 0) → \|m\| ≥ \|xₖ\| | `Int.le_of_dvd`-style abs bound | todo |
+| B9 | :514 / :559 / :644 (`__FUNCTION__` sites) | model-based neutral/zero variants — **needs detailed read**; expected to reduce to B2/B5/B7 validity | — | read pending |
+| B10 | zero chain :670 | x = 0 → x·… = 0 (n-ary B3) | B3 generalized | todo |
+
+## order — nla_order_lemmas.cpp
+
+| id | source | schema | Lean form | status |
+|----|--------|--------|-----------|--------|
+| O1 | binomial sign :82 | for constant a: y ≤ 0 ∨ x > a ∨ xy ≤ a·y (4 sign variants) | mul-mono with constant pivot | todo |
+| O2 | generate_ol :290 | c > 0 ∧ ac ≥ bc → a ≥ b; c < 0 dual; 4 variants | `le_div_iff`-free cancellation: `mul_le_mul_right` family | todo |
+| O3 | generate_ol_eq :265 | a·sign_a = b·sign_b ∧ c ≠ 0 → ac = bc | `mul_left_cancel₀` orientation | todo |
+| O4 | generate_mon_ol :180 | \|c\| = \|d\| ∧ sign-adjusted a < b → ac ≤ bd (order transfer between monomials sharing an equivalent factor) | composed from O2 + B1 | todo |
+
+## monotone — nla_monotone_lemmas.cpp
+
+| id | source | schema | Lean form | status |
+|----|--------|--------|-----------|--------|
+| M1 | :62 | (∧ᵢ \|xᵢ\| ≤ \|vᵢ\|, model consts vᵢ) → \|m\| ≤ \|∏vᵢ\| | abs-product monotonicity, `List` fold | todo |
+| M2 | :84 | dual: (∧ᵢ \|xᵢ\| ≥ \|vᵢ\|) → \|m\| ≥ \|∏vᵢ\| | dual | todo |
+
+## tangent — nla_tangent_lemmas.cpp
+
+| id | source | schema | Lean form | status |
+|----|--------|--------|-----------|--------|
+| T1 | line1 :101, line2 :113 | x = a → xy = a·y (const a); symmetric in y | `mul_comm`+subst, trivial | todo |
+| T2 | plane :76 | (x−a)(y−b) > 0 → xy > ay + bx − ab; (x−a)(y−b) < 0 dual; 4 orientations via point placement | expand + `mul_pos`/`mul_neg_of...` | todo |
+
+## divisions — nla_divisions.cpp (real `/` and integer `div`)
+
+| id | source | schema | Lean form | status |
+|----|--------|--------|-----------|--------|
+| D1 | :58 | y₁ ≥ y₂ > 0 ∧ 0 ≤ x₁ ≤ x₂ → x₁/y₁ ≤ x₂/y₂ | `div_le_div_of...` | todo |
+| D2 | :72 | y₂ ≤ y₁ < 0 ∧ x₁ ≥ x₂ ≥ 0 → x₁/y₁ ≤ x₂/y₂ | dual | todo |
+| D3 | :86 | y₂ ≤ y₁ < 0 ∧ x₁ ≤ x₂ ≤ 0 → x₁/y₁ ≥ x₂/y₂ | dual | todo |
+| D4 | :190 | y = yv ∧ x ≤ yv·div(xv,yv) + yv − 1 → div(x,y) ≤ div(xv,yv) | `Int.ediv` bound lemmas | todo |
+| D5 | :197 | y = yv ∧ x ≥ yv·div(xv,yv) → div(xv,yv) ≤ div(x,y) | `Int.ediv` bound lemmas | todo |
+
+Note: Verus reaches this module through Euclidean div/mod on int; check which
+of D1–D3 (real division) are reachable from Verus-emitted AIR at integration
+time — likely only the idiv rows D4–D5 matter for tactus.
+
+## monomial_bounds — monomial_bounds.cpp
+
+| id | source | schema | Lean form | status |
+|----|--------|--------|-----------|--------|
+| MB1–2 | :113/:127 | m ∈ ∏ᵢ [loᵢ, hiᵢ] (interval product soundness); clause emitted when model value exits the range | interval arithmetic over ordered ring, `List` fold | todo |
+| MB3–5 | :199/:211/:221/:245 | power/root cases: xᵏ range bounds (odd/even k monotonicity) | `pow_le_pow` family | todo |
+| MB6 | :383 | all factors fixed → m fixed (propagate fixed) | product of constants | todo |
+
+## module-level rules (not schema lists)
+
+| id | source | rule | Lean discharge |
+|----|--------|------|----------------|
+| H1 | horner.cpp | interval evaluation of Horner forms is sound | same interval-soundness theorem as MB1, applied to polynomial shapes |
+| G1 | nla_grobner.cpp | equality consequences in the ideal of hypothesis equalities | `linear_combination` / grind ring certificates |
+| BR1 | nla_core add_bounds | integer branch: x ≤ ⌊v⌋ ∨ x ≥ ⌈v⌉ | trivially valid case split; omega handles leaves |
+| PL1 | nla_core :1561 refine_pseudo_linear | all-but-one factor fixed → m = (∏ consts)·x | product substitution |
+
+## exclusions and version notes
+
+* `nla_powers.cpp` (x^y): unreachable from Verus-emitted AIR (no
+  exponentiation primitive; vstd `pow` is an opaque recursive spec fn).
+  Documented exclusion, revisit only if Verus adds a power primitive.
+* `dioph_eq.cpp`: present in the 2026-02 checkout, absent from shipped Z3
+  4.12.5. Not needed for 4.12.5 parity; add rows if verus-dev bumps Z3.
+* nlsat is not in this table by design — it is the L2/L3 trace-checking story
+  (DESIGN.md §2), not a lemma schema.
+
+## next actions
+
+1. Read basics :464–:680 in detail and resolve row B9 (three sites).
+2. Read monomial_bounds :140–:260 (root/power cases) to pin MB3–5 exactly.
+3. Then nla-04: prove the `Templates/` lemma family per row, flipping each
+   status to `proven`; every row cites its lemma name when done.
