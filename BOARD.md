@@ -39,12 +39,26 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
 
 ## L1 — saturation layer
 
-- **nla-04** `todo` Template lemma library: sign/zero/factorization, order,
-  monotonicity, tangent-plane, division, monomial-bound schemas as parametric
-  proven lemmas. (Source maps: nla_basics_lemmas, nla_order_lemmas,
-  nla_monotone_lemmas, nla_tangent_lemmas, nla_divisions.)
-- **nla-05** `todo` Monomial bookkeeping (emonics port: canonization up to
-  sign/permutation) + generator loop instantiating nla-04 schemas.
+- **nla-04** `done` (2026-07-24) Template lemma library:
+  `Templates/{Basics,Order,Monotone,Tangent,Divisions,Intervals}.lean`, all
+  sorry-free; RULES.md fully resolved (27 rows proven or n/a-with-reason,
+  zero todo). L1's mathematical content is finished — nla-05..07 are
+  metaprogramming over a fixed lemma kit.
+- **nla-05** `todo` Monomial bookkeeping (emonics port) + generator loop.
+  Design sketch (2026-07-24):
+  * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
+    = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;
+  * *state*: hypothesis set as linear atoms over the monomial-extended
+    vocabulary + the defining equation per monomial variable;
+  * *round*: each generator scans monomials, instantiates its RULES row
+    (Lean lemma application via `mkAppM`, constants from hypotheses — NOT
+    from a model in v0), adds conclusions as new hyps with proof terms;
+  * *leaf*: after each round, try `omega` on the abstracted goal; success ⇒
+    done, failure ⇒ next round; fixed generator order, no throttling,
+    bounded rounds (default small; the containment statement is
+    per-round-count, mirroring Z3's stratification);
+  * *determinism*: no randomization, no model dependence in v0 — strictly
+    more instances than any Z3 schedule at equal depth.
 - **nla-06** `todo` Linear leaf. **v0 decision: omega IS the leaf** — after
   monomial abstraction (each monomial -> fresh variable) the per-round closure
   check is a linear-ℤ problem, exactly omega's domain; no simplex needed until
