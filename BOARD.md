@@ -185,6 +185,41 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   unthrottled. Re-run nla-03 corpus; expect most multiplicative-equality
   specimens to close here.
 
+## L1 hardening (from the 2026-07-25 code review; directives from Danielle)
+
+- **nla-21** `todo` **Shared atom space for noted facts.** The right fix for
+  the orientation-bug class (review fix e104567 covers only `mul_comm` of
+  the div defining equation): meta-built composites in noted conclusions
+  can land on different omega atoms than ring_nf's canonization of the same
+  user-written term (instance spellings remain even after the orientation
+  fix). Design constraints mapped during review: (a) `ring_nf at *` after
+  noting invalidates positive discharge-cache entries — their proof terms
+  reference hypothesis fvars that ring_nf replaces; (b) per-fact
+  `ring_nf at h` inside `noteFact` is safe for the cache (user fvars
+  untouched) and dedup keys (computed pre-normalization from the built
+  conclusion), but then the appended `ms` product spelling must ALSO be the
+  canonical form or `mineBounds`' syntactic lookups miss — needs a meta
+  entry point to ring_nf-normalize an `Expr` (investigate
+  `Mathlib.Tactic.RingNF` internals) applied consistently to noted facts
+  AND collected/appended atom spellings; (c) the clause phase instantiates
+  from pre-canonical `ms` exprs and must go through the same normalization.
+  Scope: noting path + collection + clause phase, one design.
+- **nla-22** `todo` **Dependency work-queues, Z3-identical.** Replace the
+  brute-force fixpoint re-run (+54% tactic calls on the stress goal for
+  confirmation) with Z3's scheduling: track which facts changed per round
+  and re-run a generator for monomial m only when one of m's inputs (factor
+  bounds, factor signs, atom bounds) gained a fact. Directive: the goal is
+  to be IDENTICAL to Z3's behavior, so port the todo-list structure from
+  nla_core/monomial_bounds rather than inventing an equivalent.
+- **nla-23** `todo` **q-formula optimality proofs.** The D4/D5 quotient
+  candidates and down-prop β formulas are hand-derived Euclidean interval
+  reasoning; soundness rides on templates (wrong formula = lost tightness
+  only). Prove them RIGHT once and for all in Lean: per formula, an
+  attainment lemma (`∃ x y` in the mined box with `x / y = q`) certifies
+  the emitted bound is the exact interval optimum — stronger than Z3,
+  which never proves its own tightness. Same treatment for corner-fold
+  min/max and the k-th-root exactness window.
+
 ## Kernel + kit
 
 - **nla-08** `todo` Computational Q[x] kernel (untrusted): dense ops, gcd,

@@ -156,21 +156,21 @@ theorem sr_pow_root_ub_odd {v : ℤ} {p : ℕ} (hp : Odd p) {u r : ℤ}
   push_neg at hcon
   have : (r + 1) ^ p ≤ v ^ p := hp.pow_le_pow.mpr (by omega)
   omega
--- `hr` is load-bearing (omega uses it for `0 ≤ r + 1`; the lemma is false
--- for r < -1) — the unused-variable lint cannot see through omega
-set_option linter.unusedVariables false in
 theorem sr_pow_root_ub_even_hi {v : ℤ} {p : ℕ} {u r : ℤ}
     (hr : 0 ≤ r) (h : v ^ p ≤ u) (cnd : u < (r + 1) ^ p) : v ≤ r := by
   by_contra hcon
   push_neg at hcon
-  have : (r + 1) ^ p ≤ v ^ p := pow_le_pow_left₀ (by omega) (by omega) p
+  -- `hr` used explicitly (the lemma is false for r < -1); omega-internal
+  -- uses are invisible to the unused-variable lint
+  have : (r + 1) ^ p ≤ v ^ p :=
+    pow_le_pow_left₀ (add_nonneg hr zero_le_one) (by omega) p
   omega
-set_option linter.unusedVariables false in
 theorem sr_pow_root_ub_even_lo {v : ℤ} {p : ℕ} (hp : Even p) {u r : ℤ}
     (hr : 0 ≤ r) (h : v ^ p ≤ u) (cnd : u < (r + 1) ^ p) : -r ≤ v := by
   by_contra hcon
   push_neg at hcon
-  have h1 : (r + 1) ^ p ≤ (-v) ^ p := pow_le_pow_left₀ (by omega) (by omega) p
+  have h1 : (r + 1) ^ p ≤ (-v) ^ p :=
+    pow_le_pow_left₀ (add_nonneg hr zero_le_one) (by omega) p
   rw [hp.neg_pow] at h1
   omega
 theorem sr_pow_root_lb_odd {v : ℤ} {p : ℕ} (hp : Odd p) {l r : ℤ}
@@ -595,16 +595,20 @@ def isIntPow? (e : Expr) : Option (Expr × Nat) :=
 def isIntLit (e : Expr) : Bool :=
   (e.int?).isSome
 
-/-- Binary-search worker for `natFloorRoot`: invariant `lo ^ k ≤ u`. -/
-partial def natFloorRootGo (u k lo hi : Nat) : Nat :=
-  if lo ≥ hi then lo
-  else
-    let mid := (lo + hi + 1) / 2
-    if mid ^ k ≤ u then natFloorRootGo u k mid hi
-    else natFloorRootGo u k lo (mid - 1)
+/-- Binary-search worker for `natFloorRoot`: invariant `lo ^ k ≤ u`. Fueled
+(the range halves each step, so `log2 u + 2` suffices) — a broken invariant
+degrades to a loose-but-sound answer instead of a hang. -/
+def natFloorRootGo (u k : Nat) : Nat → Nat → Nat → Nat
+  | 0, lo, _ => lo
+  | fuel + 1, lo, hi =>
+    if lo ≥ hi then lo
+    else
+      let mid := (lo + hi + 1) / 2
+      if mid ^ k ≤ u then natFloorRootGo u k fuel mid hi
+      else natFloorRootGo u k fuel lo (mid - 1)
 
 /-- Largest `r` with `r ^ k ≤ u` (`k ≥ 1`). -/
-def natFloorRoot (u k : Nat) : Nat := natFloorRootGo u k 0 u
+def natFloorRoot (u k : Nat) : Nat := natFloorRootGo u k (u.log2 + 2) 0 u
 
 /-- Smallest `r` with `u ≤ r ^ k`. -/
 def natCeilRoot (u k : Nat) : Nat :=
@@ -1617,7 +1621,7 @@ def generate (cache : DCache) (noted : NotedSet) (ms : Array Expr)
   let pairsNew ← generatePairs cache noted
   return new || pairsNew
 
-def saturateCore (stats : Bool := false) (maxRounds : Nat := 3) : TacticM Unit := do
+def saturateCore (stats : Bool := false) (maxRounds : Option Nat := none) : TacticM Unit := do
   let t0 ← IO.monoMsNow
   -- 0. normalize: sum-of-monomials form; doubles as commutative canonization
   evalTactic (← `(tactic| try ring_nf at *))
@@ -1665,8 +1669,27 @@ def saturateCore (stats : Bool := false) (maxRounds : Nat := 3) : TacticM Unit :
   g.withContext do
     for fv in ← g.getNondepPropHyps do
       noted.modify (·.insert (← instantiateMVars (← fv.getType)).consumeMData)
+  -- round bound: user numeral wins; otherwise depth-adaptive — a
+  -- propagation chain crosses one nesting level per round in the worst
+  -- (order-reversed) case, so the bound is the deepest monomial nesting
+  -- + 1 confirmation round, floored at 3 (the flat-goal default). Postorder
+  -- lets one inner-first pass compute depths; div atoms count one level.
+  let maxR := maxRounds.getD (Id.run do
+    let mut depths : Std.HashMap Expr Nat := {}
+    let mut maxDepth := 1
+    for m in ms do
+      let sub (e : Expr) : Nat := (depths.get? e).getD
+        (if (isIntDivMod? e).isSome then 1 else 0)
+      let d := match isIntMul? m with
+        | some (a, b) => 1 + max (sub a) (sub b)
+        | none => match isIntPow? m with
+          | some (a, _) => 1 + sub a
+          | none => 1
+      depths := depths.insert m d
+      maxDepth := max maxDepth d
+    pure (max 3 (maxDepth + 1)))
   let mut rounds := 0
-  for _ in [0:max 1 maxRounds] do
+  for _ in [0:max 1 maxR] do
     let progress ← generate cache noted ms dps
     rounds := rounds + 1
     if !progress then break
@@ -1694,18 +1717,18 @@ def saturateCore (stats : Bool := false) (maxRounds : Nat := 3) : TacticM Unit :
   let t3 ← IO.monoMsNow
   if stats then
     logInfo s!"nla_saturate: ring_nf {t1 - t0}ms · generate {t2 - t1}ms \
-      ({ms.size} monomials, {rounds} rounds, {← nlaTacticCall.get} tactic calls, \
+      ({ms.size} monomials, {rounds}/{maxR} rounds, {← nlaTacticCall.get} tactic calls, \
       {← nlaCacheHit.get} cache hits, {← nlaLitFast.get} literal fast) \
       · omega {t3 - t2}ms{if retried > 0 then s!" (clause retry tier {retried})" else ""}"
 
 /-- `nla_saturate (n)?` — optional numeral overrides the round bound
-(default 3). -/
+(default: depth-adaptive, ≥ 3). -/
 elab "nla_saturate" n:(num)? : tactic =>
-  saturateCore (maxRounds := n.map (·.getNat) |>.getD 3)
+  saturateCore (maxRounds := n.map (·.getNat))
 
 /-- `nla_saturate` with phase timings and discharge-oracle counters. -/
 elab "nla_saturate_stats" n:(num)? : tactic => do
   nlaLitFast.set 0; nlaCacheHit.set 0; nlaTacticCall.set 0
-  saturateCore (stats := true) (maxRounds := n.map (·.getNat) |>.getD 3)
+  saturateCore (stats := true) (maxRounds := n.map (·.getNat))
 
 end LeanNonlinearArith.Tactic
