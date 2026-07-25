@@ -201,6 +201,19 @@ example (x y z w : ℤ) (hx : x ≠ 0) (hy : y ≠ 0) (h1 : 2 ≤ z) (h2 : z ≤
   · nla_saturate
   · nla_saturate
 
+/-! ## review round 2: miner blind spots (Eq and ¬-wrapped comparisons) -/
+
+-- fixed var via Eq hyp (Z3 propagate_fixed_var parity)
+example (x y : ℤ) (h : x = 3) : x * y = 3 * y := by nla_saturate
+
+-- negated comparisons feed the miner (control-flow negations)
+example (x y : ℤ) (h1 : ¬ (x < 2)) (h2 : ¬ (y < 3)) : 6 ≤ x * y := by
+  nla_saturate
+
+-- pair scan through ¬ (le_of_not_gt conversion)
+example (x y z : ℤ) (h : ¬ (y * z < x * z)) (hz : 0 < z) : x ≤ y := by
+  nla_saturate
+
 /-! ## discharge-oracle scaling (DESIGN-discharge-oracle §3)
 
 The cost-model stress goal: 8 monomials, lb+ub mined per factor. Before the

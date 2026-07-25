@@ -534,19 +534,30 @@ def mineBounds (factor : Expr) : MetaM (Array Int × Array Int) := do
   let factor := factor.consumeMData
   let mut los : Array Int := #[]
   let mut his : Array Int := #[]
+  -- each hypothesis yields ≤-facts (l ⋈ r): plain comparisons (GE/GT
+  -- swapped), `Eq` both ways (fixed vars — Z3 propagate_fixed_var), and
+  -- `¬`-wrapped comparisons (control-flow negations; Z3's LRA state holds
+  -- these as bounds, so the miner must see them too)
+  let cmpFacts (t : Expr) : Array (Expr × Expr × Bool) :=
+    match t.getAppFnArgs with
+    | (``LE.le, #[_, _, l, r]) => #[(l, r, false)]
+    | (``LT.lt, #[_, _, l, r]) => #[(l, r, true)]
+    | (``GE.ge, #[_, _, l, r]) => #[(r, l, false)]
+    | (``GT.gt, #[_, _, l, r]) => #[(r, l, true)]
+    | (``Eq, #[t', l, r]) =>
+      if t'.isConstOf ``Int then #[(l, r, false), (r, l, false)] else #[]
+    | (``Not, #[p]) =>
+      match p.getAppFnArgs with
+      | (``LT.lt, #[_, _, l, r]) => #[(r, l, false)]
+      | (``LE.le, #[_, _, l, r]) => #[(r, l, true)]
+      | (``GT.gt, #[_, _, l, r]) => #[(l, r, false)]
+      | (``GE.ge, #[_, _, l, r]) => #[(l, r, true)]
+      | _ => #[]
+    | _ => #[]
   for decl in ← getLCtx do
     if decl.isImplementationDetail then continue
     let ty ← instantiateMVars decl.type
-    -- (l ⋈ r, strict); GE/GT normalized by swapping
-    let (lhs?, rhs?, strict) :=
-      match ty.getAppFnArgs with
-      | (``LE.le, #[_, _, l, r]) => (some l, some r, false)
-      | (``LT.lt, #[_, _, l, r]) => (some l, some r, true)
-      | (``GE.ge, #[_, _, l, r]) => (some r, some l, false)
-      | (``GT.gt, #[_, _, l, r]) => (some r, some l, true)
-      | _ => (none, none, false)
-    match lhs?, rhs? with
-    | some l, some r =>
+    for (l, r, strict) in cmpFacts ty do
       -- lit ⋈ factor: lower bound (strict ℤ bound tightens by one)
       if let some v := l.int? then
         if r.consumeMData == factor then
@@ -557,7 +568,6 @@ def mineBounds (factor : Expr) : MetaM (Array Int × Array Int) := do
         if l.consumeMData == factor then
           let v := if strict then v - 1 else v
           if !his.contains v then his := his.push v
-    | _, _ => pure ()
   return (los, his)
 
 /-- Evaluate an `ℤ` comparison whose both sides are integer literals, in meta
@@ -619,10 +629,14 @@ def tryDischarge (cache : DCache) (ty : Expr) : TacticM (Option Expr) := do
         let pf ← instantiateMVars mvar
         -- omega may have minted auxiliary env constants the proof term
         -- references; keep the environment (monotone, benign) while rolling
-        -- back metavariable context and info trees
+        -- back metavariable context and info trees. The name generator is
+        -- kept forward too, so a later mint can never collide with a
+        -- constant that survived in the kept environment.
         let env ← getEnv
+        let ngen ← getNGen
         restoreState s
         setEnv env
+        setNGen ngen
         -- the proof's syntactic type can differ from `ty` (e.g. `assumption`
         -- closes `0 < a` with `1 ≤ a` by ℤ defeq); ascribe `ty` so meta-level
         -- weakenings see the probed shape
@@ -1055,19 +1069,32 @@ def generatePairs (cache : DCache) : TacticM Unit := do
     for decl in ← getLCtx do
       if decl.isImplementationDetail then continue
       let ty ← instantiateMVars decl.type
-      let (x?, y?, rel) :=
+      let (x?, y?, rel, viaNot) :=
         match ty.getAppFnArgs with
         | (``LE.le, #[t, _, lh, rh]) =>
-          if t.isConstOf ``Int then (some lh, some rh, 0) else (none, none, 0)
+          if t.isConstOf ``Int then (some lh, some rh, 0, false) else (none, none, 0, false)
         | (``LT.lt, #[t, _, lh, rh]) =>
-          if t.isConstOf ``Int then (some lh, some rh, 1) else (none, none, 0)
+          if t.isConstOf ``Int then (some lh, some rh, 1, false) else (none, none, 0, false)
         | (``GE.ge, #[t, _, lh, rh]) =>
-          if t.isConstOf ``Int then (some rh, some lh, 0) else (none, none, 0)
+          if t.isConstOf ``Int then (some rh, some lh, 0, false) else (none, none, 0, false)
         | (``GT.gt, #[t, _, lh, rh]) =>
-          if t.isConstOf ``Int then (some rh, some lh, 1) else (none, none, 0)
+          if t.isConstOf ``Int then (some rh, some lh, 1, false) else (none, none, 0, false)
         | (``Eq, #[t, lh, rh]) =>
-          if t.isConstOf ``Int then (some lh, some rh, 2) else (none, none, 0)
-        | _ => (none, none, 0)
+          if t.isConstOf ``Int then (some lh, some rh, 2, false) else (none, none, 0, false)
+        | (``Not, #[p]) =>
+          -- control-flow negations: ¬(l < r) ⟹ r ≤ l, ¬(l ≤ r) ⟹ r < l,
+          -- GE/GT duals — Z3's LRA state holds these as bounds
+          match p.getAppFnArgs with
+          | (``LT.lt, #[t, _, lh, rh]) =>
+            if t.isConstOf ``Int then (some rh, some lh, 0, true) else (none, none, 0, false)
+          | (``LE.le, #[t, _, lh, rh]) =>
+            if t.isConstOf ``Int then (some rh, some lh, 1, true) else (none, none, 0, false)
+          | (``GT.gt, #[t, _, lh, rh]) =>
+            if t.isConstOf ``Int then (some lh, some rh, 0, true) else (none, none, 0, false)
+          | (``GE.ge, #[t, _, lh, rh]) =>
+            if t.isConstOf ``Int then (some lh, some rh, 1, true) else (none, none, 0, false)
+          | _ => (none, none, 0, false)
+        | _ => (none, none, 0, false)
       let some x := x? | continue
       let some y := y? | continue
       let x := x.consumeMData
@@ -1076,12 +1103,22 @@ def generatePairs (cache : DCache) : TacticM Unit := do
       let some (x₁, x₂) := isIntMul? x | continue
       let some (y₁, y₂) := isIntMul? y | continue
       -- normalize the hyp proof to ≤/</= orientation (GE/GT are defeq
-      -- through the instance; the hint makes it syntactic — slice-5 lesson)
-      let relTy ← match rel with
-        | 0 => mkAppM ``LE.le #[x, y]
-        | 1 => mkAppM ``LT.lt #[x, y]
-        | _ => mkAppM ``Eq #[x, y]
-      let hPf ← mkExpectedTypeHint (.fvar decl.fvarId) relTy
+      -- through the instance; the hint makes it syntactic — slice-5 lesson).
+      -- ¬-wrapped hyps go through le_of_not_gt / lt_of_not_ge.
+      let hPf ←
+        if viaNot then do
+          let notTy ← match rel with
+            | 0 => do mkAppM ``Not #[← mkAppM ``LT.lt #[y, x]]
+            | _ => do mkAppM ``Not #[← mkAppM ``LE.le #[y, x]]
+          let hinted ← mkExpectedTypeHint (.fvar decl.fvarId) notTy
+          if rel == 0 then mkAppM ``le_of_not_gt #[hinted]
+          else mkAppM ``lt_of_not_ge #[hinted]
+        else do
+          let relTy ← match rel with
+            | 0 => mkAppM ``LE.le #[x, y]
+            | 1 => mkAppM ``LT.lt #[x, y]
+            | _ => mkAppM ``Eq #[x, y]
+          mkExpectedTypeHint (.fvar decl.fvarId) relTy
       -- all shared-factor alignments; comm flags select Eq.refl vs mul_comm
       -- for the position-absorbing premises
       let mut combos : Array (Expr × Expr × Expr × Bool × Bool) := #[]
