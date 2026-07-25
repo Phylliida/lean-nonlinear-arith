@@ -134,8 +134,8 @@ interval division incl. powers (`monomial_bounds.cpp:292,318`).
 | B9b | dead code in Z3 (see basics table) — no obligation |
 | B9, PL1, T1, MB6, O3-const | **was a gap, fixed this slice** — factor mined to a point (`lo = hi = c`) → note `a*b = c*b` / `a*b = a*c` (const-substitution; conclusion omega-linear) |
 | O1 | covered when anchored — tangent at `(pivot, 0)` is exactly O1; the `0` anchor is mined from sign hypotheses *and from previously noted facts* (mineBounds runs in the evolving context); indeterminate-sign variants **fixed (class D slice)** via `sr_cl_o1_*` pivot clauses in the failure-gated phase |
-| O2, O3-symbolic | **fixed (class C slice)** — pair phase scans hypotheses for comparisons (≤/</=, GE/GT swapped) between products sharing a factor, cancels via lattice sign (`sr_cancel_*`, all four `mul_comm` alignments); the specimen closes. Residuals: comparisons derivable but not hypothesis-present (oracle v1 territory, same as derived bounds), and `≠ 0`-only factor signs (class D) |
-| O4 | covered for syntactically equal shared factors via the pair phase (ring_nf canonizes); Z3's `evars` ±-equivalences beyond that → class D residual |
+| O2, O3-symbolic | **fixed (class C slice)** — pair phase scans hypotheses for comparisons (≤/</=, GE/GT swapped) between products sharing a factor, cancels via lattice sign (`sr_cancel_*`, all four `mul_comm` alignments); the specimen closes. Residuals: comparisons derivable but not hypothesis-present — needs the oracle *model* to select candidates without O(n²) probing (nla-06, same routing as clause relevance); `≠ 0`-only factor signs (class D) |
+| O4 | **fixed (oracle v1 slice B, 2026-07-25)** — syntactically equal shared factors via the pair phase (ring_nf canonizes); derived ±-equivalences via the oracle's parity union-find over unit ±-equalities (evars analogue, scaled and transitive): fully-equivalent monomial pairs bridge eagerly as `q = ±p` (emonics canonization; `sr_o4_mul_*`/`sr_o4_pow_*`), one-equiv-factor pairs get the model-free `generate_mon_ol` closure in clause tier 2 (`sr_o4_eq/neg_*`, both sign cases × both directions vs Z3's model-selected one) |
 | M1, M2 | covered at mined bounds via corner rows (evaluated literals = Z3's baked model consts); anchor-selection tightness → class E |
 | T2 | covered at mined anchors, 4 orientations; model-anchor tightness → class E |
 | D1–D3 | real division — unreachable from Verus AIR (int-only); standing exclusion, re-check at integration |
@@ -169,10 +169,7 @@ Gap classes:
   stress goal takes the eager path untouched), and the clause set is the
   full closure rather than a model-guided selection — superset by
   construction. The specimen closes. Residual: Z3 `evars` ±-equivalences
-  (O4) remain out — the multi-round loop (landed 2026-07-25) does not
-  track them either; they need an evars-style ±-equivalence pass over
-  noted equalities (fold into oracle v1, which sees derived equalities
-  anyway).
+  (O4) — **fixed (oracle v1 slice B, 2026-07-25)**, see the O4 row.
 * **Multi-round saturation** (landed 2026-07-25): the eager layer runs
   bounded rounds (default 3, `nla_saturate n` overrides) to a fixpoint
   detected by a noted-conclusion dedup set seeded with the hypothesis
@@ -198,8 +195,13 @@ Gap classes:
 All emission sites are read, rowed, template-proven (nla-04), and now
 generator-audited (above). L1 generator parity work is COMPLETE as of
 2026-07-25 (class C, class D, multi-round, div/mod, k ≥ 3 — see above).
-Remaining, all routed through one artifact: **oracle v1** (DESIGN-discharge-
-oracle §2b/§3) — derived-not-present bounds and comparisons, O4
-±-equivalences, real clause-phase relevance filtering, and model-anchored
-D4/D5/M/T tightness. After that: nla-07 Gröbner layer, nla-06 model
-guidance, then L2/L3 (nlsat).
+**Oracle v1 landed 2026-07-25** (slices A+B, `Tactic/Oracle.lean`):
+derived-not-present bounds (integer bound propagation over the atomized
+linear hypotheses, `lp_bound_propagator` analogue — derived tightest
+bounds join every mined-anchor set) and O4 ±-equivalences (parity
+union-find + eager bridges + transfer clauses). The oracle is fully
+untrusted: it only suggests anchors/equalities, every use is
+omega-discharged. Still open, needing the oracle's *model* (exact-rational
+simplex feasible point — nla-06 proper): real clause-phase relevance
+filtering and model-anchored D4/D5/M/T tightness. After that: nla-07
+Gröbner layer, then L2/L3 (nlsat).

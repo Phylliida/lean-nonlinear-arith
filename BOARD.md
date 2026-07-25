@@ -158,8 +158,21 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   r ≥ 1 itself). 98 examples green. **L1 generator parity is COMPLETE**
   — every RULES row is fixed, n/a-with-reason, or routed to oracle v1
   (derived bounds, O4 ±-equiv, clause relevance, model-anchored
-  tightness). Next: oracle v1 (DESIGN-discharge-oracle §2b/§3, folds
-  into nla-06), then nla-07 Gröbner.
+  tightness). **Oracle v1 done (2026-07-25, slices A+B,
+  `Tactic/Oracle.lean`):** (A) untrusted integer bound propagation over
+  the atomized ℤ-linear hypotheses (`lp_bound_propagator` analogue,
+  all-Int floor/ceil tightening, capped fixpoint) — derived tightest
+  bounds join every mined-anchor set, purely additive, every suggestion
+  omega-discharged before use; (B) O4 ±-equivalences via a parity
+  union-find over unit ±-equalities (evars analogue) — eager `q = ±p`
+  bridges for fully-equivalent mul/pow pairs (emonics canonization),
+  model-free `generate_mon_ol` transfer clauses for one-equiv-factor
+  pairs in clause tier 2. 10 probe-confirmed specimens, 108 examples
+  green, stress unchanged (86 calls; oracle overhead unmeasurable in a
+  same-load A/B). Remaining oracle work needs the *model* (nla-06):
+  exact-rational simplex feasible point for clause relevance,
+  model-anchored D4/D5/M/T anchor tightness, and derived product-pair
+  comparisons. Next: nla-07 Gröbner.
   Original design sketch (2026-07-24):
   * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
     = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;
@@ -180,7 +193,11 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   we want *models* to guide generation (Z3-style model-based lemma selection).
   v1 (only if blind saturation proves too slow on real corpora): untrusted
   exact-rational simplex (~300 lines meta) for models + Farkas certificates
-  via linear_combination.
+  via linear_combination. Base to extend: `Tactic/Oracle.lean` (2026-07-25)
+  already parses the atomized constraint system and propagates bounds —
+  the simplex adds a feasible point over the same structure. Consumers
+  waiting on the model: clause-phase relevance filtering, model-anchored
+  D4/D5/M/T tightness, derived product-pair comparisons (O2/O3 residual).
 - **nla-07** `todo` Gröbner layer via grind ring engine / linear_combination,
   unthrottled. Re-run nla-03 corpus; expect most multiplicative-equality
   specimens to close here.
