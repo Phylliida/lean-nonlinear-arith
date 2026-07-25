@@ -139,7 +139,7 @@ interval division incl. powers (`monomial_bounds.cpp:292,318`).
 | M1, M2 | covered at mined bounds via corner rows (evaluated literals = Z3's baked model consts); anchor-selection tightness → class E |
 | T2 | covered at mined anchors, 4 orientations; model-anchor tightness → class E |
 | D1–D3 | real division — unreachable from Verus AIR (int-only); standing exclusion, re-check at integration |
-| D4, D5 | literal divisors: omega leaf handles `ediv`/`emod` natively (covered once div atoms are collected — boarded with multi-round); symbolic divisors → class C/D |
+| D4, D5 | **fixed (div/mod slice, 2026-07-25)** — literal divisors omega-native at the leaf (no rules). Symbolic divisors: per-pair generation of (i) the defining equation `y·(x/y) + x%y = x` (the axiomatization Z3's core asserts per div/mod term; its product joins the monomial set so the full product machinery reasons about the quotient), (ii) sign-gated Euclidean mod range (`0 ≤ x%y` for `y ≠ 0` incl. discharged-≠0 path, `x%y < y` / `< -y` by lattice sign), (iii) const-substitution at a point-mined divisor = the D4/D5 `y = yv` anchor collapsed to an omega-native literal (strictly stronger than Z3's guarded clause at that anchor), (iv) D4/D5 interval-quotient bounds via `Divisions.ediv_le_of_le`/`le_ediv_of_ge` — candidate `q` by Euclidean interval division in meta, premises omega-discharged (`y·q` has literal `q`, so they are linear); soundness rides on the templates, a wrong `q` only fails to note. Residual: model-anchored `yv` beyond mined points → class E / oracle v1, same routing as M/T |
 | MB1–2 | covered — corner rules, literal-folded exactly like Z3's `propagate_bound` (evaluated `q`, ±1 strict-int tightening on both sides) |
 | MB3 | covered — `sr_pow_even_nonneg` unconditional |
 | MB4, MB5 | **fixed (class C slice)** for k = 2 — `sr_sq_root_ub_hi/lo` (both conjuncts noted separately, as Z3 emits them) and the genuinely-disjunctive `sr_sq_root_lb` (omega splits); floor/ceil √ in meta, decide-certified. k ≥ 3 roots boarded with the k ≥ 3 envelopes |
@@ -197,6 +197,6 @@ Gap classes:
 
 All emission sites are read, rowed, template-proven (nla-04), and now
 generator-audited (above). Open parity work, in order (class C, class D,
-and the multi-round loop are done — see above): div/mod collection, k ≥ 3
-envelopes + roots, oracle v1 (also the route to O4 ±-equivalences and real
-clause-phase relevance filtering).
+the multi-round loop, and div/mod collection are done — see above): k ≥ 3
+envelopes + roots, oracle v1 (also the route to O4 ±-equivalences, real
+clause-phase relevance filtering, and model-anchored D4/D5/M/T tightness).

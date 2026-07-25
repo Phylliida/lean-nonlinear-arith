@@ -306,3 +306,56 @@ example (x y w r : ℤ) (hxy : x*y ≤ 10) (hy : 2 ≤ y) (hw : w ≤ 3)
 example (x y w r : ℤ) (h0 : 15 + x*w ≤ x*3 + w*5 + r)
     (hw : w ≤ 3) (hy : 2 ≤ y) (hxy : y*x ≤ 10) : 0 ≤ r := by
   nla_saturate 4
+
+/-! ## div/mod collection (RULES D4/D5 + the core div/mod axiomatization)
+
+Symbolic divisors only — literal divisors are omega-native at the leaf
+(pinned first). Every rule family: defining equation, sign-gated mod range,
+const-substitution at a point-mined divisor, D4/D5 interval-quotient bounds,
+and div atoms as monomial factors. -/
+
+-- literal divisor: omega-native, no rules involved
+example (x : ℤ) (h : x ≤ 10) : x / 5 ≤ 2 := by nla_saturate
+
+-- mod range, positive symbolic divisor
+example (x y : ℤ) (hy : 0 < y) : x % y < y := by nla_saturate
+example (x y : ℤ) (hy : 0 < y) : 0 ≤ x % y := by nla_saturate
+
+-- mod range, negative symbolic divisor (via Int.emod_neg flip)
+example (x y : ℤ) (hy : y < 0) : x % y < -y := by nla_saturate
+
+-- remainder lower bound from a bare ≠ 0 (lattice-inconclusive path); the
+-- unused-variable lint is a false positive — the linter only tracks
+-- syntactic uses, and hy enters through the meta-built noted proof (the
+-- goal is FALSE without hy: x = -1, y = 0)
+set_option linter.unusedVariables false in
+example (x y : ℤ) (hy : y ≠ 0) : 0 ≤ x % y := by nla_saturate
+
+-- defining equation y * (x / y) + x % y = x (unconditional — holds at y = 0)
+example (x y : ℤ) (h : x % y = 0) : y * (x / y) = x := by
+  nla_saturate
+
+-- const-substitution: point-mined divisor collapses to omega-native literal
+example (x y : ℤ) (hy : y = 7) (h : x ≤ 20) : x / y ≤ 2 := by nla_saturate
+
+-- D4 upper quotient bound (nonneg dividend needs only the divisor lb)
+example (x y : ℤ) (hy : 2 ≤ y) (hx : x ≤ 10) : x / y ≤ 5 := by nla_saturate
+
+-- D4, negative dividend (max over the divisor RANGE: q = hx / hy)
+example (x y : ℤ) (hy : 2 ≤ y) (hy' : y ≤ 4) (hx : x ≤ -1) : x / y ≤ -1 := by
+  nla_saturate
+
+-- D5 lower quotient bounds
+example (x y : ℤ) (hy : 2 ≤ y) (hx : 0 ≤ x) : 0 ≤ x / y := by nla_saturate
+example (x y : ℤ) (hy : 2 ≤ y) (hy' : y ≤ 5) (hx : 20 ≤ x) : 4 ≤ x / y := by
+  nla_saturate
+
+-- div atom as a monomial factor: quotient sign feeds the product sign rule
+example (x y z : ℤ) (hy : 0 < y) (hx : 0 ≤ x) (hz : 0 ≤ z) :
+    0 ≤ (x / y) * z := by nla_saturate
+
+-- quotient interval bounds feed the product corner machinery: div pairs are
+-- generated before the monomial loop, so x/y ∈ [0, 6] anchors the corner on
+-- (x/y) * w within round 1
+example (x y w : ℤ) (hy : 3 ≤ y) (hy' : y ≤ 5) (hx : 0 ≤ x) (hx' : x ≤ 20)
+    (hw : 0 ≤ w) (hw' : w ≤ 2) : (x / y) * w ≤ 12 := by nla_saturate

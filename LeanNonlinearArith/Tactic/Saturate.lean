@@ -99,6 +99,24 @@ collapses the product to an omega-linear term. -/
 theorem sr_subst_left (b : ℤ) (ha : a = la) : a * b = la * b := by rw [ha]
 theorem sr_subst_right (a : ℤ) (hb : b = lb) : a * b = a * lb := by rw [hb]
 
+/- Division/modulo rules (RULES rows D4/D5 + the div/mod axiomatization Z3's
+core solver asserts for every div/mod term). Only symbolic divisors get
+rules — literal divisors are omega-native at the leaf. `sr_divmod_def` is
+the defining equation; its product `y * (x / y)` joins the monomial set so
+the full product machinery runs on it. -/
+theorem sr_divmod_def (x y : ℤ) : y * (x / y) + x % y = x :=
+  Int.mul_ediv_add_emod x y
+theorem sr_mod_lb (x : ℤ) {y : ℤ} (h : y ≠ 0) : 0 ≤ x % y :=
+  Int.emod_nonneg x h
+theorem sr_mod_ub_pos (x : ℤ) {y : ℤ} (h : 0 < y) : x % y < y :=
+  Int.emod_lt_of_pos x h
+theorem sr_mod_ub_neg (x : ℤ) {y : ℤ} (h : y < 0) : x % y < -y := by
+  rw [← Int.emod_neg]; exact Int.emod_lt_of_pos x (by omega)
+theorem sr_div_subst (x : ℤ) {y c : ℤ} (h : y = c) : x / y = x / c := by
+  rw [h]
+theorem sr_mod_subst (x : ℤ) {y c : ℤ} (h : y = c) : x % y = x % c := by
+  rw [h]
+
 /- Zero-product split (RULES row B5): genuinely disjunctive conclusion; the
 omega leaf case-splits on noted `∨` hypotheses. -/
 theorem sr_zero_split (h : a * b = 0) : a = 0 ∨ b = 0 := mul_eq_zero.mp h
@@ -502,6 +520,16 @@ def isIntPow? (e : Expr) : Option (Expr × Nat) :=
 def isIntLit (e : Expr) : Bool :=
   (e.int?).isSome
 
+/-- Destructure an `ℤ` Euclidean division or modulo with a NON-literal
+divisor (literal divisors are omega-native at the leaf and need no rules). -/
+def isIntDivMod? (e : Expr) : Option (Expr × Expr) :=
+  match e.getAppFnArgs with
+  | (``HDiv.hDiv, #[ty, _, _, _, x, y]) =>
+    if ty.isConstOf ``Int && !isIntLit y then some (x, y) else none
+  | (``HMod.hMod, #[ty, _, _, _, x, y]) =>
+    if ty.isConstOf ``Int && !isIntLit y then some (x, y) else none
+  | _ => none
+
 /-- Collect monomials (ℤ products with two non-literal sides) in postorder:
 inner products before the products containing them. -/
 partial def collectMonomials (e : Expr) : StateRefT (Array Expr) MetaM Unit := do
@@ -525,6 +553,24 @@ partial def collectMonomials (e : Expr) : StateRefT (Array Expr) MetaM Unit := d
   | .forallE _ d b _ => collectMonomials d; collectMonomials b
   | .lam _ d b _ => collectMonomials d; collectMonomials b
   | .letE _ t v b _ => collectMonomials t; collectMonomials v; collectMonomials b
+  | _ => pure ()
+
+/-- Collect `(dividend, divisor)` pairs of `ℤ` div/mod terms with symbolic
+divisors (both `/` and `%` map to the same pair — the rules are per pair). -/
+partial def collectDivPairs (e : Expr) : StateRefT (Array (Expr × Expr)) MetaM Unit := do
+  match e with
+  | .app .. => do
+    for arg in e.getAppArgs do
+      collectDivPairs arg
+    if !e.hasLooseBVars then
+      if let some (x, y) := isIntDivMod? e then
+        let acc ← get
+        if !acc.contains (x, y) then
+          modify (·.push (x, y))
+  | .mdata _ b => collectDivPairs b
+  | .forallE _ d b _ => collectDivPairs d; collectDivPairs b
+  | .lam _ d b _ => collectDivPairs d; collectDivPairs b
+  | .letE _ t v b _ => collectDivPairs t; collectDivPairs v; collectDivPairs b
   | _ => pure ()
 
 /-- Mine literal bounds for `factor` from the propositional hypotheses:
@@ -1073,6 +1119,107 @@ def factsForPow (cache : DCache) (m : Expr) (idx : Nat) :
               out := out.push (.mkSimple s!"nla_rt_{idx}_{out.size}", ← inferType pf, pf)
     return out
 
+/-- Facts for a div/mod pair `(x, y)` with symbolic divisor `y` (RULES rows
+D4/D5 + the div/mod axiomatization Z3's core asserts per term):
+* the defining equation `y * (x / y) + x % y = x` — its product joins the
+  monomial set, so the product machinery reasons about the quotient;
+* mod range, gated on the divisor's lattice sign (Euclidean: remainder is
+  nonnegative for any nonzero divisor, bounded by `y` resp. `-y`);
+* const-substitution at a point-mined divisor — the D4/D5 `y = yv` anchor,
+  collapsed to an omega-native literal-divisor term;
+* D4/D5 interval-quotient bounds at mined constants: candidate `q` computed
+  by Euclidean interval division in meta, premises discharged by the oracle
+  (`y * q` has a literal `q`, so they are omega-linear) — a wrong `q`
+  formula can only fail to note; soundness rides on the template lemmas. -/
+def factsForDiv (cache : DCache) (x y : Expr) (idx : Nat) :
+    TacticM (Array (Name × Expr × Expr)) := do
+  let g ← getMainGoal
+  g.withContext do
+    let mut out : Array (Name × Expr × Expr) := #[]
+    let le (u v : Expr) : MetaM Expr := mkAppM ``LE.le #[u, v]
+    -- defining equation, unconditional
+    let pfDef ← mkAppM ``sr_divmod_def #[x, y]
+    out := out.push (.mkSimple s!"nla_dvd_{idx}", ← inferType pfDef, pfDef)
+    -- mod range by divisor lattice sign
+    let siY ← signFactsFor cache y
+    let mut divisorPos : Option Expr := none
+    match siY with
+    | .pos py =>
+      divisorPos := some py
+      let pfLb ← mkAppM ``sr_mod_lb #[x, ← mkAppM ``ne_of_gt #[py]]
+      out := out.push (.mkSimple s!"nla_dvm_{idx}_{out.size}", ← inferType pfLb, pfLb)
+      let pfUb ← mkAppM ``sr_mod_ub_pos #[x, py]
+      out := out.push (.mkSimple s!"nla_dvm_{idx}_{out.size}", ← inferType pfUb, pfUb)
+    | .neg ny =>
+      let pfLb ← mkAppM ``sr_mod_lb #[x, ← mkAppM ``ne_of_lt #[ny]]
+      out := out.push (.mkSimple s!"nla_dvm_{idx}_{out.size}", ← inferType pfLb, pfLb)
+      let pfUb ← mkAppM ``sr_mod_ub_neg #[x, ny]
+      out := out.push (.mkSimple s!"nla_dvm_{idx}_{out.size}", ← inferType pfUb, pfUb)
+    | .zero pz =>
+      -- degenerate divisor: substitute to the literal (x / 0 and x % 0 are
+      -- omega-native)
+      let pfD ← mkAppM ``sr_div_subst #[x, pz]
+      out := out.push (.mkSimple s!"nla_dvs_{idx}_{out.size}", ← inferType pfD, pfD)
+      let pfM ← mkAppM ``sr_mod_subst #[x, pz]
+      out := out.push (.mkSimple s!"nla_dvs_{idx}_{out.size}", ← inferType pfM, pfM)
+    | _ =>
+      -- lattice inconclusive: a discharged `y ≠ 0` still gives the remainder
+      -- lower bound
+      if let some pne := ← tryDischarge cache (← mkAppM ``Ne #[y, mkIntLit 0]) then
+        let pfLb ← mkAppM ``sr_mod_lb #[x, pne]
+        out := out.push (.mkSimple s!"nla_dvm_{idx}_{out.size}", ← inferType pfLb, pfLb)
+    -- const-substitution at a point-mined divisor
+    let (lys, hys) ← mineBounds y
+    for c in lys do
+      if hys.contains c then
+        if let some pfs := ← dischargeAll cache #[← le (mkIntLit c) y, ← le y (mkIntLit c)] then
+          let pfEq ← mkAppM ``le_antisymm #[pfs[1]!, pfs[0]!]
+          let pfD ← mkAppM ``sr_div_subst #[x, pfEq]
+          out := out.push (.mkSimple s!"nla_dvs_{idx}_{out.size}", ← inferType pfD, pfD)
+          let pfM ← mkAppM ``sr_mod_subst #[x, pfEq]
+          out := out.push (.mkSimple s!"nla_dvs_{idx}_{out.size}", ← inferType pfM, pfM)
+    -- D4/D5 interval-quotient bounds (positive divisor, as in
+    -- nla_divisions.cpp :190/:197)
+    if let some py := divisorPos then
+      let (lxs, hxs) ← mineBounds x
+      let lysP := lys.filter (· ≥ 1)
+      let hysP := hys.filter (· ≥ 1)
+      -- D4 upper: x ≤ hx → x/y ≤ q with q = hx/ly (hx ≥ 0) or hx/hy (hx < 0)
+      let mut qhis : Array Int := #[]
+      for hx in hxs do
+        if hx ≥ 0 then
+          for ly in lysP do qhis := qhis.push (hx / ly)
+        else
+          for hy in hysP do qhis := qhis.push (hx / hy)
+      let mut seen : Array Int := #[]
+      for q in qhis do
+        if !seen.contains q then
+          seen := seen.push q
+          let qE := mkIntLit q
+          let rhs ← mkAppM ``HSub.hSub
+            #[← mkAppM ``HAdd.hAdd #[← mkAppM ``HMul.hMul #[y, qE], y], mkIntLit 1]
+          if let some pfPrem := ← tryDischarge cache (← le x rhs) then
+            let pf ← mkAppM ``Templates.Divisions.ediv_le_of_le #[x, qE, y, py, pfPrem]
+            out := out.push (.mkSimple s!"nla_dv4_{idx}_{out.size}", ← inferType pf, pf)
+      -- D5 lower: lx ≤ x → q ≤ x/y with q = lx/hy or 0 (lx ≥ 0), lx/ly (lx < 0)
+      let mut qlos : Array Int := #[]
+      for lx in lxs do
+        if lx ≥ 0 then
+          qlos := qlos.push 0
+          for hy in hysP do qlos := qlos.push (lx / hy)
+        else
+          for ly in lysP do qlos := qlos.push (lx / ly)
+      seen := #[]
+      for q in qlos do
+        if !seen.contains q then
+          seen := seen.push q
+          let qE := mkIntLit q
+          let lhs ← mkAppM ``HMul.hMul #[y, qE]
+          if let some pfPrem := ← tryDischarge cache (← le lhs x) then
+            let pf ← mkAppM ``Templates.Divisions.le_ediv_of_ge #[x, qE, y, py, pfPrem]
+            out := out.push (.mkSimple s!"nla_dv5_{idx}_{out.size}", ← inferType pf, pf)
+    return out
+
 /-- Class C pair phase (RULES O2/O3): scan hypotheses for comparisons
 between two product monomials sharing a factor; cancel the shared factor
 when its lattice sign is known. Runs after the per-monomial loop so noted
@@ -1236,14 +1383,25 @@ def generateClauses (cache : DCache) (noted : NotedSet) (ms : Array Expr)
   for (nm, tyF, pf) in facts do
     let _ ← noteFact noted nm tyF pf
 
-/-- Generation round: instantiate the rule vocabulary for every monomial,
-inner monomials first so their facts feed outer premises; then the pair
-phase over the completed context. Returns `true` iff any new fact was
-noted — the multi-round fixpoint signal. -/
-def generate (cache : DCache) (noted : NotedSet) (ms : Array Expr) :
-    TacticM Bool := do
-  let mut idx := 0
+/-- Generation round: div/mod pairs first (their range/quotient facts feed
+the monomial sign lattice — the reverse dependency is caught by the next
+round), then every monomial, inner monomials first so their facts feed
+outer premises; then the pair phase over the completed context. Returns
+`true` iff any new fact was noted — the multi-round fixpoint signal. -/
+def generate (cache : DCache) (noted : NotedSet) (ms : Array Expr)
+    (dps : Array (Expr × Expr)) : TacticM Bool := do
   let mut new := false
+  let mut didx := 0
+  for (x, y) in dps do
+    let facts ← factsForDiv cache x y didx
+    let mut notedHere := false
+    for (nm, ty, pf) in facts do
+      notedHere := (← noteFact noted nm ty pf) || notedHere
+    if notedHere then
+      cache.modify (·.filter fun _ v => v.isSome)
+      new := true
+    didx := didx + 1
+  let mut idx := 0
   for m in ms do
     let facts ← if (isIntMul? m).isSome then factsFor cache m idx
                 else factsForPow cache m idx
@@ -1265,15 +1423,28 @@ def saturateCore (stats : Bool := false) (maxRounds : Nat := 3) : TacticM Unit :
   evalTactic (← `(tactic| try ring_nf at *))
   if (← getGoals).isEmpty then return
   let t1 ← IO.monoMsNow
-  -- 1. collect from hypotheses and goal
+  -- 1. collect from hypotheses and goal: monomials, plus div/mod pairs with
+  -- symbolic divisors. Each pair's defining-equation product `y * (x / y)`
+  -- is appended to the monomial set up front (rounds only re-instantiate
+  -- over the initial vocabulary).
   let g ← getMainGoal
-  let ms ← g.withContext do
+  let (ms, dps) ← g.withContext do
     let act : StateRefT (Array Expr) MetaM Unit := do
       for fv in ← g.getNondepPropHyps do
         collectMonomials (← fv.getType)
       collectMonomials (← g.getType)
     let ((), ms) ← act.run #[]
-    pure ms
+    let actD : StateRefT (Array (Expr × Expr)) MetaM Unit := do
+      for fv in ← g.getNondepPropHyps do
+        collectDivPairs (← fv.getType)
+      collectDivPairs (← g.getType)
+    let ((), dps) ← actD.run #[]
+    let mut ms := ms
+    for (x, y) in dps do
+      let p ← mkAppM ``HMul.hMul #[y, ← mkAppM ``HDiv.hDiv #[x, y]]
+      if !ms.contains p then
+        ms := ms.push p
+    pure (ms, dps)
   -- 2. generate: bounded rounds to fixpoint. A single sequential pass is
   -- order-dependent (Gauss-Seidel: facts noted for monomial i feed only
   -- monomials j > i in the ring_nf-determined context order); Z3's
@@ -1292,7 +1463,7 @@ def saturateCore (stats : Bool := false) (maxRounds : Nat := 3) : TacticM Unit :
       noted.modify (·.insert (← instantiateMVars (← fv.getType)).consumeMData)
   let mut rounds := 0
   for _ in [0:max 1 maxRounds] do
-    let progress ← generate cache noted ms
+    let progress ← generate cache noted ms dps
     rounds := rounds + 1
     if !progress then break
   let t2 ← IO.monoMsNow

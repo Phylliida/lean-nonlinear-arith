@@ -128,10 +128,29 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   chains genuinely need rounds. 64 tests green; stress goal stays
   eager-path, 56 → 86 tactic calls (round-2 re-probe of dropped
   negative cache entries = the fixpoint-confirmation cost).
-  Remaining parity work, in order: (c) div/mod atom collection (literal
-  divisors then free via omega leaf), (d) k ≥ 3 power envelopes + roots,
+  **Slice 10 done (2026-07-25): div/mod collection.** Symbolic-divisor
+  `ediv`/`emod` pairs collected alongside monomials (literal divisors
+  are omega-native — probed: omega atomizes symbolic-divisor terms
+  rather than erroring, so no pre-generalization needed). Per pair:
+  defining equation `y·(x/y) + x%y = x` (its product joins the monomial
+  set up front, so corners/tangents/down-prop reason about the
+  quotient), sign-gated Euclidean mod range (pos, neg via `Int.emod_neg`
+  flip, and a discharged-`≠0` fallback for the lower bound),
+  const-substitution at point-mined divisors (D4/D5's `y = yv` anchor
+  made omega-native, incl. the lattice-zero degenerate case), and D4/D5
+  interval-quotient bounds via the `Templates.Divisions` lemmas with
+  meta-computed `q` and omega-discharged premises (literal `q` keeps
+  them linear; wrong `q` only fails to note — sr_down-style safety by
+  construction). Div pairs generate before the monomial loop (their
+  facts feed the sign lattice; the reverse dependency is caught by the
+  next round). Soundness probe: `0 ≤ x % y` with no `y ≠ 0` hypothesis
+  correctly fails (the passing test's unused-variable lint is a linter
+  false positive — it only tracks syntactic uses). 81 examples green;
+  stress goal untouched (no div atoms → zero cost).
+  Remaining parity work, in order: (d) k ≥ 3 power envelopes + roots,
   (e) oracle v1 per the design doc (folds into nla-06; also the route
-  to O4 ±-equivalences and clause-phase relevance filtering).
+  to O4 ±-equivalences, clause-phase relevance filtering, and
+  model-anchored D4/D5/M/T tightness).
   Original design sketch (2026-07-24):
   * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
     = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;
