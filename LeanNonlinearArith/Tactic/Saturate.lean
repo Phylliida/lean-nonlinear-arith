@@ -1847,11 +1847,73 @@ def generate (cache : DCache) (noted : NotedSet) (ms : Array Expr)
   let bridgesNew ← generateEquivBridges cache noted ms
   return new || pairsNew || bridgesNew
 
+/-- The Gröbner layer's engine (nla-07, RULES row G1): sandboxed,
+heartbeat-capped `grind` — per the design decision we reuse grind's
+commutative-ring engine (an unthrottled Gröbner basis over the hypothesis
+equalities) instead of porting Z3's PDD solver. For `≤`/`≥` goals a
+`le_of_eq`-strengthened attempt follows the plain one: grind's ring module
+derives ideal equalities but its cutsat bridge does not consume them
+(probe-confirmed on `a = b*c, d = b*e ⊢ a*e ≤ d*c` — the basis contains
+`e*a - c*d` yet the goal fails), so the equality-core inequality class
+needs the strengthening. Every attempt runs under half the remaining
+heartbeat budget — a hard ideal can never starve the layers behind it
+(Z3's Gröbner is budgeted the same way) — and any failure, including the
+cap itself, rolls back cleanly. Returns `true` iff the goal closed. -/
+def tryGrobner : TacticM Bool := do
+  let gTy ← (← getMainGoal).withContext do
+    instantiateMVars (← (← getMainGoal).getType)
+  let isIntCmp (t : Expr) := t.isConstOf ``Int
+  let cands : Array (TSyntax `tactic) ← match gTy.getAppFnArgs with
+    | (``Eq, #[t, _, _]) =>
+      if isIntCmp t then pure #[← `(tactic| grind)] else pure #[]
+    | (``LE.le, #[t, _, _, _]) =>
+      if isIntCmp t then
+        pure #[← `(tactic| grind), ← `(tactic| (refine le_of_eq ?_; grind))]
+      else pure #[]
+    | (``GE.ge, #[t, _, _, _]) =>
+      if isIntCmp t then
+        pure #[← `(tactic| grind), ← `(tactic| (refine le_of_eq ?_; grind))]
+      else pure #[]
+    | _ => pure #[← `(tactic| grind)]
+  for tac in cands do
+    let s ← saveState
+    let ctx ← readThe Core.Context
+    let now ← IO.getNumHeartbeats
+    let remaining := if ctx.maxHeartbeats == 0 then 200000 * 1000
+      else ctx.maxHeartbeats - min ctx.maxHeartbeats (now - ctx.initHeartbeats)
+    let closed ← tryCatchRuntimeEx
+      (do
+        withTheReader Core.Context (fun c =>
+          { c with initHeartbeats := now, maxHeartbeats := remaining / 2 }) do
+          evalTactic tac
+        pure true)
+      (fun _ => do restoreState s; pure false)
+    if closed then return true
+  return false
+
 def saturateCore (stats : Bool := false) (maxRounds : Option Nat := none) : TacticM Unit := do
   let t0 ← IO.monoMsNow
   -- 0. normalize: sum-of-monomials form; doubles as commutative canonization
   evalTactic (← `(tactic| try ring_nf at *))
   if (← getGoals).isEmpty then return
+  -- 0b. Gröbner fast path (nla-07, RULES row G1). Z3 schedules nla_grobner
+  -- at pipeline stage 3, ABOVE the template generators; its home shape is
+  -- an equality consequence of the hypothesis-equality ideal, so ℤ-equality
+  -- goals try the ring engine before any saturation work. Other shapes
+  -- meet the Gröbner layer at the post-eager position instead — a grind
+  -- probe on every goal would tax the whole (mostly inequality) suite.
+  let tG0 ← IO.monoMsNow
+  let gTy ← (← getMainGoal).withContext do
+    instantiateMVars (← (← getMainGoal).getType)
+  let isIntEqGoal := match gTy.getAppFnArgs with
+    | (``Eq, #[t, _, _]) => t.isConstOf ``Int
+    | _ => false
+  if isIntEqGoal then
+    if ← tryGrobner then
+      if stats then
+        logInfo s!"nla_saturate: closed by the Gröbner fast path \
+          (grind ring engine, {(← IO.monoMsNow) - tG0}ms)"
+      return
   let t1 ← IO.monoMsNow
   -- 1. collect from hypotheses and goal: monomials, plus div/mod pairs with
   -- symbolic divisors. Each pair's defining-equation product `y * (x / y)`
@@ -1928,24 +1990,36 @@ def saturateCore (stats : Bool := false) (maxRounds : Option Nat := none) : Tact
   let retried ← try
     evalTactic (← `(tactic| omega))
     pure 0
-  catch _ =>
+  catch _ => do
     restoreState s
-    generateClauses cache noted ms 1
-    let s2 ← saveState
-    try
-      evalTactic (← `(tactic| omega))
-      pure 1
-    catch _ =>
-      restoreState s2
-      generateClauses cache noted ms 2
-      evalTactic (← `(tactic| omega))
-      pure 2
+    -- Gröbner layer (nla-07) ahead of the clause tiers, mirroring Z3's
+    -- stage-3 priority — and pragmatically: the tiers' case-split cost on
+    -- sign-unknown monomial sets dwarfs a failed ring probe, so the probe
+    -- must not sit behind them. Runs on the eager-saturated context
+    -- (noted equalities from const-subst/O4 bridges extend the ideal).
+    if ← tryGrobner then
+      pure 3
+    else
+      generateClauses cache noted ms 1
+      let s2 ← saveState
+      try
+        evalTactic (← `(tactic| omega))
+        pure 1
+      catch _ =>
+        restoreState s2
+        generateClauses cache noted ms 2
+        evalTactic (← `(tactic| omega))
+        pure 2
   let t3 ← IO.monoMsNow
   if stats then
+    let tail := match retried with
+      | 0 => ""
+      | 3 => " (closed by the Gröbner layer)"
+      | t => s!" (clause retry tier {t})"
     logInfo s!"nla_saturate: ring_nf {t1 - t0}ms · generate {t2 - t1}ms \
       ({ms.size} monomials, {rounds}/{maxR} rounds, {← nlaTacticCall.get} tactic calls, \
       {← nlaCacheHit.get} cache hits, {← nlaLitFast.get} literal fast) \
-      · omega {t3 - t2}ms{if retried > 0 then s!" (clause retry tier {retried})" else ""}"
+      · omega {t3 - t2}ms{tail}"
 
 /-- `nla_saturate (n)?` — optional numeral overrides the round bound
 (default: depth-adaptive, ≥ 3). -/

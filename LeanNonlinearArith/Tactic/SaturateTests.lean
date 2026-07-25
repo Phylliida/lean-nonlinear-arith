@@ -466,3 +466,37 @@ example (a b c d : ℤ) (h1 : d = -c) (h2 : 0 < c) (h3 : a + b ≤ -1) :
 -- equivalence through the union-find chain (d = e, e = -c)
 example (a c d e : ℤ) (h1 : d = e) (h2 : e = -c) (h3 : 3 ≤ a * c) :
     a * d ≤ -3 := by nla_saturate
+
+/-! ### nla-07: the Gröbner layer (RULES row G1)
+
+grind's commutative-ring engine as the unthrottled Gröbner basis, per the
+DESIGN §L1 decision: ℤ-equality goals take a fast path before saturation
+(Z3 stage-3 scheduling), other shapes meet it after the eager leaf fails,
+ahead of the clause tiers. `≤`/`≥` goals get a `le_of_eq`-strengthened
+attempt (grind's cutsat does not consume ring-derived equalities). All
+probe-confirmed failing without the layer (2026-07-25). -/
+
+-- division.rs:699 census specimen — pure ideal membership, push-button now
+example (a_num b_num ic_num lhs_num rhs_num : ℤ)
+    (a_den b_den ic_den lhs_den rhs_den : ℤ)
+    (h1 : a_num * (b_den + 1) = b_num * (a_den + 1))
+    (h2 : lhs_num = a_num * ic_num)
+    (h3 : rhs_num = b_num * ic_num)
+    (h4 : lhs_den + 1 = (a_den + 1) * (ic_den + 1))
+    (h5 : rhs_den + 1 = (b_den + 1) * (ic_den + 1)) :
+    lhs_num * (rhs_den + 1) = rhs_num * (lhs_den + 1) := by nla_saturate
+
+-- cauchy_schwarz.rs:233 census specimen — product regrouping
+example (xn dy dz t1 v1 : ℤ)
+    (ht : t1 = ((xn * xn) * (dy * dy)) * (dz * dz))
+    (hv : v1 = xn * dy * dz) :
+    t1 = v1 * v1 := by nla_saturate
+
+-- synthetic cofactor multiplication (needs h1·e + h2·c, beyond omega atoms)
+example (a b c d e : ℤ) (h1 : a = b * c) (h2 : d = b * e) :
+    a * e = d * c := by nla_saturate
+
+-- inequality goal with an equality-ideal core: the le_of_eq-strengthened
+-- attempt at the post-eager Gröbner position
+example (a b c d e : ℤ) (h1 : a = b * c) (h2 : d = b * e) :
+    a * e ≤ d * c := by nla_saturate
