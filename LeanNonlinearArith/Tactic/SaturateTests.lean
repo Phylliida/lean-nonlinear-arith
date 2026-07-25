@@ -176,6 +176,31 @@ example (x y : ℤ) (h : (x * y).natAbs = x.natAbs) (hx : x ≠ 0) (hy : 1 < y) 
 example (x y : ℤ) (h : x ≤ 3) (h2 : 3 * y < x * y) : y < 0 := by
   nla_saturate
 
+/-! ## review probes (2026-07-24 session review — lowest-confidence claims) -/
+
+-- B1: ring_nf canonizes sign-flipped monomials to one atom
+example (x y : ℤ) (h : (-x) * y ≤ 5) : -5 ≤ x * y := by nla_saturate
+
+-- GE hypothesis through the pair scan (expected-type-hint normalization)
+example (x y z : ℤ) (h : y * z ≥ x * z) (hz : 0 < z) : x ≤ y := by nla_saturate
+
+-- Verus-scale literals through the corner fold
+example (x y : ℤ) (h1 : 0 ≤ x) (h2 : x ≤ 18446744073709551615)
+    (h3 : 0 ≤ y) (h4 : y ≤ 4294967296) :
+    x * y ≤ 79228162514264337589248983040 := by nla_saturate
+
+-- Verus-scale literals through down-prop interval division
+example (z b : ℤ) (h1 : 4294967296 ≤ z) (h2 : z ≤ 18446744073709551615)
+    (h3 : z * b ≤ 4294967296) : b ≤ 1 := by nla_saturate
+
+-- tier interaction: an irrelevant bounded monomial (z*w) must not blow up
+-- the clause retry for the x*y goal — this pinned the tiered-retry design
+example (x y z w : ℤ) (hx : x ≠ 0) (hy : y ≠ 0) (h1 : 2 ≤ z) (h2 : z ≤ 4)
+    (h3 : z * w ≤ 8) : x * y ≠ 0 ∧ w ≤ 4 := by
+  constructor
+  · nla_saturate
+  · nla_saturate
+
 /-! ## discharge-oracle scaling (DESIGN-discharge-oracle §3)
 
 The cost-model stress goal: 8 monomials, lb+ub mined per factor. Before the

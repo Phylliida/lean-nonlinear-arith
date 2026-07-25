@@ -1115,7 +1115,7 @@ def generatePairs (cache : DCache) : TacticM Unit := do
 after a failed leaf attempt — the model-free counterpart of Z3's lazy
 model-guided clause emission. Gated to monomials with a sign-unknown
 factor, so the leaf's branch count tracks genuine unknowns. -/
-def generateClauses (cache : DCache) (ms : Array Expr) : TacticM Unit := do
+def generateClauses (cache : DCache) (ms : Array Expr) (tier : Nat) : TacticM Unit := do
   let g ← getMainGoal
   let facts ← g.withContext do
     let mut out : Array (Name × Expr × Expr) := #[]
@@ -1125,12 +1125,20 @@ def generateClauses (cache : DCache) (ms : Array Expr) : TacticM Unit := do
       let siB ← signFactsFor cache b
       let aU := !siA.isKnown
       let bU := !siB.isKnown
-      if aU || bU then
-        -- B2-conditional sign clauses + zero clauses (B6 orientation) + B5
+      if (aU || bU) && tier == 1 then
+        -- tier 1: B2-conditional sign clauses + zero clauses (B6
+        -- orientation) + B5 — linear disjuncts, prune fast against the
+        -- context when the monomial is irrelevant to the goal
         for lem in [``sr_cl_pp, ``sr_cl_nn, ``sr_cl_pn, ``sr_cl_np,
                     ``sr_cl_zl, ``sr_cl_zr, ``sr_cl_b5] do
           let pf ← mkAppM lem #[a, b]
           out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
+      if (aU || bU) && tier == 2 then
+        -- tier 2 (second failure only): the branch-heavy rows. natAbs
+        -- facts case-split per atom occurrence regardless of relevance,
+        -- and each O1 pivot clause stays two-way live for an
+        -- unconstrained cofactor — multiplicative across monomials, so
+        -- they join the leaf only when tier 1 was insufficient.
         -- B7/B8 (natAbs rows): only with a discharged nonzero factor
         if let some pa := ← tryDischarge cache (← mkAppM ``Ne #[a, mkIntLit 0]) then
           let pf ← mkAppM ``sr_b8_left #[b, pa]
@@ -1215,18 +1223,25 @@ def saturateCore (stats : Bool := false) : TacticM Unit := do
   let s ← saveState
   let retried ← try
     evalTactic (← `(tactic| omega))
-    pure false
+    pure 0
   catch _ =>
     restoreState s
-    generateClauses cache ms
-    evalTactic (← `(tactic| omega))
-    pure true
+    generateClauses cache ms 1
+    let s2 ← saveState
+    try
+      evalTactic (← `(tactic| omega))
+      pure 1
+    catch _ =>
+      restoreState s2
+      generateClauses cache ms 2
+      evalTactic (← `(tactic| omega))
+      pure 2
   let t3 ← IO.monoMsNow
   if stats then
     logInfo s!"nla_saturate: ring_nf {t1 - t0}ms · generate {t2 - t1}ms \
       ({ms.size} monomials, {← nlaTacticCall.get} tactic calls, \
       {← nlaCacheHit.get} cache hits, {← nlaLitFast.get} literal fast) \
-      · omega {t3 - t2}ms{if retried then " (clause retry)" else ""}"
+      · omega {t3 - t2}ms{if retried > 0 then s!" (clause retry tier {retried})" else ""}"
 
 elab "nla_saturate" : tactic => saturateCore
 
