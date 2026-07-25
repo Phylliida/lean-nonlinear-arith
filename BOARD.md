@@ -108,14 +108,30 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   `Or.elim`-splits), const-substitution B9/PL1/T1/MB6 (factor mined to a
   point, other factor unbounded), square envelopes (secant + tangent for
   `x^2` — pow monomials previously had NO mined-bound rules; closes the
-  Horner/H1 specimen). 36 tests green. Remaining parity work, in order
-  (class C since done in slice 7): (a) **class D — conditional clauses
-  for lattice-unknown signs** (B6/B7/B8/O1; needs design, ties into
-  multi-round + nla-06; specimen: `x ≠ 0 ∧ y ≠ 0 → x*y ≠ 0`), (b)
-  multi-round saturation with a round bound (also unlocks n-ary
-  down-propagation chains), (c) div/mod atom collection (literal
+  Horner/H1 specimen). 36 tests green. **Slice 9 done (2026-07-25):
+  multi-round saturation.** Bounded rounds to fixpoint (default 3,
+  `nla_saturate n` overrides), fixpoint detected by a noted-conclusion
+  dedup set seeded with hypothesis types (`noteFact` skips
+  already-present conclusions and reports novelty; `generate` /
+  `generatePairs` return the progress signal). Parity: the single
+  sequential pass was Gauss-Seidel — order-dependent along the
+  ring_nf-determined context order — while Z3's final-check loop
+  saturates order-independently; this closes the "single round vs
+  saturation loop" divergence and delivers the n-ary down-prop chains.
+  Specimen (confirmed failing single-round through both clause tiers):
+  order-reversed chain where the tangent target `x*w` precedes the
+  down-prop source `x*y`, so round 2 must re-anchor the tangent at the
+  derived `x ≤ 5`. Notable probe finding en route: within-pass
+  sequential noting + the clause tiers' post-noting re-mining already
+  close most chains (O1 pivot clauses act as a disjunctive round 2 for
+  single-pivot chains) — only order-reversed corner/tangent-anchoring
+  chains genuinely need rounds. 64 tests green; stress goal stays
+  eager-path, 56 → 86 tactic calls (round-2 re-probe of dropped
+  negative cache entries = the fixpoint-confirmation cost).
+  Remaining parity work, in order: (c) div/mod atom collection (literal
   divisors then free via omega leaf), (d) k ≥ 3 power envelopes + roots,
-  (e) oracle v1 per the design doc (folds into nla-06).
+  (e) oracle v1 per the design doc (folds into nla-06; also the route
+  to O4 ±-equivalences and clause-phase relevance filtering).
   Original design sketch (2026-07-24):
   * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
     = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;

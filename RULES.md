@@ -143,7 +143,7 @@ interval division incl. powers (`monomial_bounds.cpp:292,318`).
 | MB1–2 | covered — corner rules, literal-folded exactly like Z3's `propagate_bound` (evaluated `q`, ±1 strict-int tightening on both sides) |
 | MB3 | covered — `sr_pow_even_nonneg` unconditional |
 | MB4, MB5 | **fixed (class C slice)** for k = 2 — `sr_sq_root_ub_hi/lo` (both conjuncts noted separately, as Z3 emits them) and the genuinely-disjunctive `sr_sq_root_lb` (omega splits); floor/ceil √ in meta, decide-certified. k ≥ 3 roots boarded with the k ≥ 3 envelopes |
-| propagate_down (products) | **fixed (class C slice)** — `sr_down_{ub,lb}_{pos,neg}` + single-sided variants: exact interval division in meta (soundness rests on the decide-checked side conditions, so the β formula can only lose tightness), lattice unit-strengthening for strict-signed divisors, tightness gate mirroring `should_propagate_*`. Plus `sr_dsign_*`: divisor-sign quotients of the atom's sign, which the LIA leaf cannot derive. n-ary chains (inner atom fed by outer's bound) need the multi-round loop — postorder runs inner-first |
+| propagate_down (products) | **fixed (class C slice)** — `sr_down_{ub,lb}_{pos,neg}` + single-sided variants: exact interval division in meta (soundness rests on the decide-checked side conditions, so the β formula can only lose tightness), lattice unit-strengthening for strict-signed divisors, tightness gate mirroring `should_propagate_*`. Plus `sr_dsign_*`: divisor-sign quotients of the atom's sign, which the LIA leaf cannot derive. n-ary chains: **fixed (multi-round slice, 2026-07-25)** — bounded rounds to fixpoint with noted-set dedup; a chain running against the context order (Gauss-Seidel gap) is picked up on the next round |
 | squares (MB1-2/T2 for `x^2`) | **was a gap, fixed this slice** — pow monomials previously got sign rules only; now secant upper + per-anchor tangent lower at mined bounds (the convex envelope; McCormick for `a*b`, secant/tangent for `a^2`) |
 | H1 | believed covered — per-monomial McCormick envelope + LIA leaf reproduces Horner interval brackets (Horner's factored forms don't survive `ring_nf` anyway); pinned by the Horner specimen test |
 | G1 | out of scope for L1 — nla-07 Gröbner layer |
@@ -155,8 +155,8 @@ Gap classes:
 * **Class C — down-propagation & pair rules** (O2/O3/O4, MB4/MB5,
   `propagate_down` for products): **done 2026-07-24** (see the fixed rows
   above). Residuals folded elsewhere: derived-not-present comparisons →
-  oracle v1; ±-equivalences and `≠ 0` signs → class D; n-ary chains and
-  k ≥ 3 → multi-round / boarded.
+  oracle v1; ±-equivalences and `≠ 0` signs → class D; n-ary chains
+  **fixed (multi-round slice, 2026-07-25)**; k ≥ 3 boarded.
 * **Class D — conditional clauses under indeterminate signs** (B6/B7/B8,
   B2-conditional, B5-conditional, O1-indeterminate): **done 2026-07-24** via
   the **failure-gated clause phase** — the leaf runs once on the eager
@@ -169,13 +169,34 @@ Gap classes:
   stress goal takes the eager path untouched), and the clause set is the
   full closure rather than a model-guided selection — superset by
   construction. The specimen closes. Residual: Z3 `evars` ±-equivalences
-  (O4) remain out; revisit with multi-round.
+  (O4) remain out — the multi-round loop (landed 2026-07-25) does not
+  track them either; they need an evars-style ±-equivalence pass over
+  noted equalities (fold into oracle v1, which sees derived equalities
+  anyway).
+* **Multi-round saturation** (landed 2026-07-25): the eager layer runs
+  bounded rounds (default 3, `nla_saturate n` overrides) to a fixpoint
+  detected by a noted-conclusion dedup set seeded with the hypothesis
+  types. Parity argument: a single sequential pass is Gauss-Seidel — facts
+  noted for monomial i feed only monomials j > i in the
+  ring_nf-determined context order, so a derivation chain running against
+  that order (e.g. a later monomial's down-prop bound needing to anchor an
+  earlier monomial's tangent) was silently lost, while Z3's final-check
+  loop re-enters nla until no new lemmas fire, order-independently.
+  Rounds-to-fixpoint restore that; the round bound is the containment
+  depth parameter (down-prop β values strictly tighten per pass, so
+  adversarial goals could otherwise iterate long — Z3 bounds the same
+  chains by resource limits). Specimen: order-reversed down-prop → tangent
+  chain, confirmed failing single-round through both clause tiers.
+  Fixpoint-confirmation cost on the stress goal: 56 → 86 tactic calls
+  (round 2 re-probes discharges whose negative cache entries were dropped
+  when the context grew).
 * **Class E — mined vs model anchors** (M/T tightness): DESIGN-discharge-
   oracle §2b / oracle v1 / nla-06.
 
 ## next actions
 
 All emission sites are read, rowed, template-proven (nla-04), and now
-generator-audited (above). Open parity work, in order: class C
-(down-propagation + pair rules), class D design, multi-round loop, div/mod
-collection, k ≥ 3 envelopes, oracle v1.
+generator-audited (above). Open parity work, in order (class C, class D,
+and the multi-round loop are done — see above): div/mod collection, k ≥ 3
+envelopes + roots, oracle v1 (also the route to O4 ±-equivalences and real
+clause-phase relevance filtering).

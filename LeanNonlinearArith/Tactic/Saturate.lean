@@ -708,12 +708,28 @@ def signFactsFor (cache : DCache) (x : Expr) : TacticM SignFacts := do
     return .nonpos pf
   return .unknown
 
-/-- Note a fact into the goal context. The name is freshened so generated
-hypotheses can never capture or collide with user hypotheses. -/
-def noteFact (name : Name) (concl proof : Expr) : TacticM Unit := do
+/-- Noted-conclusion set for multi-round dedup: syntactic types of every
+hypothesis already in the context (seeded) plus every fact noted so far.
+Structural `Expr` equality suffices — re-derivations of the same rule
+instantiation are built by the same `mkAppM` calls, so they collide exactly.
+Distinct-but-equivalent forms slip through, which only costs a redundant
+hypothesis, never soundness. -/
+abbrev NotedSet := IO.Ref (Std.HashSet Expr)
+
+/-- Note a fact into the goal context unless its conclusion is already
+present (dedup for the multi-round loop). The name is freshened so generated
+hypotheses can never capture or collide with user hypotheses. Returns `true`
+iff the fact was new. -/
+def noteFact (noted : NotedSet) (name : Name) (concl proof : Expr) :
+    TacticM Bool := do
+  let key := (← instantiateMVars concl).consumeMData
+  if (← noted.get).contains key then
+    return false
+  noted.modify (·.insert key)
   let g ← getMainGoal
   let (_, g') ← g.note (← mkFreshUserName name) proof (some concl)
   replaceMainGoal [g']
+  return true
 
 /-- Facts derived for one monomial, computed inside the current goal's
 context so premise discharge sees previously noted facts. -/
@@ -1062,7 +1078,7 @@ between two product monomials sharing a factor; cancel the shared factor
 when its lattice sign is known. Runs after the per-monomial loop so noted
 facts participate in the scan and in the lattice probes. Rel encoding:
 0 = ≤, 1 = <, 2 = = (GE/GT pre-swapped). -/
-def generatePairs (cache : DCache) : TacticM Unit := do
+def generatePairs (cache : DCache) (noted : NotedSet) : TacticM Bool := do
   let g ← getMainGoal
   let facts ← g.withContext do
     let mut out : Array (Name × Expr × Expr) := #[]
@@ -1145,14 +1161,17 @@ def generatePairs (cache : DCache) : TacticM Unit := do
         if let some pf := note? then
           out := out.push (.mkSimple s!"nla_cnc_{out.size}", ← inferType pf, pf)
     pure out
+  let mut new := false
   for (nm, tyF, pf) in facts do
-    noteFact nm tyF pf
+    new := (← noteFact noted nm tyF pf) || new
+  return new
 
 /-- Class D clause phase (RULES B2-conditional/B5/B6/B7/B8/O1): noted only
 after a failed leaf attempt — the model-free counterpart of Z3's lazy
 model-guided clause emission. Gated to monomials with a sign-unknown
 factor, so the leaf's branch count tracks genuine unknowns. -/
-def generateClauses (cache : DCache) (ms : Array Expr) (tier : Nat) : TacticM Unit := do
+def generateClauses (cache : DCache) (noted : NotedSet) (ms : Array Expr)
+    (tier : Nat) : TacticM Unit := do
   let g ← getMainGoal
   let facts ← g.withContext do
     let mut out : Array (Name × Expr × Expr) := #[]
@@ -1215,26 +1234,32 @@ def generateClauses (cache : DCache) (ms : Array Expr) (tier : Nat) : TacticM Un
                 out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
     pure out
   for (nm, tyF, pf) in facts do
-    noteFact nm tyF pf
+    let _ ← noteFact noted nm tyF pf
 
 /-- Generation round: instantiate the rule vocabulary for every monomial,
 inner monomials first so their facts feed outer premises; then the pair
-phase over the completed context. -/
-def generate (cache : DCache) (ms : Array Expr) : TacticM Unit := do
+phase over the completed context. Returns `true` iff any new fact was
+noted — the multi-round fixpoint signal. -/
+def generate (cache : DCache) (noted : NotedSet) (ms : Array Expr) :
+    TacticM Bool := do
   let mut idx := 0
+  let mut new := false
   for m in ms do
     let facts ← if (isIntMul? m).isSome then factsFor cache m idx
                 else factsForPow cache m idx
+    let mut notedHere := false
     for (nm, ty, pf) in facts do
-      noteFact nm ty pf
-    if !facts.isEmpty then
+      notedHere := (← noteFact noted nm ty pf) || notedHere
+    if notedHere then
       -- the context grew: failed discharges may now succeed, so drop
       -- negative entries; positive proofs stay valid (fvars persist)
       cache.modify (·.filter fun _ v => v.isSome)
+      new := true
     idx := idx + 1
-  generatePairs cache
+  let pairsNew ← generatePairs cache noted
+  return new || pairsNew
 
-def saturateCore (stats : Bool := false) : TacticM Unit := do
+def saturateCore (stats : Bool := false) (maxRounds : Nat := 3) : TacticM Unit := do
   let t0 ← IO.monoMsNow
   -- 0. normalize: sum-of-monomials form; doubles as commutative canonization
   evalTactic (← `(tactic| try ring_nf at *))
@@ -1249,9 +1274,27 @@ def saturateCore (stats : Bool := false) : TacticM Unit := do
       collectMonomials (← g.getType)
     let ((), ms) ← act.run #[]
     pure ms
-  -- 2. generate
+  -- 2. generate: bounded rounds to fixpoint. A single sequential pass is
+  -- order-dependent (Gauss-Seidel: facts noted for monomial i feed only
+  -- monomials j > i in the ring_nf-determined context order); Z3's
+  -- saturation is fixpoint-driven — the final-check loop re-enters nla
+  -- until no new lemmas fire. Rounds + noted-set dedup remove the order
+  -- dependence; `maxRounds` bounds tightening chains (down-prop β values
+  -- strictly tighten each pass, so adversarial goals could iterate long —
+  -- the containment statement is per-round-count, mirroring Z3's own
+  -- resource bound). The monomial set is stable across rounds: every
+  -- generator conclusion is over the already-collected vocabulary.
   let cache : DCache ← IO.mkRef {}
-  generate cache ms
+  let noted : NotedSet ← IO.mkRef {}
+  let g ← getMainGoal
+  g.withContext do
+    for fv in ← g.getNondepPropHyps do
+      noted.modify (·.insert (← instantiateMVars (← fv.getType)).consumeMData)
+  let mut rounds := 0
+  for _ in [0:max 1 maxRounds] do
+    let progress ← generate cache noted ms
+    rounds := rounds + 1
+    if !progress then break
   let t2 ← IO.monoMsNow
   -- 3. leaf: omega atomizes the (ring_nf-canonized) monomials natively —
   -- no explicit generalization needed; SaturateTests pins this assumption.
@@ -1263,28 +1306,31 @@ def saturateCore (stats : Bool := false) : TacticM Unit := do
     pure 0
   catch _ =>
     restoreState s
-    generateClauses cache ms 1
+    generateClauses cache noted ms 1
     let s2 ← saveState
     try
       evalTactic (← `(tactic| omega))
       pure 1
     catch _ =>
       restoreState s2
-      generateClauses cache ms 2
+      generateClauses cache noted ms 2
       evalTactic (← `(tactic| omega))
       pure 2
   let t3 ← IO.monoMsNow
   if stats then
     logInfo s!"nla_saturate: ring_nf {t1 - t0}ms · generate {t2 - t1}ms \
-      ({ms.size} monomials, {← nlaTacticCall.get} tactic calls, \
+      ({ms.size} monomials, {rounds} rounds, {← nlaTacticCall.get} tactic calls, \
       {← nlaCacheHit.get} cache hits, {← nlaLitFast.get} literal fast) \
       · omega {t3 - t2}ms{if retried > 0 then s!" (clause retry tier {retried})" else ""}"
 
-elab "nla_saturate" : tactic => saturateCore
+/-- `nla_saturate (n)?` — optional numeral overrides the round bound
+(default 3). -/
+elab "nla_saturate" n:(num)? : tactic =>
+  saturateCore (maxRounds := n.map (·.getNat) |>.getD 3)
 
 /-- `nla_saturate` with phase timings and discharge-oracle counters. -/
-elab "nla_saturate_stats" : tactic => do
+elab "nla_saturate_stats" n:(num)? : tactic => do
   nlaLitFast.set 0; nlaCacheHit.set 0; nlaTacticCall.set 0
-  saturateCore (stats := true)
+  saturateCore (stats := true) (maxRounds := n.map (·.getNat) |>.getD 3)
 
 end LeanNonlinearArith.Tactic

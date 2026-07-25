@@ -239,3 +239,70 @@ example (x y : ℤ) (h : x * y ≤ 5) : x * y ≤ 6 := by omega
 -- not fatal
 example (x y : ℤ) (hq : ∀ i : ℤ, x * i ≤ x * i) (hx : 0 ≤ x) (hy : 0 ≤ y) :
     0 ≤ x * y := by nla_saturate
+
+/-! ## multi-round saturation (rounds-to-fixpoint, order independence)
+
+A single sequential generation pass is Gauss-Seidel: facts noted for
+monomial i feed only monomials processed later in the ring_nf-determined
+context order. Z3's saturation is fixpoint-driven, so chains running
+*against* the processing order are the multi-round witness class. Here h0
+is written in ring_nf normal form (stays in place) while hxy gets
+rewritten and re-inserted at the end of the context — so the tangent
+target x*w is processed before the down-prop source x*y. Round 1 derives
+x ≤ 5 (down-prop from x*y ≤ 10, 2 ≤ y); round 2 anchors the tangent
+plane 5*w + 3*x - 15 ≤ x*w on x*w. Fails on the single-round tactic
+(probe-confirmed, this slice) — the O1 clause tiers have no lower bound
+for x*w in the region x, w ≥ 1. -/
+example (x y w r : ℤ) (h0 : 15 + x*w ≤ x*3 + w*5 + r)
+    (hw : w ≤ 3) (hy : 2 ≤ y) (hxy : y*x ≤ 10) : 0 ≤ r := by
+  nla_saturate
+
+-- forward-order variant of the same chain (closed by round 1 already —
+-- pins the Gauss-Seidel behavior so an ordering change can't hide behind
+-- the loop)
+example (x y w r : ℤ) (hw : w ≤ 3) (hy : 2 ≤ y) (hxy : x*y ≤ 10)
+    (h0 : x*w + 15 ≤ 3*x + 5*w + r) : 0 ≤ r := by
+  nla_saturate
+
+-- n-ary down-propagation chain through an unbounded factor: x*y ≤ 10
+-- derived from (x*y)*z ≤ 30 and z ≥ 3, then x ≤ 5 from y ≥ 2; the O1
+-- pivot clauses also close this disjunctively, so it pins whichever
+-- path fires first
+example (x y z : ℤ) (hy : 2 ≤ y) (hz : 3 ≤ z)
+    (h : x * y * z ≤ 30) : x ≤ 5 := by
+  nla_saturate
+
+-- explicit round bound: the order-reversed chain needs two productive
+-- rounds; `nla_saturate 1` must NOT close it (guards that the loop is
+-- really doing the work, and that the bound is honored)
+example (x y w r : ℤ) (h0 : 15 + x*w ≤ x*3 + w*5 + r)
+    (hw : w ≤ 3) (hy : 2 ≤ y) (hxy : y*x ≤ 10) : 0 ≤ r := by
+  fail_if_success nla_saturate 1
+  nla_saturate
+
+/-! ## multi-round saturation (Gauss-Seidel order-dependence removed)
+
+A single sequential pass only feeds facts forward along the ring_nf-determined
+context order. These specimens need a fact derived from a LATER monomial to
+re-anchor rules on an EARLIER one — round 2 work by construction. -/
+
+-- order-reversed chain: h0 is already in ring_nf normal form (stays first),
+-- hxy is rewritten (moves to the context tail), so the tangent target x*w is
+-- processed before the down-prop source x*y. Round 1: x ≤ 5 from
+-- x*y ≤ 10 ∧ 2 ≤ y; round 2: tangent on x*w anchored at (5, 3). The O1
+-- clause tiers cannot rescue this one — they only emit single-pivot bounds,
+-- and the region x, w ≥ 1 needs the two-anchor corner lower bound.
+example (x y w r : ℤ) (h0 : 15 + x*w ≤ x*3 + w*5 + r)
+    (hw : w ≤ 3) (hy : 2 ≤ y) (hxy : y*x ≤ 10) : 0 ≤ r := by
+  nla_saturate
+
+-- same chain, forward order (single round suffices) — pins that the rounds
+-- loop terminates at fixpoint without disturbing the order-aligned path
+example (x y w r : ℤ) (hxy : x*y ≤ 10) (hy : 2 ≤ y) (hw : w ≤ 3)
+    (h0 : 15 + x*w ≤ x*3 + w*5 + r) : 0 ≤ r := by
+  nla_saturate
+
+-- explicit round-bound syntax
+example (x y w r : ℤ) (h0 : 15 + x*w ≤ x*3 + w*5 + r)
+    (hw : w ≤ 3) (hy : 2 ≤ y) (hxy : y*x ≤ 10) : 0 ≤ r := by
+  nla_saturate 4
