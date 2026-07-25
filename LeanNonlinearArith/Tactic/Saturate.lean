@@ -106,6 +106,12 @@ the defining equation; its product `y * (x / y)` joins the monomial set so
 the full product machinery runs on it. -/
 theorem sr_divmod_def (x y : ℤ) : y * (x / y) + x % y = x :=
   Int.mul_ediv_add_emod x y
+-- both orientations are noted: ring_nf canonizes user-written products of
+-- `y` and `x / y` to ITS order, which need not match the meta-built form —
+-- omega atomizes them separately, so each orientation needs its own bridge
+-- (probe-confirmed: `(x/y) * y ≤ 5 → x - x % y ≤ 5` failed one-sided)
+theorem sr_divmod_def' (x y : ℤ) : x / y * y + x % y = x := by
+  rw [mul_comm]; exact Int.mul_ediv_add_emod x y
 theorem sr_mod_lb (x : ℤ) {y : ℤ} (h : y ≠ 0) : 0 ≤ x % y :=
   Int.emod_nonneg x h
 theorem sr_mod_ub_pos (x : ℤ) {y : ℤ} (h : 0 < y) : x % y < y :=
@@ -1328,9 +1334,12 @@ def factsForDiv (cache : DCache) (x y : Expr) (idx : Nat) :
   g.withContext do
     let mut out : Array (Name × Expr × Expr) := #[]
     let le (u v : Expr) : MetaM Expr := mkAppM ``LE.le #[u, v]
-    -- defining equation, unconditional
+    -- defining equation, unconditional, both product orientations (the
+    -- context's ring_nf-canonized product may use either atom form)
     let pfDef ← mkAppM ``sr_divmod_def #[x, y]
     out := out.push (.mkSimple s!"nla_dvd_{idx}", ← inferType pfDef, pfDef)
+    let pfDef' ← mkAppM ``sr_divmod_def' #[x, y]
+    out := out.push (.mkSimple s!"nla_dvd_{idx}", ← inferType pfDef', pfDef')
     -- mod range by divisor lattice sign
     let siY ← signFactsFor cache y
     let mut divisorPos : Option Expr := none
@@ -1632,9 +1641,13 @@ def saturateCore (stats : Bool := false) (maxRounds : Nat := 3) : TacticM Unit :
     let ((), dps) ← actD.run #[]
     let mut ms := ms
     for (x, y) in dps do
-      let p ← mkAppM ``HMul.hMul #[y, ← mkAppM ``HDiv.hDiv #[x, y]]
-      if !ms.contains p then
-        ms := ms.push p
+      let d ← mkAppM ``HDiv.hDiv #[x, y]
+      let p1 ← mkAppM ``HMul.hMul #[y, d]
+      let p2 ← mkAppM ``HMul.hMul #[d, y]
+      -- either orientation already collected from the context serves the
+      -- product machinery (the defining equation bridges both)
+      if !ms.contains p1 && !ms.contains p2 then
+        ms := ms.push p1
     pure (ms, dps)
   -- 2. generate: bounded rounds to fixpoint. A single sequential pass is
   -- order-dependent (Gauss-Seidel: facts noted for monomial i feed only

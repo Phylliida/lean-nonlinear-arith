@@ -407,3 +407,10 @@ example (x : ℤ) (h : 17 ≤ x ^ 4) (hx : 0 ≤ x) : 3 ≤ x := by nla_saturate
 
 -- k = 5 at scale
 example (x : ℤ) (h : x ^ 5 ≤ 100000) : x ≤ 10 := by nla_saturate
+
+-- code-review fix (2026-07-25): defining equation noted in BOTH product
+-- orientations — ring_nf canonizes user-written products of y and x / y to
+-- its own order, which need not match the meta-built form; each atom form
+-- needs its own bridge (the second example failed before the fix)
+example (x y : ℤ) (h : y * (x / y) ≤ 5) : x - x % y ≤ 5 := by nla_saturate
+example (x y : ℤ) (h : (x / y) * y ≤ 5) : x - x % y ≤ 5 := by nla_saturate
