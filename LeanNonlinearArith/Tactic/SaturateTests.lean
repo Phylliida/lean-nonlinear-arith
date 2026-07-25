@@ -152,6 +152,30 @@ example (x : ℤ) (h : x ^ 2 ≤ 9) : -3 ≤ x := by nla_saturate
 -- MB5 square root, disjunctive clause resolved by a sign hypothesis
 example (x : ℤ) (h : 10 ≤ x ^ 2) (hx : 0 ≤ x) : 4 ≤ x := by nla_saturate
 
+/-! ## class D: failure-gated conditional clauses (RULES.md audit) -/
+
+-- the class D specimen: sign clauses under indeterminate signs
+example (x y : ℤ) (hx : x ≠ 0) (hy : y ≠ 0) : x * y ≠ 0 := by nla_saturate
+
+-- zero clause, contrapositive orientation (B6)
+example (x y : ℤ) (h : x * y = 7) : x ≠ 0 := by nla_saturate
+
+-- mixed known/unknown signs
+example (x y : ℤ) (hx : 0 < x) (hy : y ≠ 0) : x * y ≠ 0 := by nla_saturate
+
+-- B8: a nonzero cofactor cannot shrink the absolute value
+example (x y : ℤ) (hx : x ≠ 0) (h : (x * y).natAbs ≤ 5) : y.natAbs ≤ 5 := by
+  nla_saturate
+
+-- B7: |x·y| = |x| with x ≠ 0 forces y = ±1
+example (x y : ℤ) (h : (x * y).natAbs = x.natAbs) (hx : x ≠ 0) (hy : 1 < y) :
+    False := by nla_saturate
+
+-- O1 clause: mined pivot, cofactor sign unknown — x·y > 3·y under x ≤ 3
+-- forces y < 0 (the disjunct choice matters, unlike a totality tautology)
+example (x y : ℤ) (h : x ≤ 3) (h2 : 3 * y < x * y) : y < 0 := by
+  nla_saturate
+
 /-! ## discharge-oracle scaling (DESIGN-discharge-oracle §3)
 
 The cost-model stress goal: 8 monomials, lb+ub mined per factor. Before the

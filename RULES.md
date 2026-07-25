@@ -129,10 +129,11 @@ interval division incl. powers (`monomial_bounds.cpp:292,318`).
 | B1 | covered by construction — `ring_nf at *` canonizes sign-flipped monomials to one atom (± a linear sign omega absorbs); stronger than Z3's emitted equation |
 | B2, B3, B4, B10 | covered — sign lattice + zero rules, n-ary via postorder composition (nested-monomial noting) |
 | B5 | **was a gap, fixed this slice** — `m = 0` provable with neither factor's zero known → note `a = 0 ∨ b = 0` (`mul_eq_zero.mp`); omega splits |
-| B6 | covered in the premise-discharged direction (zero rule notes the consequent); indeterminate direction → class D |
-| B7, B8, B9b | class D (conditional clauses); B8's sign-determined instances partially served by order/corner rows |
+| B6 | **fixed (class D slice)** — `sr_cl_zl/zr` zero clauses in the failure-gated phase cover the contrapositive orientation |
+| B7, B8 | **fixed (class D slice)** — `natAbs` form (omega handles `Int.natAbs`, Frontend :291): `sr_b8_*` premise-discharged on a nonzero cofactor, `sr_cl_b7/b7r` clause form; clause-phase only, since natAbs facts case-split at the leaf |
+| B9b | dead code in Z3 (see basics table) — no obligation |
 | B9, PL1, T1, MB6, O3-const | **was a gap, fixed this slice** — factor mined to a point (`lo = hi = c`) → note `a*b = c*b` / `a*b = a*c` (const-substitution; conclusion omega-linear) |
-| O1 | covered when anchored — tangent at `(pivot, 0)` is exactly O1; the `0` anchor is mined from sign hypotheses *and from previously noted facts* (mineBounds runs in the evolving context); indeterminate-sign variants → class D |
+| O1 | covered when anchored — tangent at `(pivot, 0)` is exactly O1; the `0` anchor is mined from sign hypotheses *and from previously noted facts* (mineBounds runs in the evolving context); indeterminate-sign variants **fixed (class D slice)** via `sr_cl_o1_*` pivot clauses in the failure-gated phase |
 | O2, O3-symbolic | **fixed (class C slice)** — pair phase scans hypotheses for comparisons (≤/</=, GE/GT swapped) between products sharing a factor, cancels via lattice sign (`sr_cancel_*`, all four `mul_comm` alignments); the specimen closes. Residuals: comparisons derivable but not hypothesis-present (oracle v1 territory, same as derived bounds), and `≠ 0`-only factor signs (class D) |
 | O4 | covered for syntactically equal shared factors via the pair phase (ring_nf canonizes); Z3's `evars` ±-equivalences beyond that → class D residual |
 | M1, M2 | covered at mined bounds via corner rows (evaluated literals = Z3's baked model consts); anchor-selection tightness → class E |
@@ -157,10 +158,18 @@ Gap classes:
   oracle v1; ±-equivalences and `≠ 0` signs → class D; n-ary chains and
   k ≥ 3 → multi-round / boarded.
 * **Class D — conditional clauses under indeterminate signs** (B6/B7/B8,
-  O1-indeterminate): Z3 emits lazily model-guided disjunctive clauses; eager
-  noting risks the min/max split lesson. Needs design (note clauses only for
-  lattice-unknown factors; ties into multi-round and nla-06). Specimen:
-  `(hx : x ≠ 0) (hy : y ≠ 0) : x*y ≠ 0`.
+  B2-conditional, B5-conditional, O1-indeterminate): **done 2026-07-24** via
+  the **failure-gated clause phase** — the leaf runs once on the eager
+  layer; only on failure does the tactic roll back, note the clause
+  vocabulary (`sr_cl_*`: 4 sign clauses, 2 zero clauses, B5, B7, B8, 8 O1
+  pivot clauses), and retry. Gates: clauses only for monomials with a
+  lattice-unknown factor; B7/B8 additionally need a discharged nonzero
+  factor; O1 needs a discharged pivot. This is the model-free counterpart
+  of Z3's lazy emission: green goals never pay the case-split cost (the
+  stress goal takes the eager path untouched), and the clause set is the
+  full closure rather than a model-guided selection — superset by
+  construction. The specimen closes. Residual: Z3 `evars` ±-equivalences
+  (O4) remain out; revisit with multi-round.
 * **Class E — mined vs model anchors** (M/T tightness): DESIGN-discharge-
   oracle §2b / oracle v1 / nla-06.
 

@@ -316,6 +316,143 @@ theorem sr_sq_root_lb (h : l ≤ a ^ 2)
 
 end SqRoot
 
+/- Class D — conditional sign/zero clauses (RULES B2-conditional/B5/B6):
+unconditional ℤ tautologies, noted only in the failure-gated clause phase.
+The omega leaf case-splits on each disjunction and prunes lattice-refuted
+disjuncts against the context — the model-free counterpart of Z3's lazily
+emitted sign clauses. -/
+section Clauses
+
+theorem sr_cl_pp (a b : ℤ) : a ≤ 0 ∨ b ≤ 0 ∨ 0 < a * b := by
+  rcases le_or_gt a 0 with h | h
+  · exact Or.inl h
+  rcases le_or_gt b 0 with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (mul_pos h h'))
+
+theorem sr_cl_nn (a b : ℤ) : 0 ≤ a ∨ 0 ≤ b ∨ 0 < a * b := by
+  rcases le_or_gt 0 a with h | h
+  · exact Or.inl h
+  rcases le_or_gt 0 b with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (mul_pos_of_neg_of_neg h h'))
+
+theorem sr_cl_pn (a b : ℤ) : a ≤ 0 ∨ 0 ≤ b ∨ a * b < 0 := by
+  rcases le_or_gt a 0 with h | h
+  · exact Or.inl h
+  rcases le_or_gt 0 b with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (mul_neg_of_pos_of_neg h h'))
+
+theorem sr_cl_np (a b : ℤ) : 0 ≤ a ∨ b ≤ 0 ∨ a * b < 0 := by
+  rcases le_or_gt 0 a with h | h
+  · exact Or.inl h
+  rcases le_or_gt b 0 with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (mul_neg_of_neg_of_pos h h'))
+
+theorem sr_cl_zl (a b : ℤ) : a ≠ 0 ∨ a * b = 0 := by
+  rcases eq_or_ne a 0 with h | h
+  · exact Or.inr (by rw [h, zero_mul])
+  · exact Or.inl h
+
+theorem sr_cl_zr (a b : ℤ) : b ≠ 0 ∨ a * b = 0 := by
+  rcases eq_or_ne b 0 with h | h
+  · exact Or.inr (by rw [h, mul_zero])
+  · exact Or.inl h
+
+theorem sr_cl_b5 (a b : ℤ) : a * b ≠ 0 ∨ a = 0 ∨ b = 0 := by
+  rcases eq_or_ne (a * b) 0 with h | h
+  · exact Or.inr (mul_eq_zero.mp h)
+  · exact Or.inl h
+
+end Clauses
+
+/- Class D — O1 conditional order clauses: a mined pivot on one factor, the
+other factor's sign left to the leaf's case split. Conclusions are linear
+once the product is atomized (`p` is a literal at instantiation). -/
+section O1Clauses
+variable {x y p : ℤ}
+
+theorem sr_cl_o1_ub (y : ℤ) (h : x ≤ p) : y ≤ 0 ∨ x * y ≤ p * y := by
+  rcases le_or_gt y 0 with h' | h'
+  · exact Or.inl h'
+  · exact Or.inr (mul_le_mul_of_nonneg_right h h'.le)
+
+theorem sr_cl_o1_ub' (y : ℤ) (h : x ≤ p) : 0 ≤ y ∨ p * y ≤ x * y := by
+  rcases le_or_gt 0 y with h' | h'
+  · exact Or.inl h'
+  · exact Or.inr (mul_le_mul_of_nonpos_right h h'.le)
+
+theorem sr_cl_o1_lb (y : ℤ) (h : p ≤ x) : y ≤ 0 ∨ p * y ≤ x * y := by
+  rcases le_or_gt y 0 with h' | h'
+  · exact Or.inl h'
+  · exact Or.inr (mul_le_mul_of_nonneg_right h h'.le)
+
+theorem sr_cl_o1_lb' (y : ℤ) (h : p ≤ x) : 0 ≤ y ∨ x * y ≤ p * y := by
+  rcases le_or_gt 0 y with h' | h'
+  · exact Or.inl h'
+  · exact Or.inr (mul_le_mul_of_nonpos_right h h'.le)
+
+theorem sr_cl_o1_ubr (x : ℤ) (h : y ≤ p) : x ≤ 0 ∨ x * y ≤ x * p := by
+  rcases le_or_gt x 0 with h' | h'
+  · exact Or.inl h'
+  · exact Or.inr (mul_le_mul_of_nonneg_left h h'.le)
+
+theorem sr_cl_o1_ubr' (x : ℤ) (h : y ≤ p) : 0 ≤ x ∨ x * p ≤ x * y := by
+  rcases le_or_gt 0 x with h' | h'
+  · exact Or.inl h'
+  · exact Or.inr (mul_le_mul_of_nonpos_left h h'.le)
+
+theorem sr_cl_o1_lbr (x : ℤ) (h : p ≤ y) : x ≤ 0 ∨ x * p ≤ x * y := by
+  rcases le_or_gt x 0 with h' | h'
+  · exact Or.inl h'
+  · exact Or.inr (mul_le_mul_of_nonneg_left h h'.le)
+
+theorem sr_cl_o1_lbr' (x : ℤ) (h : p ≤ y) : 0 ≤ x ∨ x * y ≤ x * p := by
+  rcases le_or_gt 0 x with h' | h'
+  · exact Or.inl h'
+  · exact Or.inr (mul_le_mul_of_nonpos_left h h'.le)
+
+end O1Clauses
+
+/- Class D — B7/B8 absolute-value rows, in `natAbs` form (omega handles
+`Int.natAbs` natively, Frontend :291). natAbs facts case-split at the leaf,
+so these are clause-phase only. -/
+section AbsRows
+
+theorem sr_b8_left (b : ℤ) (h : a ≠ 0) : b.natAbs ≤ (a * b).natAbs := by
+  rw [Int.natAbs_mul]
+  exact Nat.le_mul_of_pos_left _ (Int.natAbs_pos.mpr h)
+
+theorem sr_b8_right (a : ℤ) (h : b ≠ 0) : a.natAbs ≤ (a * b).natAbs := by
+  rw [Int.natAbs_mul, Nat.mul_comm]
+  exact Nat.le_mul_of_pos_left _ (Int.natAbs_pos.mpr h)
+
+theorem sr_cl_b7 (a b : ℤ) :
+    (a * b).natAbs ≠ a.natAbs ∨ a = 0 ∨ b = 1 ∨ b = -1 := by
+  rcases eq_or_ne ((a * b).natAbs) a.natAbs with h | h
+  · rcases eq_or_ne a 0 with ha | ha
+    · exact Or.inr (Or.inl ha)
+    · rw [Int.natAbs_mul] at h
+      have ha' : 0 < a.natAbs := Int.natAbs_pos.mpr ha
+      have hb : b.natAbs = 1 := Nat.eq_of_mul_eq_mul_left ha' (by omega)
+      omega
+  · exact Or.inl h
+
+theorem sr_cl_b7r (a b : ℤ) :
+    (a * b).natAbs ≠ b.natAbs ∨ b = 0 ∨ a = 1 ∨ a = -1 := by
+  rcases eq_or_ne ((a * b).natAbs) b.natAbs with h | h
+  · rcases eq_or_ne b 0 with hb | hb
+    · exact Or.inr (Or.inl hb)
+    · rw [Int.natAbs_mul, Nat.mul_comm] at h
+      have hb' : 0 < b.natAbs := Int.natAbs_pos.mpr hb
+      have ha : a.natAbs = 1 := Nat.eq_of_mul_eq_mul_left hb' (by omega)
+      omega
+  · exact Or.inl h
+
+end AbsRows
+
 end Rules
 
 /-- Premise/conclusion shapes for the binary sign rules. -/
@@ -518,6 +655,11 @@ inductive SignFacts where
   | nonneg (pf : Expr)   -- 0 ≤ x
   | nonpos (pf : Expr)   -- x ≤ 0
   | unknown
+
+/-- `true` when the lattice pinned any sign information. -/
+def SignFacts.isKnown : SignFacts → Bool
+  | .unknown => false
+  | _ => true
 
 /-- Weaken a lattice fact to the requested premise shape in meta code (zero
 tactic calls): `pos → nonneg` and `neg → nonpos` by `le_of_lt`, `zero → both`
@@ -969,11 +1111,71 @@ def generatePairs (cache : DCache) : TacticM Unit := do
   for (nm, tyF, pf) in facts do
     noteFact nm tyF pf
 
+/-- Class D clause phase (RULES B2-conditional/B5/B6/B7/B8/O1): noted only
+after a failed leaf attempt — the model-free counterpart of Z3's lazy
+model-guided clause emission. Gated to monomials with a sign-unknown
+factor, so the leaf's branch count tracks genuine unknowns. -/
+def generateClauses (cache : DCache) (ms : Array Expr) : TacticM Unit := do
+  let g ← getMainGoal
+  let facts ← g.withContext do
+    let mut out : Array (Name × Expr × Expr) := #[]
+    for m in ms do
+      let some (a, b) := isIntMul? m | continue
+      let siA ← signFactsFor cache a
+      let siB ← signFactsFor cache b
+      let aU := !siA.isKnown
+      let bU := !siB.isKnown
+      if aU || bU then
+        -- B2-conditional sign clauses + zero clauses (B6 orientation) + B5
+        for lem in [``sr_cl_pp, ``sr_cl_nn, ``sr_cl_pn, ``sr_cl_np,
+                    ``sr_cl_zl, ``sr_cl_zr, ``sr_cl_b5] do
+          let pf ← mkAppM lem #[a, b]
+          out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
+        -- B7/B8 (natAbs rows): only with a discharged nonzero factor
+        if let some pa := ← tryDischarge cache (← mkAppM ``Ne #[a, mkIntLit 0]) then
+          let pf ← mkAppM ``sr_b8_left #[b, pa]
+          out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
+          let pf7 ← mkAppM ``sr_cl_b7 #[a, b]
+          out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf7, pf7)
+        if let some pb := ← tryDischarge cache (← mkAppM ``Ne #[b, mkIntLit 0]) then
+          let pf ← mkAppM ``sr_b8_right #[a, pb]
+          out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
+          let pf7 ← mkAppM ``sr_cl_b7r #[a, b]
+          out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf7, pf7)
+        -- O1 clauses: mined pivot × sign-unknown cofactor
+        let le' (x y : Expr) : MetaM Expr := mkAppM ``LE.le #[x, y]
+        let (losA', hisA') ← mineBounds a
+        let (losB', hisB') ← mineBounds b
+        if bU then
+          for pv in hisA' do
+            if let some ph := ← tryDischarge cache (← le' a (mkIntLit pv)) then
+              for lem in [``sr_cl_o1_ub, ``sr_cl_o1_ub'] do
+                let pf ← mkAppM lem #[b, ph]
+                out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
+          for pv in losA' do
+            if let some ph := ← tryDischarge cache (← le' (mkIntLit pv) a) then
+              for lem in [``sr_cl_o1_lb, ``sr_cl_o1_lb'] do
+                let pf ← mkAppM lem #[b, ph]
+                out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
+        if aU then
+          for pv in hisB' do
+            if let some ph := ← tryDischarge cache (← le' b (mkIntLit pv)) then
+              for lem in [``sr_cl_o1_ubr, ``sr_cl_o1_ubr'] do
+                let pf ← mkAppM lem #[a, ph]
+                out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
+          for pv in losB' do
+            if let some ph := ← tryDischarge cache (← le' (mkIntLit pv) b) then
+              for lem in [``sr_cl_o1_lbr, ``sr_cl_o1_lbr'] do
+                let pf ← mkAppM lem #[a, ph]
+                out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
+    pure out
+  for (nm, tyF, pf) in facts do
+    noteFact nm tyF pf
+
 /-- Generation round: instantiate the rule vocabulary for every monomial,
 inner monomials first so their facts feed outer premises; then the pair
 phase over the completed context. -/
-def generate (ms : Array Expr) : TacticM Unit := do
-  let cache : DCache ← IO.mkRef {}
+def generate (cache : DCache) (ms : Array Expr) : TacticM Unit := do
   let mut idx := 0
   for m in ms do
     let facts ← if (isIntMul? m).isSome then factsFor cache m idx
@@ -1003,17 +1205,28 @@ def saturateCore (stats : Bool := false) : TacticM Unit := do
     let ((), ms) ← act.run #[]
     pure ms
   -- 2. generate
-  generate ms
+  let cache : DCache ← IO.mkRef {}
+  generate cache ms
   let t2 ← IO.monoMsNow
   -- 3. leaf: omega atomizes the (ring_nf-canonized) monomials natively —
-  -- no explicit generalization needed; SaturateTests pins this assumption
-  evalTactic (← `(tactic| omega))
+  -- no explicit generalization needed; SaturateTests pins this assumption.
+  -- On failure: class D failure-gated clause phase (Z3's lazy clause
+  -- emission, model-free) — roll back, note conditional clauses, retry.
+  let s ← saveState
+  let retried ← try
+    evalTactic (← `(tactic| omega))
+    pure false
+  catch _ =>
+    restoreState s
+    generateClauses cache ms
+    evalTactic (← `(tactic| omega))
+    pure true
   let t3 ← IO.monoMsNow
   if stats then
     logInfo s!"nla_saturate: ring_nf {t1 - t0}ms · generate {t2 - t1}ms \
       ({ms.size} monomials, {← nlaTacticCall.get} tactic calls, \
       {← nlaCacheHit.get} cache hits, {← nlaLitFast.get} literal fast) \
-      · omega {t3 - t2}ms"
+      · omega {t3 - t2}ms{if retried then " (clause retry)" else ""}"
 
 elab "nla_saturate" : tactic => saturateCore
 

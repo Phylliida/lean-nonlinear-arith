@@ -77,7 +77,18 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   factor): baseline heartbeat-timeout → ~2.1s (32 tactic calls, 162
   cache hits); pinned as a regression test, 32 tests green.
   `nla_saturate_stats` reports phase timings + oracle counters. See
-  DESIGN-discharge-oracle.md §Outcome. **Slice 7 done (2026-07-24 pm):
+  DESIGN-discharge-oracle.md §Outcome. **Slice 8 done (2026-07-24 eve):
+  class D — failure-gated conditional clauses.** The leaf runs once on
+  the eager layer; on failure the tactic rolls back, notes the clause
+  vocabulary, and retries — Z3's lazy model-guided emission, model-free.
+  Clauses: 4 sign (`sr_cl_pp/nn/pn/np`), 2 zero + B5 (`sr_cl_zl/zr/b5`),
+  B7/B8 in natAbs form (omega-native, clause-phase-only since natAbs
+  case-splits), 8 O1 pivot clauses. Gates: lattice-unknown factor
+  required; B7/B8 need a discharged ≠0; O1 a discharged pivot. Specimen
+  `x≠0 ∧ y≠0 → x*y≠0` closes; 53 tests green; stress stays on the eager
+  path (56 calls, no retry — zero clause cost for green goals).
+  ⚠ timings this eve under load-88 (uptime lesson) — call counts are the
+  stable metric. **Slice 7 done (2026-07-24 pm):
   class C — down-propagation + pair rules.** O2/O3 cancellation via a
   zero-call syntactic pair scan (all four mul_comm alignments, GE/GT
   normalized with expected-type hints) + lattice signs; product
