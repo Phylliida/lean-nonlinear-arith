@@ -45,7 +45,8 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   sorry-free; RULES.md fully resolved (27 rows proven or n/a-with-reason,
   zero todo). L1's mathematical content is finished — nla-05..07 are
   metaprogramming over a fixed lemma kit.
-- **nla-05** `active` Monomial bookkeeping (emonics port) + generator loop.
+- **nla-05** `done` (2026-07-25; hardening follow-ons live in nla-21..23)
+  Monomial bookkeeping (emonics port) + generator loop.
   **Slice 1 done (2026-07-24):** `Tactic/Saturate.lean` — `nla_saturate` v0
   proves the architecture end-to-end on 11 regression tests
   (`Tactic/SaturateTests.lean`): postorder monomial collection over ℤ,
@@ -198,9 +199,30 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   the simplex adds a feasible point over the same structure. Consumers
   waiting on the model: clause-phase relevance filtering, model-anchored
   D4/D5/M/T tightness, derived product-pair comparisons (O2/O3 residual).
-- **nla-07** `todo` Gröbner layer via grind ring engine / linear_combination,
-  unthrottled. Re-run nla-03 corpus; expect most multiplicative-equality
-  specimens to close here.
+- **nla-07** `done` (2026-07-25) Gröbner layer via grind's ring engine, per
+  the DESIGN §L1 decision (no PDD port). ℤ-equality goals: sandboxed fast
+  path before saturation (Z3 stage-3 scheduling). All shapes: a second
+  chance after the eager leaf fails, ahead of the clause tiers (their
+  sign-unknown case-split cost dwarfs a failed ring probe — probe-confirmed
+  heartbeat blowout the other way around). `≤`/`≥` goals additionally try
+  the `le_of_eq`-strengthened form: grind's ring module derives ideal
+  equalities but its cutsat bridge never consumes them (probe-confirmed on
+  the equality-core inequality specimen). Attempts heartbeat-capped at half
+  the remaining budget (`Core.Context` override + `tryCatchRuntimeEx`).
+  Census rows division_699 + cauchy_schwarz_233 close push-button; 112
+  examples green.
+- **nla-07b** `todo` **Gröbner→saturation propagation.** Z3's
+  `propagate_eqs`/`propagate_fixed`/`propagate_linear_equations` feed
+  Gröbner-DERIVED equalities back into the LRA solver, where they become
+  anchors/pins for the order/tangent/interval machinery on inequality
+  goals — a composition the goal-directed grind reuse cannot replicate
+  (grind exposes no basis API; probe: it derives `e*a - c*d = 0` in its
+  basis yet fails the ≤ goal). Port: small meta-Buchberger over ℚ[atoms]
+  with cofactor tracking (untrusted, oracle-style), noting derived
+  equalities whose monomials all live in the collected atom vocabulary,
+  each certified by `linear_combination` with delaborated cofactors (or
+  discharged by a grind call on the equality subgoal). Pairs naturally
+  with the nla-06 simplex work.
 
 ## L1 hardening (from the 2026-07-25 code review; directives from Danielle)
 

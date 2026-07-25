@@ -146,7 +146,7 @@ interval division incl. powers (`monomial_bounds.cpp:292,318`).
 | propagate_down (products) | **fixed (class C slice)** — `sr_down_{ub,lb}_{pos,neg}` + single-sided variants: exact interval division in meta (soundness rests on the decide-checked side conditions, so the β formula can only lose tightness), lattice unit-strengthening for strict-signed divisors, tightness gate mirroring `should_propagate_*`. Plus `sr_dsign_*`: divisor-sign quotients of the atom's sign, which the LIA leaf cannot derive. n-ary chains: **fixed (multi-round slice, 2026-07-25)** — bounded rounds to fixpoint with noted-set dedup; a chain running against the context order (Gauss-Seidel gap) is picked up on the next round |
 | squares (MB1-2/T2 for `x^2`) | **was a gap, fixed this slice** — pow monomials previously got sign rules only; now secant upper + per-anchor tangent lower at mined bounds (the convex envelope; McCormick for `a*b`, secant/tangent for `a^2`) |
 | H1 | believed covered — per-monomial McCormick envelope + LIA leaf reproduces Horner interval brackets (Horner's factored forms don't survive `ring_nf` anyway); pinned by the Horner specimen test |
-| G1 | out of scope for L1 — nla-07 Gröbner layer |
+| G1 | **fixed (nla-07, 2026-07-25)** — grind's commutative-ring engine as the unthrottled Gröbner basis: ℤ-equality-goal fast path before saturation (Z3 stage-3 priority) + post-eager-leaf position ahead of the clause tiers; `le_of_eq`-strengthened attempt for `≤`/`≥` goals (grind's cutsat does not consume ring-derived equalities — probe-confirmed); heartbeat-capped and sandboxed. Residual (**nla-07b**): Z3's `propagate_eqs`/`propagate_linear_equations` feed Gröbner-DERIVED equalities back to the LRA solver, where they become anchors for order/tangent rules on inequality goals — replicating that composition needs a meta-Buchberger with cofactor tracking and `linear_combination`-certified noting (grind exposes no basis API) |
 | BR1 | covered — omega leaf is LIA-complete over the atomized vocabulary |
 | powers k ≥ 3 | **fixed (k ≥ 3 slice, 2026-07-25)** — interval-pow envelopes (`sr_pow_ub_odd/lb_odd` via `Odd.pow_le_pow`, `sr_pow_ub_even` via `M = max(\|lo\|,\|hi\|)`, `sr_pow_lb_even_pos/neg`) + MB4/MB5 roots at general k (`sr_pow_root_*`: contrapositive `u < (r+1)^p` forms mirroring the k = 2 pattern; meta integer k-th roots by binary search, odd roots over all of ℤ). k = 2 keeps its tighter secant/tangent path; k ≥ 3 convexity secants would EXCEED Z3 (interval bounds only) — recorded as a possible enhancement, not parity debt |
 
@@ -201,7 +201,10 @@ linear hypotheses, `lp_bound_propagator` analogue — derived tightest
 bounds join every mined-anchor set) and O4 ±-equivalences (parity
 union-find + eager bridges + transfer clauses). The oracle is fully
 untrusted: it only suggests anchors/equalities, every use is
-omega-discharged. Still open, needing the oracle's *model* (exact-rational
-simplex feasible point — nla-06 proper): real clause-phase relevance
-filtering and model-anchored D4/D5/M/T tightness. After that: nla-07
-Gröbner layer, then L2/L3 (nlsat).
+omega-discharged. **Gröbner layer landed same day (nla-07)** — see the G1
+row; census rows division_699 and cauchy_schwarz_233 are push-button now.
+Still open: nla-07b (Gröbner-derived-equality propagation into the
+saturation anchors — meta-Buchberger with certificates) and the oracle
+*model* work (exact-rational simplex feasible point — nla-06 proper):
+clause-phase relevance filtering and model-anchored D4/D5/M/T tightness.
+After that: L2/L3 (nlsat).

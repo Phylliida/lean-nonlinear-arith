@@ -45,7 +45,17 @@ theorem cauchy_schwarz_233 (xn dy dz t1 v1 : ℤ)
 
 /-- ordering.rs:139 — transitivity of `≤` on fractions: the one genuinely
 order-theoretic specimen of the three. Baseline: `nlinarith` needs product
-hints (the two cross-multiplications); plain `nlinarith` also worth testing. -/
+hints (the two cross-multiplications); plain `nlinarith` also worth testing.
+
+Status 2026-07-25 (post nla-07): `nla_saturate` (L1 + unthrottled Gröbner)
+does NOT close this — parity-consistent, since all three specimens are
+census failures of Z3-with-nlsat-amputated and this one's closure needs
+degree-3 cross products (`hab·dc`, `hbc·da`) that exist as monomials
+nowhere in the problem: nlsat territory (L2/L3), not a generator gap. The
+other two specimens now close push-button (the unthrottled Gröbner layer
+absorbed them, as DESIGN §1 predicted). Cost note: our failure here is a
+heartbeat timeout in the clause tiers rather than Z3's fast
+generators-exhausted pass — acceptable until L2 exists to catch it. -/
 theorem ordering_139 (a_num b_num c_num da db dc : ℤ)
     (hab : a_num * db ≤ b_num * da)
     (hbc : b_num * dc ≤ c_num * db)
