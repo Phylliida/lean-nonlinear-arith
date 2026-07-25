@@ -142,13 +142,13 @@ interval division incl. powers (`monomial_bounds.cpp:292,318`).
 | D4, D5 | **fixed (div/mod slice, 2026-07-25)** — literal divisors omega-native at the leaf (no rules). Symbolic divisors: per-pair generation of (i) the defining equation `y·(x/y) + x%y = x` (the axiomatization Z3's core asserts per div/mod term; its product joins the monomial set so the full product machinery reasons about the quotient), (ii) sign-gated Euclidean mod range (`0 ≤ x%y` for `y ≠ 0` incl. discharged-≠0 path, `x%y < y` / `< -y` by lattice sign), (iii) const-substitution at a point-mined divisor = the D4/D5 `y = yv` anchor collapsed to an omega-native literal (strictly stronger than Z3's guarded clause at that anchor), (iv) D4/D5 interval-quotient bounds via `Divisions.ediv_le_of_le`/`le_ediv_of_ge` — candidate `q` by Euclidean interval division in meta, premises omega-discharged (`y·q` has literal `q`, so they are linear); soundness rides on the templates, a wrong `q` only fails to note. Residual: model-anchored `yv` beyond mined points → class E / oracle v1, same routing as M/T |
 | MB1–2 | covered — corner rules, literal-folded exactly like Z3's `propagate_bound` (evaluated `q`, ±1 strict-int tightening on both sides) |
 | MB3 | covered — `sr_pow_even_nonneg` unconditional |
-| MB4, MB5 | **fixed (class C slice)** for k = 2 — `sr_sq_root_ub_hi/lo` (both conjuncts noted separately, as Z3 emits them) and the genuinely-disjunctive `sr_sq_root_lb` (omega splits); floor/ceil √ in meta, decide-certified. k ≥ 3 roots boarded with the k ≥ 3 envelopes |
+| MB4, MB5 | **fixed (class C slice)** for k = 2 — `sr_sq_root_ub_hi/lo` (both conjuncts noted separately, as Z3 emits them) and the genuinely-disjunctive `sr_sq_root_lb` (omega splits); floor/ceil √ in meta, decide-certified. k ≥ 3: **fixed (k ≥ 3 slice, 2026-07-25)** — see the powers row |
 | propagate_down (products) | **fixed (class C slice)** — `sr_down_{ub,lb}_{pos,neg}` + single-sided variants: exact interval division in meta (soundness rests on the decide-checked side conditions, so the β formula can only lose tightness), lattice unit-strengthening for strict-signed divisors, tightness gate mirroring `should_propagate_*`. Plus `sr_dsign_*`: divisor-sign quotients of the atom's sign, which the LIA leaf cannot derive. n-ary chains: **fixed (multi-round slice, 2026-07-25)** — bounded rounds to fixpoint with noted-set dedup; a chain running against the context order (Gauss-Seidel gap) is picked up on the next round |
 | squares (MB1-2/T2 for `x^2`) | **was a gap, fixed this slice** — pow monomials previously got sign rules only; now secant upper + per-anchor tangent lower at mined bounds (the convex envelope; McCormick for `a*b`, secant/tangent for `a^2`) |
 | H1 | believed covered — per-monomial McCormick envelope + LIA leaf reproduces Horner interval brackets (Horner's factored forms don't survive `ring_nf` anyway); pinned by the Horner specimen test |
 | G1 | out of scope for L1 — nla-07 Gröbner layer |
 | BR1 | covered — omega leaf is LIA-complete over the atomized vocabulary |
-| powers k ≥ 3 | **boarded** — envelope rules currently k = 2 only; Z3's interval pow is k-generic |
+| powers k ≥ 3 | **fixed (k ≥ 3 slice, 2026-07-25)** — interval-pow envelopes (`sr_pow_ub_odd/lb_odd` via `Odd.pow_le_pow`, `sr_pow_ub_even` via `M = max(\|lo\|,\|hi\|)`, `sr_pow_lb_even_pos/neg`) + MB4/MB5 roots at general k (`sr_pow_root_*`: contrapositive `u < (r+1)^p` forms mirroring the k = 2 pattern; meta integer k-th roots by binary search, odd roots over all of ℤ). k = 2 keeps its tighter secant/tangent path; k ≥ 3 convexity secants would EXCEED Z3 (interval bounds only) — recorded as a possible enhancement, not parity debt |
 
 Gap classes:
 
@@ -196,7 +196,10 @@ Gap classes:
 ## next actions
 
 All emission sites are read, rowed, template-proven (nla-04), and now
-generator-audited (above). Open parity work, in order (class C, class D,
-the multi-round loop, and div/mod collection are done — see above): k ≥ 3
-envelopes + roots, oracle v1 (also the route to O4 ±-equivalences, real
-clause-phase relevance filtering, and model-anchored D4/D5/M/T tightness).
+generator-audited (above). L1 generator parity work is COMPLETE as of
+2026-07-25 (class C, class D, multi-round, div/mod, k ≥ 3 — see above).
+Remaining, all routed through one artifact: **oracle v1** (DESIGN-discharge-
+oracle §2b/§3) — derived-not-present bounds and comparisons, O4
+±-equivalences, real clause-phase relevance filtering, and model-anchored
+D4/D5/M/T tightness. After that: nla-07 Gröbner layer, nla-06 model
+guidance, then L2/L3 (nlsat).

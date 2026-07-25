@@ -373,3 +373,37 @@ example (x y z : ℤ) (hy : 2 ≤ y) (hz : 2 ≤ z) (hx : 0 ≤ x) (hx' : x ≤ 
     x / y / z ≤ 10 := by nla_saturate
 example (x y z : ℤ) (hy : 0 < y) (hz : 0 ≤ z) : 0 ≤ (x % y) * z := by
   nla_saturate
+
+/-! ## k ≥ 3 power envelopes and roots (MB1-2/MB4/MB5 at general exponents)
+
+Z3's monomial_bounds interval powers and root propagation are k-generic;
+k = 2 keeps its tighter secant/tangent path. Roots use the contrapositive
+`u < (r+1)^p` pattern with meta-computed integer k-th roots. -/
+
+-- odd interval-pow envelopes
+example (x : ℤ) (h : x ≤ 3) : x ^ 3 ≤ 27 := by nla_saturate
+example (x : ℤ) (h : -2 ≤ x) : -8 ≤ x ^ 3 := by nla_saturate
+
+-- even envelope ub (M = max |lo| |hi| — the negative side dominates here)
+example (x : ℤ) (h1 : -3 ≤ x) (h2 : x ≤ 2) : x ^ 4 ≤ 81 := by nla_saturate
+
+-- even envelope lb, positive and negative sides
+example (x : ℤ) (h : 2 ≤ x) : 16 ≤ x ^ 4 := by nla_saturate
+example (x : ℤ) (h : x ≤ -2) : 16 ≤ x ^ 4 := by nla_saturate
+
+-- MB4 odd root, incl. a negative bound (floor root over ℤ)
+example (x : ℤ) (h : x ^ 3 ≤ 30) : x ≤ 3 := by nla_saturate
+example (x : ℤ) (h : x ^ 3 ≤ -7) : x ≤ -2 := by nla_saturate
+
+-- MB4 even root, both conjuncts
+example (x : ℤ) (h : x ^ 4 ≤ 80) : x ≤ 2 := by nla_saturate
+example (x : ℤ) (h : x ^ 4 ≤ 80) : -2 ≤ x := by nla_saturate
+
+-- MB5 odd root (ceil root: 3^3 = 27 < 30 forces 4)
+example (x : ℤ) (h : 30 ≤ x ^ 3) : 4 ≤ x := by nla_saturate
+
+-- MB5 even root: genuinely disjunctive, resolved by a sign hypothesis
+example (x : ℤ) (h : 17 ≤ x ^ 4) (hx : 0 ≤ x) : 3 ≤ x := by nla_saturate
+
+-- k = 5 at scale
+example (x : ℤ) (h : x ^ 5 ≤ 100000) : x ≤ 10 := by nla_saturate

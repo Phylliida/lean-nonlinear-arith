@@ -117,6 +117,75 @@ theorem sr_div_subst (x : ℤ) {y c : ℤ} (h : y = c) : x / y = x / c := by
 theorem sr_mod_subst (x : ℤ) {y c : ℤ} (h : y = c) : x % y = x % c := by
   rw [h]
 
+/- k ≥ 3 power rules (RULES rows MB1-2/MB4/MB5 at general exponents — Z3's
+monomial_bounds interval powers and root propagation are k-generic).
+Conclusions carry pre-evaluated literals (corner-fold rule); the `hc`/`cnd`
+equalities and comparisons are decide-certified at generation time. Root
+lemmas are contrapositive forms mirroring the k = 2 `u < (r+1)²` pattern. -/
+theorem sr_pow_ub_odd {a : ℤ} {p : ℕ} (hp : Odd p) {hi c : ℤ}
+    (h : a ≤ hi) (hc : hi ^ p = c) : a ^ p ≤ c :=
+  hc ▸ hp.pow_le_pow.mpr h
+theorem sr_pow_lb_odd {a : ℤ} {p : ℕ} (hp : Odd p) {lo c : ℤ}
+    (h : lo ≤ a) (hc : lo ^ p = c) : c ≤ a ^ p :=
+  hc ▸ hp.pow_le_pow.mpr h
+theorem sr_pow_ub_even {a : ℤ} {p : ℕ} (hp : Even p) {lo hi M c : ℤ}
+    (h1 : lo ≤ a) (h2 : a ≤ hi) (hlo : -M ≤ lo) (hhi : hi ≤ M)
+    (hc : M ^ p = c) : a ^ p ≤ c := by
+  have habs : |a| ≤ M := abs_le.mpr ⟨by omega, by omega⟩
+  calc a ^ p = |a| ^ p := (hp.pow_abs a).symm
+    _ ≤ M ^ p := pow_le_pow_left₀ (abs_nonneg a) habs p
+    _ = c := hc
+theorem sr_pow_lb_even_pos {a : ℤ} {p : ℕ} {lo c : ℤ}
+    (h0 : 0 ≤ lo) (h : lo ≤ a) (hc : lo ^ p = c) : c ≤ a ^ p :=
+  hc ▸ pow_le_pow_left₀ h0 h p
+theorem sr_pow_lb_even_neg {a : ℤ} {p : ℕ} (hp : Even p) {hi c : ℤ}
+    (h0 : hi ≤ 0) (h : a ≤ hi) (hc : (-hi) ^ p = c) : c ≤ a ^ p := by
+  have habs : -hi ≤ |a| := (neg_le_neg h).trans (neg_le_abs a)
+  calc c = (-hi) ^ p := hc.symm
+    _ ≤ |a| ^ p := pow_le_pow_left₀ (by omega) habs p
+    _ = a ^ p := hp.pow_abs a
+theorem sr_pow_root_ub_odd {v : ℤ} {p : ℕ} (hp : Odd p) {u r : ℤ}
+    (h : v ^ p ≤ u) (cnd : u < (r + 1) ^ p) : v ≤ r := by
+  by_contra hcon
+  push_neg at hcon
+  have : (r + 1) ^ p ≤ v ^ p := hp.pow_le_pow.mpr (by omega)
+  omega
+-- `hr` is load-bearing (omega uses it for `0 ≤ r + 1`; the lemma is false
+-- for r < -1) — the unused-variable lint cannot see through omega
+set_option linter.unusedVariables false in
+theorem sr_pow_root_ub_even_hi {v : ℤ} {p : ℕ} {u r : ℤ}
+    (hr : 0 ≤ r) (h : v ^ p ≤ u) (cnd : u < (r + 1) ^ p) : v ≤ r := by
+  by_contra hcon
+  push_neg at hcon
+  have : (r + 1) ^ p ≤ v ^ p := pow_le_pow_left₀ (by omega) (by omega) p
+  omega
+set_option linter.unusedVariables false in
+theorem sr_pow_root_ub_even_lo {v : ℤ} {p : ℕ} (hp : Even p) {u r : ℤ}
+    (hr : 0 ≤ r) (h : v ^ p ≤ u) (cnd : u < (r + 1) ^ p) : -r ≤ v := by
+  by_contra hcon
+  push_neg at hcon
+  have h1 : (r + 1) ^ p ≤ (-v) ^ p := pow_le_pow_left₀ (by omega) (by omega) p
+  rw [hp.neg_pow] at h1
+  omega
+theorem sr_pow_root_lb_odd {v : ℤ} {p : ℕ} (hp : Odd p) {l r : ℤ}
+    (h : l ≤ v ^ p) (cnd : (r - 1) ^ p < l) : r ≤ v := by
+  by_contra hcon
+  push_neg at hcon
+  have : v ^ p ≤ (r - 1) ^ p := hp.pow_le_pow.mpr (by omega)
+  omega
+-- no `1 ≤ r` premise needed: for r ≤ 0 the disjunction is a tautology, and
+-- the contradiction branch derives r ≥ 1 from -r < v < r on its own
+theorem sr_pow_root_lb_even {v : ℤ} {p : ℕ} (hp : Even p) {l r : ℤ}
+    (h : l ≤ v ^ p) (cnd : (r - 1) ^ p < l) : r ≤ v ∨ v ≤ -r := by
+  by_contra hcon
+  push_neg at hcon
+  obtain ⟨h1, h2⟩ := hcon
+  have habs : |v| ≤ r - 1 := abs_le.mpr ⟨by omega, by omega⟩
+  have : v ^ p ≤ (r - 1) ^ p := by
+    calc v ^ p = |v| ^ p := (hp.pow_abs v).symm
+      _ ≤ (r - 1) ^ p := pow_le_pow_left₀ (abs_nonneg v) habs p
+  omega
+
 /- Zero-product split (RULES row B5): genuinely disjunctive conclusion; the
 omega leaf case-splits on noted `∨` hypotheses. -/
 theorem sr_zero_split (h : a * b = 0) : a = 0 ∨ b = 0 := mul_eq_zero.mp h
@@ -519,6 +588,32 @@ def isIntPow? (e : Expr) : Option (Expr × Nat) :=
 /-- Integer literal test (numerals and their negations). -/
 def isIntLit (e : Expr) : Bool :=
   (e.int?).isSome
+
+/-- Binary-search worker for `natFloorRoot`: invariant `lo ^ k ≤ u`. -/
+partial def natFloorRootGo (u k lo hi : Nat) : Nat :=
+  if lo ≥ hi then lo
+  else
+    let mid := (lo + hi + 1) / 2
+    if mid ^ k ≤ u then natFloorRootGo u k mid hi
+    else natFloorRootGo u k lo (mid - 1)
+
+/-- Largest `r` with `r ^ k ≤ u` (`k ≥ 1`). -/
+def natFloorRoot (u k : Nat) : Nat := natFloorRootGo u k 0 u
+
+/-- Smallest `r` with `u ≤ r ^ k`. -/
+def natCeilRoot (u k : Nat) : Nat :=
+  let s := natFloorRoot u k
+  if s ^ k == u then s else s + 1
+
+/-- Largest `r : ℤ` with `r ^ k ≤ u`, for odd `k` (any sign of `u`). -/
+def intFloorRootOdd (u : Int) (k : Nat) : Int :=
+  if 0 ≤ u then .ofNat (natFloorRoot u.toNat k)
+  else -(.ofNat (natCeilRoot (-u).toNat k))
+
+/-- Smallest `r : ℤ` with `u ≤ r ^ k`, for odd `k` (any sign of `u`). -/
+def intCeilRootOdd (u : Int) (k : Nat) : Int :=
+  if 0 ≤ u then .ofNat (natCeilRoot u.toNat k)
+  else -(.ofNat (natFloorRoot (-u).toNat k))
 
 /-- Destructure an `ℤ` Euclidean division or modulo with a NON-literal
 divisor (literal divisors are omega-native at the leaf and need no rules). -/
@@ -1117,6 +1212,102 @@ def factsForPow (cache : DCache) (m : Expr) (idx : Nat) :
                 (← mkAppM ``LT.lt #[← mkAppM ``HMul.hMul #[rm1, rm1], mkIntLit l])
               let pf ← mkAppM ``sr_sq_root_lb #[ph, cnd]
               out := out.push (.mkSimple s!"nla_rt_{idx}_{out.size}", ← inferType pf, pf)
+    -- k ≥ 3: interval-pow envelopes + MB4/MB5 roots at general exponents
+    -- (Z3's monomial_bounds interval powers are k-generic; k = 2 keeps its
+    -- tighter secant/tangent path above). All emitted constants are
+    -- pre-evaluated literals; exactness conditions decide-certified.
+    if k ≥ 3 then
+      let (los, his) ← mineBounds a
+      let le (x y : Expr) : MetaM Expr := mkAppM ``LE.le #[x, y]
+      let odd := k % 2 == 1
+      let hkP? : Option Expr ←
+        if odd then some <$> mkDecideProof (← mkAppM ``Odd #[kE])
+        else some <$> mkDecideProof (← mkAppM ``Even #[kE])
+      let hk := hkP?.get!
+      let powLit (b : Int) : MetaM Expr :=
+        mkAppM ``HPow.hPow #[mkIntLit b, kE]
+      -- interval-pow envelopes
+      if odd then
+        for hi in his do
+          if let some ph := ← tryDischarge cache (← le a (mkIntLit hi)) then
+            let hc ← mkDecideProof (← mkAppM ``Eq #[← powLit hi, mkIntLit (hi ^ k)])
+            let pf ← mkAppM ``sr_pow_ub_odd #[hk, ph, hc]
+            out := out.push (.mkSimple s!"nla_pev_{idx}_{out.size}", ← inferType pf, pf)
+        for lo in los do
+          if let some ph := ← tryDischarge cache (← le (mkIntLit lo) a) then
+            let hc ← mkDecideProof (← mkAppM ``Eq #[← powLit lo, mkIntLit (lo ^ k)])
+            let pf ← mkAppM ``sr_pow_lb_odd #[hk, ph, hc]
+            out := out.push (.mkSimple s!"nla_pev_{idx}_{out.size}", ← inferType pf, pf)
+      else
+        for lo in los do
+          for hi in his do
+            if let some pfs := ← dischargeAll cache
+                #[← le (mkIntLit lo) a, ← le a (mkIntLit hi)] then
+              let M : Int := .ofNat (max lo.natAbs hi.natAbs)
+              let hlo ← mkDecideProof
+                (← le (← mkAppM ``Neg.neg #[mkIntLit M]) (mkIntLit lo))
+              let hhi ← mkDecideProof (← le (mkIntLit hi) (mkIntLit M))
+              let hc ← mkDecideProof (← mkAppM ``Eq #[← powLit M, mkIntLit (M ^ k)])
+              let pf ← mkAppM ``sr_pow_ub_even #[hk, pfs[0]!, pfs[1]!, hlo, hhi, hc]
+              out := out.push (.mkSimple s!"nla_pev_{idx}_{out.size}", ← inferType pf, pf)
+        for lo in los do
+          if lo ≥ 0 then
+            if let some ph := ← tryDischarge cache (← le (mkIntLit lo) a) then
+              let h0 ← mkDecideProof (← le (mkIntLit 0) (mkIntLit lo))
+              let hc ← mkDecideProof (← mkAppM ``Eq #[← powLit lo, mkIntLit (lo ^ k)])
+              let pf ← mkAppM ``sr_pow_lb_even_pos #[h0, ph, hc]
+              out := out.push (.mkSimple s!"nla_pev_{idx}_{out.size}", ← inferType pf, pf)
+        for hi in his do
+          if hi ≤ 0 then
+            if let some ph := ← tryDischarge cache (← le a (mkIntLit hi)) then
+              let h0 ← mkDecideProof (← le (mkIntLit hi) (mkIntLit 0))
+              let negHi ← mkAppM ``Neg.neg #[mkIntLit hi]
+              let hc ← mkDecideProof (← mkAppM ``Eq
+                #[← mkAppM ``HPow.hPow #[negHi, kE], mkIntLit ((-hi) ^ k)])
+              let pf ← mkAppM ``sr_pow_lb_even_neg #[hk, h0, ph, hc]
+              out := out.push (.mkSimple s!"nla_pev_{idx}_{out.size}", ← inferType pf, pf)
+      -- MB4/MB5 roots
+      let (losP, hisP) ← mineBounds m
+      for u in hisP do
+        if odd then
+          let r := intFloorRootOdd u k
+          if his.all (r < ·) then
+            if let some ph := ← tryDischarge cache (← le m (mkIntLit u)) then
+              let rp1 ← mkAppM ``HPow.hPow
+                #[← mkAppM ``HAdd.hAdd #[mkIntLit r, mkIntLit 1], kE]
+              let cnd ← mkDecideProof (← mkAppM ``LT.lt #[mkIntLit u, rp1])
+              let pf ← mkAppM ``sr_pow_root_ub_odd #[hk, ph, cnd]
+              out := out.push (.mkSimple s!"nla_rt_{idx}_{out.size}", ← inferType pf, pf)
+        else if u ≥ 0 then
+          let r : Int := .ofNat (natFloorRoot u.toNat k)
+          if his.all (r < ·) || los.all (-r < ·) then
+            if let some ph := ← tryDischarge cache (← le m (mkIntLit u)) then
+              let hr ← mkDecideProof (← le (mkIntLit 0) (mkIntLit r))
+              let rp1 ← mkAppM ``HPow.hPow
+                #[← mkAppM ``HAdd.hAdd #[mkIntLit r, mkIntLit 1], kE]
+              let cnd ← mkDecideProof (← mkAppM ``LT.lt #[mkIntLit u, rp1])
+              let pfHi ← mkAppM ``sr_pow_root_ub_even_hi #[hr, ph, cnd]
+              out := out.push (.mkSimple s!"nla_rt_{idx}_{out.size}", ← inferType pfHi, pfHi)
+              let pfLo ← mkAppM ``sr_pow_root_ub_even_lo #[hk, hr, ph, cnd]
+              out := out.push (.mkSimple s!"nla_rt_{idx}_{out.size}", ← inferType pfLo, pfLo)
+      for l in losP do
+        if odd then
+          let r := intCeilRootOdd l k
+          if los.all (· < r) then
+            if let some ph := ← tryDischarge cache (← le (mkIntLit l) m) then
+              let rm1 ← mkAppM ``HPow.hPow
+                #[← mkAppM ``HSub.hSub #[mkIntLit r, mkIntLit 1], kE]
+              let cnd ← mkDecideProof (← mkAppM ``LT.lt #[rm1, mkIntLit l])
+              let pf ← mkAppM ``sr_pow_root_lb_odd #[hk, ph, cnd]
+              out := out.push (.mkSimple s!"nla_rt_{idx}_{out.size}", ← inferType pf, pf)
+        else if l ≥ 1 then
+          let r : Int := .ofNat (natCeilRoot l.toNat k)
+          if let some ph := ← tryDischarge cache (← le (mkIntLit l) m) then
+            let rm1 ← mkAppM ``HPow.hPow
+              #[← mkAppM ``HSub.hSub #[mkIntLit r, mkIntLit 1], kE]
+            let cnd ← mkDecideProof (← mkAppM ``LT.lt #[rm1, mkIntLit l])
+            let pf ← mkAppM ``sr_pow_root_lb_even #[hk, ph, cnd]
+            out := out.push (.mkSimple s!"nla_rt_{idx}_{out.size}", ← inferType pf, pf)
     return out
 
 /-- Facts for a div/mod pair `(x, y)` with symbolic divisor `y` (RULES rows

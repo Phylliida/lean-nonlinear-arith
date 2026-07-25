@@ -147,10 +147,19 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   correctly fails (the passing test's unused-variable lint is a linter
   false positive — it only tracks syntactic uses). 81 examples green;
   stress goal untouched (no div atoms → zero cost).
-  Remaining parity work, in order: (d) k ≥ 3 power envelopes + roots,
-  (e) oracle v1 per the design doc (folds into nla-06; also the route
-  to O4 ±-equivalences, clause-phase relevance filtering, and
-  model-anchored D4/D5/M/T tightness).
+  **Slice 11 done (2026-07-25): k ≥ 3 power envelopes + roots.**
+  Interval-pow envelopes (odd via `Odd.pow_le_pow`, even via
+  `M = max(|lo|,|hi|)` and signed lb variants) + MB4/MB5 roots at
+  general exponents (contrapositive `u < (r+1)^p` lemmas mirroring the
+  k = 2 pattern; meta integer k-th roots by binary search, odd roots
+  over all of ℤ — negative radicands included). k = 2 keeps its tighter
+  secant/tangent path. `sr_pow_root_lb_even` needed no `1 ≤ r` premise
+  (tautological disjunction for r ≤ 0; contradiction branch derives
+  r ≥ 1 itself). 98 examples green. **L1 generator parity is COMPLETE**
+  — every RULES row is fixed, n/a-with-reason, or routed to oracle v1
+  (derived bounds, O4 ±-equiv, clause relevance, model-anchored
+  tightness). Next: oracle v1 (DESIGN-discharge-oracle §2b/§3, folds
+  into nla-06), then nla-07 Gröbner.
   Original design sketch (2026-07-24):
   * *atom map*: `Expr ↦ atom id` for maximal non-arithmetic subterms; monomial
     = sorted multiset of atom ids + sign, canonized like `emonics.cpp`;
