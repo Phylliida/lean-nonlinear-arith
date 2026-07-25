@@ -441,3 +441,28 @@ example (a b c : ℤ) (h1 : b ≤ a + 2) (h2 : a ≤ 5) (h3 : 0 ≤ b)
 -- derived anchor for the square tangent envelope (b ≥ 4 ⟹ 8b - 16 ≤ b²)
 example (a b : ℤ) (h1 : a ≤ b - 1) (h2 : 3 ≤ a) : 16 ≤ b ^ 2 := by
   nla_saturate
+
+/-! ### Oracle v1: O4 ±-equivalences (RULES O4, Z3 evars/generate_mon_ol)
+
+The oracle's parity union-find derives unit ±-equalities; fully-equivalent
+monomial pairs bridge eagerly as `q = ±p` (Z3's emonics canonization),
+one-equiv-factor pairs get the model-free order-transfer clauses in tier 2.
+All five probe-confirmed failing without the evars pass (2026-07-25). -/
+
+-- eager mul bridge (d ≡ -c derived → a*d = -(a*c))
+example (a c d : ℤ) (h1 : d = -c) (h2 : 3 ≤ a * c) : a * d ≤ -3 := by
+  nla_saturate
+
+-- eager pow bridges: symbolic bound, only the bridge can close these
+example (c d x : ℤ) (h1 : d = -c) (h2 : c ^ 2 ≤ x) : d ^ 2 ≤ x := by
+  nla_saturate
+example (c d x : ℤ) (h1 : d = -c) (h2 : x ≤ c ^ 3) : d ^ 3 ≤ -x := by
+  nla_saturate
+
+-- order-transfer clause: one equiv factor, free cofactors (tier 2)
+example (a b c d : ℤ) (h1 : d = -c) (h2 : 0 < c) (h3 : a + b ≤ -1) :
+    a * c < b * d := by nla_saturate
+
+-- equivalence through the union-find chain (d = e, e = -c)
+example (a c d e : ℤ) (h1 : d = e) (h2 : e = -c) (h3 : 3 ≤ a * c) :
+    a * d ≤ -3 := by nla_saturate

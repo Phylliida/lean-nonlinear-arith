@@ -547,6 +547,109 @@ theorem sr_cl_b7r (a b : ℤ) :
 
 end AbsRows
 
+/- O4 — ±-equivalence rows (RULES O4, Z3 `generate_mon_ol` :163 + emonics
+canonization modulo `evars`). The oracle's parity union-find derives unit
+±-equalities the spelling never shows; these lemmas carry them to product
+level. Eager bridges (both factor pairs equivalent) are case-free
+equalities — Z3 identifies such monomials structurally in its table. The
+clause forms (one equivalent factor pair, cofactors free) are the
+model-free closure of Z3's sign-selected order-transfer clause
+`c_sign·c ≤ 0 ∨ ¬(c_sign·a ⋈ d_sign·b) ∨ ac ⋈ bd`. `ep`/`eq'` absorb
+factor positions (`Eq.refl` or `mul_comm`), as in the Cancel section. -/
+section O4
+variable {a b c d p q : ℤ} {k : ℕ}
+
+theorem sr_o4_mul_pp (e₁ : b = a) (e₂ : d = c)
+    (ep : p = a * c) (eq' : q = b * d) : q = p := by
+  subst e₁; subst e₂; subst ep; subst eq'; rfl
+theorem sr_o4_mul_pn (e₁ : b = a) (e₂ : d = -c)
+    (ep : p = a * c) (eq' : q = b * d) : q = -p := by
+  subst e₁; subst e₂; subst ep; subst eq'; ring
+theorem sr_o4_mul_np (e₁ : b = -a) (e₂ : d = c)
+    (ep : p = a * c) (eq' : q = b * d) : q = -p := by
+  subst e₁; subst e₂; subst ep; subst eq'; ring
+theorem sr_o4_mul_nn (e₁ : b = -a) (e₂ : d = -c)
+    (ep : p = a * c) (eq' : q = b * d) : q = p := by
+  subst e₁; subst e₂; subst ep; subst eq'; ring
+
+theorem sr_o4_pow_p (e : d = c) (ep : p = c ^ k) (eq' : q = d ^ k) :
+    q = p := by subst e; subst ep; subst eq'; rfl
+theorem sr_o4_pow_even (hk : Even k) (e : d = -c)
+    (ep : p = c ^ k) (eq' : q = d ^ k) : q = p := by
+  subst e; subst ep; subst eq'; exact hk.neg_pow c
+theorem sr_o4_pow_odd (hk : Odd k) (e : d = -c)
+    (ep : p = c ^ k) (eq' : q = d ^ k) : q = -p := by
+  subst e; subst ep; subst eq'; exact hk.neg_pow c
+
+-- (`subst e` eliminates the RHS variable `c`, so the scripts argue in `d`)
+theorem sr_o4_eq_lt (e : d = c) (ep : p = a * c) (eq' : q = b * d) :
+    c ≤ 0 ∨ b ≤ a ∨ p < q := by
+  subst e; subst ep; subst eq'
+  rcases le_or_gt d 0 with h | h
+  · exact Or.inl h
+  rcases le_or_gt b a with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (mul_lt_mul_of_pos_right h' h))
+theorem sr_o4_eq_gt (e : d = c) (ep : p = a * c) (eq' : q = b * d) :
+    c ≤ 0 ∨ a ≤ b ∨ q < p := by
+  subst e; subst ep; subst eq'
+  rcases le_or_gt d 0 with h | h
+  · exact Or.inl h
+  rcases le_or_gt a b with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (mul_lt_mul_of_pos_right h' h))
+theorem sr_o4_eq_lt' (e : d = c) (ep : p = a * c) (eq' : q = b * d) :
+    0 ≤ c ∨ b ≤ a ∨ q < p := by
+  subst e; subst ep; subst eq'
+  rcases le_or_gt 0 d with h | h
+  · exact Or.inl h
+  rcases le_or_gt b a with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (mul_lt_mul_of_neg_right h' h))
+theorem sr_o4_eq_gt' (e : d = c) (ep : p = a * c) (eq' : q = b * d) :
+    0 ≤ c ∨ a ≤ b ∨ p < q := by
+  subst e; subst ep; subst eq'
+  rcases le_or_gt 0 d with h | h
+  · exact Or.inl h
+  rcases le_or_gt a b with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (mul_lt_mul_of_neg_right h' h))
+
+theorem sr_o4_neg_lt (e : d = -c) (ep : p = a * c) (eq' : q = b * d) :
+    c ≤ 0 ∨ 0 ≤ a + b ∨ p < q := by
+  subst e; subst ep; subst eq'
+  rcases le_or_gt c 0 with h | h
+  · exact Or.inl h
+  rcases le_or_gt 0 (a + b) with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (by nlinarith [mul_neg_of_neg_of_pos h' h]))
+theorem sr_o4_neg_gt (e : d = -c) (ep : p = a * c) (eq' : q = b * d) :
+    c ≤ 0 ∨ a + b ≤ 0 ∨ q < p := by
+  subst e; subst ep; subst eq'
+  rcases le_or_gt c 0 with h | h
+  · exact Or.inl h
+  rcases le_or_gt (a + b) 0 with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (by nlinarith [mul_pos h' h]))
+theorem sr_o4_neg_lt' (e : d = -c) (ep : p = a * c) (eq' : q = b * d) :
+    0 ≤ c ∨ 0 ≤ a + b ∨ q < p := by
+  subst e; subst ep; subst eq'
+  rcases le_or_gt 0 c with h | h
+  · exact Or.inl h
+  rcases le_or_gt 0 (a + b) with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (by nlinarith [mul_pos_of_neg_of_neg h' h]))
+theorem sr_o4_neg_gt' (e : d = -c) (ep : p = a * c) (eq' : q = b * d) :
+    0 ≤ c ∨ a + b ≤ 0 ∨ p < q := by
+  subst e; subst ep; subst eq'
+  rcases le_or_gt 0 c with h | h
+  · exact Or.inl h
+  rcases le_or_gt (a + b) 0 with h' | h'
+  · exact Or.inr (Or.inl h')
+  exact Or.inr (Or.inr (by nlinarith [mul_neg_of_pos_of_neg h' h]))
+
+end O4
+
 end Rules
 
 /-- Premise/conclusion shapes for the binary sign rules. -/
@@ -1436,6 +1539,79 @@ def factsForDiv (cache : DCache) (x y : Expr) (idx : Nat) :
             out := out.push (.mkSimple s!"nla_dv5_{idx}_{out.size}", ← inferType pf, pf)
     return out
 
+/-- O4 eager bridges (Z3's emonics canonization modulo `evars`): collected
+monomial pairs whose factors are pairwise ±-equivalent — equivalences the
+oracle derives from unit ±-equalities — are identified up to sign. The
+product-level equality `q = ±p` is case-free and linear in the two atoms,
+so it goes to the eager layer, exactly as Z3 identifies such monomials
+structurally in its table rather than emitting lemmas about them. Pow
+pairs at the same exponent bridge through parity. -/
+def generateEquivBridges (cache : DCache) (noted : NotedSet) (ms : Array Expr) :
+    TacticM Bool := do
+  let g ← getMainGoal
+  let facts ← g.withContext do
+    let oc ← runOracle
+    -- ±-relation between two spellings (`some true` equal, `some false`
+    -- negated); syntactic equality is the trivial case
+    let relOf (u v : Expr) : Option Bool :=
+      if u == v then some true else oc.pmEquiv u v
+    -- equality-premise proof `u = ±v`: refl when syntactic, else the
+    -- discharge oracle (omega — the equality is linear and derived)
+    let relPf (u v : Expr) (sgn : Bool) : TacticM (Option Expr) := do
+      if sgn && u == v then return some (← mkEqRefl u)
+      let rhs ← if sgn then pure v else mkAppM ``Neg.neg #[v]
+      tryDischarge cache (← mkAppM ``Eq #[u, rhs])
+    let mut out : Array (Name × Expr × Expr) := #[]
+    for i in [0:ms.size] do
+      for j in [i+1:ms.size] do
+        let p := ms[i]!
+        let q := ms[j]!
+        -- pow pairs at the same exponent
+        if let (some (c, kp), some (d, kq)) := (isIntPow? p, isIntPow? q) then
+          if kp == kq then
+            if let some sgn := relOf d c then
+              if let some ePf := ← relPf d c sgn then
+                let epPf ← mkEqRefl p
+                let eqPf ← mkEqRefl q
+                let kE := mkNatLit kp
+                let pf? : Option Expr ← do
+                  if sgn then
+                    some <$> mkAppM ``sr_o4_pow_p #[ePf, epPf, eqPf]
+                  else if kp % 2 == 0 then do
+                    let hk ← mkDecideProof (← mkAppM ``Even #[kE])
+                    some <$> mkAppM ``sr_o4_pow_even #[hk, ePf, epPf, eqPf]
+                  else do
+                    let hk ← mkDecideProof (← mkAppM ``Odd #[kE])
+                    some <$> mkAppM ``sr_o4_pow_odd #[hk, ePf, epPf, eqPf]
+                if let some pf := pf? then
+                  out := out.push (.mkSimple s!"nla_o4_{out.size}", ← inferType pf, pf)
+        -- mul pairs: two alignments, first that works wins (the bridge is
+        -- an equality — it fully determines the pair's relation)
+        if let (some (x₁, x₂), some (y₁, y₂)) := (isIntMul? p, isIntMul? q) then
+          for (b', d', comm) in #[(y₁, y₂, false), (y₂, y₁, true)] do
+            let some s₁ := relOf b' x₁ | continue
+            let some s₂ := relOf d' x₂ | continue
+            -- at least one leg must be derived, or the pair is the same
+            -- spelling modulo commutativity (nothing to bridge)
+            if s₁ && b' == x₁ && s₂ && d' == x₂ && !comm then continue
+            let some e₁ := ← relPf b' x₁ s₁ | continue
+            let some e₂ := ← relPf d' x₂ s₂ | continue
+            let epPf ← mkEqRefl p
+            let eqPf ← if comm then mkAppM ``mul_comm #[y₁, y₂] else mkEqRefl q
+            let lem := match s₁, s₂ with
+              | true,  true  => ``sr_o4_mul_pp
+              | true,  false => ``sr_o4_mul_pn
+              | false, true  => ``sr_o4_mul_np
+              | false, false => ``sr_o4_mul_nn
+            let pf ← mkAppM lem #[e₁, e₂, epPf, eqPf]
+            out := out.push (.mkSimple s!"nla_o4_{out.size}", ← inferType pf, pf)
+            break
+    pure out
+  let mut new := false
+  for (nm, tyF, pf) in facts do
+    new := (← noteFact noted nm tyF pf) || new
+  return new
+
 /-- Class C pair phase (RULES O2/O3): scan hypotheses for comparisons
 between two product monomials sharing a factor; cancel the shared factor
 when its lattice sign is known. Runs after the per-monomial loop so noted
@@ -1596,6 +1772,42 @@ def generateClauses (cache : DCache) (noted : NotedSet) (ms : Array Expr)
               for lem in [``sr_cl_o1_lbr, ``sr_cl_o1_lbr'] do
                 let pf ← mkAppM lem #[a, ph]
                 out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
+    if tier == 2 then
+      -- O4 order-transfer clauses (Z3 generate_mon_ol :163): monomial pairs
+      -- with ONE ±-equivalent factor pair — derived, distinct spelling —
+      -- and free cofactors. Model-free closure of Z3's sign-selected
+      -- clause: both sign cases × both directions. Fully-equivalent pairs
+      -- are excluded — the eager bridge already noted their equality.
+      let relOf (u v : Expr) : Option Bool :=
+        if u == v then some true else oc.pmEquiv u v
+      for i in [0:ms.size] do
+        for j in [i+1:ms.size] do
+          let p := ms[i]!
+          let q := ms[j]!
+          let some (x₁, x₂) := isIntMul? p | continue
+          let some (y₁, y₂) := isIntMul? q | continue
+          -- alignments: (shared c from p, d from q, cofactor a, cofactor b,
+          -- commuted-p, commuted-q)
+          for (c, d, af, bf, commP, commQ) in
+              #[(x₂, y₂, x₁, y₁, false, false),
+                (x₂, y₁, x₁, y₂, false, true),
+                (x₁, y₂, x₂, y₁, true,  false),
+                (x₁, y₁, x₂, y₂, true,  true)] do
+            if c == d then continue
+            let some sgn := oc.pmEquiv d c | continue
+            -- cofactors also ±-equivalent ⟹ bridged eagerly, skip
+            if (relOf bf af).isSome then continue
+            let rhs ← if sgn then pure c else mkAppM ``Neg.neg #[c]
+            let some ePf := ← tryDischarge cache (← mkAppM ``Eq #[d, rhs]) | continue
+            let epPf ← if commP then mkAppM ``mul_comm #[x₁, x₂] else mkEqRefl p
+            let eqPf ← if commQ then mkAppM ``mul_comm #[y₁, y₂] else mkEqRefl q
+            let lems := if sgn then
+                [``sr_o4_eq_lt, ``sr_o4_eq_gt, ``sr_o4_eq_lt', ``sr_o4_eq_gt']
+              else
+                [``sr_o4_neg_lt, ``sr_o4_neg_gt, ``sr_o4_neg_lt', ``sr_o4_neg_gt']
+            for lem in lems do
+              let pf ← mkAppM lem #[ePf, epPf, eqPf]
+              out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
     pure out
   for (nm, tyF, pf) in facts do
     let _ ← noteFact noted nm tyF pf
@@ -1632,7 +1844,8 @@ def generate (cache : DCache) (noted : NotedSet) (ms : Array Expr)
       new := true
     idx := idx + 1
   let pairsNew ← generatePairs cache noted
-  return new || pairsNew
+  let bridgesNew ← generateEquivBridges cache noted ms
+  return new || pairsNew || bridgesNew
 
 def saturateCore (stats : Bool := false) (maxRounds : Option Nat := none) : TacticM Unit := do
   let t0 ← IO.monoMsNow

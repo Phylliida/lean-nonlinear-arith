@@ -61,13 +61,19 @@ structure OracleParse where
   index : Std.HashMap Expr Nat := {}
   /-- Constraints, each meaning `form ≥ 0` (strict already ℤ-tightened). -/
   cons : Array LinForm := #[]
+  /-- Unit ±-equalities `atom_i = ±atom_j` (`true` = same sign), the feed
+  for the `evars` parity union-find. -/
+  pmEqs : Array (Nat × Nat × Bool) := #[]
 
-/-- The propagated result: per-atom tightest derived bounds. -/
+/-- The propagated result: per-atom tightest derived bounds plus the
+±-equivalence classes (Z3's `evars`). `uf[i] = (parent, flip)` with
+`value(i) = (flip ? -1 : 1) · value(parent)`. -/
 structure OracleCtx where
   atoms : Array Expr := #[]
   index : Std.HashMap Expr Nat := {}
   lb : Array (Option Int) := #[]
   ub : Array (Option Int) := #[]
+  uf : Array (Nat × Bool) := #[]
 
 private def atomIdx (e : Expr) : StateRefT OracleParse MetaM Nat := do
   let s ← get
@@ -129,6 +135,17 @@ private def consOfHyp (ty : Expr) : StateRefT OracleParse MetaM (Array LinForm) 
     -- l ≤ r  ⟹  r - l ≥ 0;  l < r  ⟹  r - l - 1 ≥ 0
     let f := (← linOf r).sub (← linOf l)
     out := out.push (if strict then { f with k := f.k - 1 } else f)
+    -- unit ±-equality feed for the evars union-find: an `Eq` produces the
+    -- same form twice with opposite signs, so inspect the first only.
+    -- `g·x ∓ g·y = 0` (equal |coeffs|, zero constant) means `x = ±y`.
+    if ty.isAppOf ``Eq && !strict && out.size == 1 then
+      if f.k == 0 && f.coeffs.size == 2 then
+        let (i, ci) := f.coeffs[0]!
+        let (j, cj) := f.coeffs[1]!
+        if ci.natAbs == cj.natAbs then
+          -- ci·xi + cj·xj = 0: opposite coeffs ⟹ xi = xj (same sign);
+          -- equal coeffs ⟹ xi = -xj (negated)
+          modify fun s => { s with pmEqs := s.pmEqs.push (i, j, ci == cj) }
   return out
 
 /-- `ceil(x / y)` for `y > 0`. -/
@@ -180,6 +197,33 @@ private def propagate (n : Nat) (cons : Array LinForm) :
     if !changed then break
   return (lb, ub)
 
+/-- Find with sign: returns `(root, flip)` where `value(i) = ±value(root)`.
+Fueled — parent chains are strictly older indices only through unions, but
+the fuel keeps a bookkeeping slip from hanging the tactic. -/
+private def ufFind (uf : Array (Nat × Bool)) (i : Nat) : Nat × Bool := Id.run do
+  let mut i := i
+  let mut flip := false
+  for _ in [0:uf.size + 1] do
+    let (p, f) := uf[i]!
+    if p == i then return (i, flip)
+    flip := flip != f
+    i := p
+  return (i, flip)
+
+/-- Parity union-find over unit ±-equalities — the `evars` analogue. -/
+private def buildUF (n : Nat) (pmEqs : Array (Nat × Nat × Bool)) :
+    Array (Nat × Bool) := Id.run do
+  let mut uf : Array (Nat × Bool) := .ofFn (n := n) fun i => (i.1, false)
+  for (i, j, neg) in pmEqs do
+    let (ri, si) := ufFind uf i
+    let (rj, sj) := ufFind uf j
+    if ri != rj then
+      -- value(i) = si·ri, value(j) = sj·rj, value(i) = (neg ? - : +)value(j)
+      uf := uf.set! ri (rj, (si != sj) != neg)
+    -- ri == rj with inconsistent signs ⟹ the context is infeasible; leave
+    -- it to the omega leaf
+  return uf
+
 /-- Build the oracle from the current local context. Call inside the goal's
 context. Untrusted throughout — results only steer anchor selection. -/
 def runOracle : MetaM OracleCtx := do
@@ -191,13 +235,24 @@ def runOracle : MetaM OracleCtx := do
       modify fun s => { s with cons := s.cons ++ cs }
   let ((), s) ← act.run {}
   let (lb, ub) := propagate s.atoms.size s.cons
-  return { atoms := s.atoms, index := s.index, lb, ub }
+  return { atoms := s.atoms, index := s.index, lb, ub,
+           uf := buildUF s.atoms.size s.pmEqs }
 
 /-- Derived bounds for an expr, `(lb?, ub?)`. -/
 def OracleCtx.boundsOf (oc : OracleCtx) (e : Expr) : Option Int × Option Int :=
   match oc.index.get? e.consumeMData with
   | some i => (oc.lb[i]!, oc.ub[i]!)
   | none => (none, none)
+
+/-- Derived ±-equivalence between two exprs (Z3's `evars`): `some true` when
+`e = f` is derived, `some false` when `e = -f`, `none` otherwise. Syntactic
+equality is the caller's fast path — this is for *distinct* spellings. -/
+def OracleCtx.pmEquiv (oc : OracleCtx) (e f : Expr) : Option Bool := do
+  let i ← oc.index.get? e.consumeMData
+  let j ← oc.index.get? f.consumeMData
+  let (ri, si) := ufFind oc.uf i
+  let (rj, sj) := ufFind oc.uf j
+  if ri != rj then none else some (si == sj)
 
 /-- Union the oracle's derived bounds into a mined-anchor pair. Purely
 additive (containment-safe): never removes a mined anchor. -/
