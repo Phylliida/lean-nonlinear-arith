@@ -359,3 +359,17 @@ example (x y z : ℤ) (hy : 0 < y) (hx : 0 ≤ x) (hz : 0 ≤ z) :
 -- (x/y) * w within round 1
 example (x y w : ℤ) (hy : 3 ≤ y) (hy' : y ≤ 5) (hx : 0 ≤ x) (hx' : x ≤ 20)
     (hw : 0 ≤ w) (hw' : w ≤ 2) : (x / y) * w ≤ 12 := by nla_saturate
+
+-- review-round pins: shapes predicted to be gaps that the composed
+-- machinery already covers. (i) strict positivity is mined as lb 1, so the
+-- divisor lower bound is present whenever the lattice is pos; (ii/iii)
+-- negative dividends fall to the defining equation + sign clauses on
+-- y * (x / y); (iv) nested pairs collect postorder; (v) mod range feeds
+-- the product sign rule.
+example (x y : ℤ) (hy : 0 < y) (hx : x ≤ 10) : x / y ≤ 10 := by nla_saturate
+example (x y : ℤ) (hy : 2 ≤ y) (hx : x ≤ -1) : x / y ≤ -1 := by nla_saturate
+example (x y : ℤ) (hy : 0 < y) (hx : -10 ≤ x) : -10 ≤ x / y := by nla_saturate
+example (x y z : ℤ) (hy : 2 ≤ y) (hz : 2 ≤ z) (hx : 0 ≤ x) (hx' : x ≤ 40) :
+    x / y / z ≤ 10 := by nla_saturate
+example (x y z : ℤ) (hy : 0 < y) (hz : 0 ≤ z) : 0 ≤ (x % y) * z := by
+  nla_saturate
