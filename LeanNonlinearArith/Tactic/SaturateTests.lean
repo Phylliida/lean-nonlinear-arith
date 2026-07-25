@@ -414,3 +414,30 @@ example (x : ℤ) (h : x ^ 5 ≤ 100000) : x ≤ 10 := by nla_saturate
 -- needs its own bridge (the second example failed before the fix)
 example (x y : ℤ) (h : y * (x / y) ≤ 5) : x - x % y ≤ 5 := by nla_saturate
 example (x y : ℤ) (h : (x / y) * y ≤ 5) : x - x % y ≤ 5 := by nla_saturate
+
+/-! ### Oracle v1: derived-bound anchors (DESIGN-discharge-oracle §2b/§3)
+
+Syntactic mining is structurally incomplete for bounds that are implied but
+written nowhere; the oracle propagates the linear closure and its tightest
+per-atom bounds join every anchor set. All five examples probe-confirmed
+failing without the oracle (2026-07-25). -/
+
+-- derived lower bound as an order-rule anchor (7 ≤ b is written nowhere)
+example (a b c : ℤ) (h1 : a ≤ b - 2) (h2 : 5 ≤ a) (h3 : 2 ≤ c) :
+    14 ≤ b * c := by nla_saturate
+
+-- derived fixed var (a = 4 from a + b = 7 with b pinned) → const-subst
+example (a b c : ℤ) (h1 : a + b = 7) (h2 : 3 ≤ b) (h3 : b ≤ 3) :
+    a * c = 4 * c := by nla_saturate
+
+-- coefficient rounding in propagation (3a ≥ 4 ⟹ a ≥ ⌈4/3⌉ = 2)
+example (a b : ℤ) (h1 : 5 ≤ 3 * a + 1) (h2 : 2 ≤ b) : 4 ≤ a * b := by
+  nla_saturate
+
+-- derived pivot feeding a tier-2 O1 clause (sign-unknown cofactor c)
+example (a b c : ℤ) (h1 : b ≤ a + 2) (h2 : a ≤ 5) (h3 : 0 ≤ b)
+    (h4 : 21 ≤ b * c) (h5 : c ≤ 3) : 3 ≤ c := by nla_saturate
+
+-- derived anchor for the square tangent envelope (b ≥ 4 ⟹ 8b - 16 ≤ b²)
+example (a b : ℤ) (h1 : a ≤ b - 1) (h2 : 3 ≤ a) : 16 ≤ b ^ 2 := by
+  nla_saturate

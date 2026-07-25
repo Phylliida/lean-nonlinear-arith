@@ -2,6 +2,7 @@ import Mathlib
 import LeanNonlinearArith.Templates.Intervals
 import LeanNonlinearArith.Templates.Divisions
 import LeanNonlinearArith.Templates.Tangent
+import LeanNonlinearArith.Tactic.Oracle
 
 /-!
 # nla-05 slice 1: the saturation tactic, smallest end-to-end version
@@ -889,6 +890,13 @@ def factsFor (cache : DCache) (m : Expr) (idx : Nat) :
   let g ← getMainGoal
   g.withContext do
     let some (a, b) := isIntMul? m | return #[]
+    -- oracle v1 (DESIGN-discharge-oracle §2b/§3): derived-bound closure of
+    -- the linear hypotheses; its tightest bounds join every mined-anchor
+    -- set below (Z3 reads anchors from the LRA solver's propagated column
+    -- bounds, not the asserted formulas — parity-restoring, and purely
+    -- additive so containment-safe). Untrusted: every suggested anchor
+    -- still passes through the omega discharge before instantiation.
+    let oc ← runOracle
     let mut out : Array (Name × Expr × Expr) := #[]
     -- squares: unconditional
     if a == b then
@@ -919,9 +927,10 @@ def factsFor (cache : DCache) (m : Expr) (idx : Nat) :
       let pf ← mkAppM lem #[pa, pb]
       out := out.push (.mkSimple s!"nla_sign_{idx}", ← inferType pf, pf)
       break
-    -- order rules with mined constants (O1/M1-style bound propagation)
-    let (losA, hisA) ← mineBounds a
-    let (losB, hisB) ← mineBounds b
+    -- order rules with mined constants (O1/M1-style bound propagation);
+    -- oracle-derived bounds join the anchor sets
+    let (losA, hisA) := oc.augment a (← mineBounds a)
+    let (losB, hisB) := oc.augment b (← mineBounds b)
     let zero := mkIntLit 0
     let le (x y : Expr) : MetaM Expr := mkAppM ``LE.le #[x, y]
     -- const-substitution (RULES B9/PL1/T1/MB6): factor mined to a point →
@@ -1011,7 +1020,7 @@ def factsFor (cache : DCache) (m : Expr) (idx : Nat) :
     -- computed by exact interval division in meta (floor/ceil); the side
     -- conditions are then checked numerically and certified by decide, so
     -- a wrong β formula can only lose tightness, never soundness.
-    let (losM, hisM) ← mineBounds m
+    let (losM, hisM) := oc.augment m (← mineBounds m)
     let siM ← signFactsFor cache m
     let lt' (x y : Expr) : MetaM Expr := mkAppM ``LT.lt #[x, y]
     let mulE (x y : Expr) : MetaM Expr := mkAppM ``HMul.hMul #[x, y]
@@ -1138,6 +1147,7 @@ def factsForPow (cache : DCache) (m : Expr) (idx : Nat) :
   let g ← getMainGoal
   g.withContext do
     let some (a, k) := isIntPow? m | return #[]
+    let oc ← runOracle
     let mut out : Array (Name × Expr × Expr) := #[]
     let kE := mkNatLit k
     -- even exponent: unconditionally nonnegative
@@ -1173,7 +1183,7 @@ def factsForPow (cache : DCache) (m : Expr) (idx : Nat) :
     -- pre-evaluated to literals (corner-fold rule: no unevaluated ground
     -- terms in noted facts)
     if k == 2 then
-      let (los, his) ← mineBounds a
+      let (los, his) := oc.augment a (← mineBounds a)
       let le (x y : Expr) : MetaM Expr := mkAppM ``LE.le #[x, y]
       for lo in los do
         for hi in his do
@@ -1197,7 +1207,7 @@ def factsForPow (cache : DCache) (m : Expr) (idx : Nat) :
       -- its own clause); MB5's conclusion is genuinely disjunctive and the
       -- omega leaf case-splits on it. Roots are floor/ceil √ in meta,
       -- certified by decide.
-      let (losP, hisP) ← mineBounds m
+      let (losP, hisP) := oc.augment m (← mineBounds m)
       for u in hisP do
         if u ≥ 0 then
           let r : Int := Int.ofNat (Nat.sqrt u.toNat)
@@ -1227,7 +1237,7 @@ def factsForPow (cache : DCache) (m : Expr) (idx : Nat) :
     -- tighter secant/tangent path above). All emitted constants are
     -- pre-evaluated literals; exactness conditions decide-certified.
     if k ≥ 3 then
-      let (los, his) ← mineBounds a
+      let (los, his) := oc.augment a (← mineBounds a)
       let le (x y : Expr) : MetaM Expr := mkAppM ``LE.le #[x, y]
       let odd := k % 2 == 1
       let hkP? : Option Expr ←
@@ -1277,7 +1287,7 @@ def factsForPow (cache : DCache) (m : Expr) (idx : Nat) :
               let pf ← mkAppM ``sr_pow_lb_even_neg #[hk, h0, ph, hc]
               out := out.push (.mkSimple s!"nla_pev_{idx}_{out.size}", ← inferType pf, pf)
       -- MB4/MB5 roots
-      let (losP, hisP) ← mineBounds m
+      let (losP, hisP) := oc.augment m (← mineBounds m)
       for u in hisP do
         if odd then
           let r := intFloorRootOdd u k
@@ -1336,6 +1346,7 @@ def factsForDiv (cache : DCache) (x y : Expr) (idx : Nat) :
     TacticM (Array (Name × Expr × Expr)) := do
   let g ← getMainGoal
   g.withContext do
+    let oc ← runOracle
     let mut out : Array (Name × Expr × Expr) := #[]
     let le (u v : Expr) : MetaM Expr := mkAppM ``LE.le #[u, v]
     -- defining equation, unconditional, both product orientations (the
@@ -1372,8 +1383,9 @@ def factsForDiv (cache : DCache) (x y : Expr) (idx : Nat) :
       if let some pne := ← tryDischarge cache (← mkAppM ``Ne #[y, mkIntLit 0]) then
         let pfLb ← mkAppM ``sr_mod_lb #[x, pne]
         out := out.push (.mkSimple s!"nla_dvm_{idx}_{out.size}", ← inferType pfLb, pfLb)
-    -- const-substitution at a point-mined divisor
-    let (lys, hys) ← mineBounds y
+    -- const-substitution at a point-mined divisor (oracle-derived pins
+    -- count: lb = ub from the closure is Z3's fixed-var case)
+    let (lys, hys) := oc.augment y (← mineBounds y)
     for c in lys do
       if hys.contains c then
         if let some pfs := ← dischargeAll cache #[← le (mkIntLit c) y, ← le y (mkIntLit c)] then
@@ -1385,7 +1397,7 @@ def factsForDiv (cache : DCache) (x y : Expr) (idx : Nat) :
     -- D4/D5 interval-quotient bounds (positive divisor, as in
     -- nla_divisions.cpp :190/:197)
     if let some py := divisorPos then
-      let (lxs, hxs) ← mineBounds x
+      let (lxs, hxs) := oc.augment x (← mineBounds x)
       let lysP := lys.filter (· ≥ 1)
       let hysP := hys.filter (· ≥ 1)
       -- D4 upper: x ≤ hx → x/y ≤ q with q = hx/ly (hx ≥ 0) or hx/hy (hx < 0)
@@ -1525,6 +1537,7 @@ def generateClauses (cache : DCache) (noted : NotedSet) (ms : Array Expr)
     (tier : Nat) : TacticM Unit := do
   let g ← getMainGoal
   let facts ← g.withContext do
+    let oc ← runOracle
     let mut out : Array (Name × Expr × Expr) := #[]
     for m in ms do
       let some (a, b) := isIntMul? m | continue
@@ -1557,10 +1570,10 @@ def generateClauses (cache : DCache) (noted : NotedSet) (ms : Array Expr)
           out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf, pf)
           let pf7 ← mkAppM ``sr_cl_b7r #[a, b]
           out := out.push (.mkSimple s!"nla_cl_{out.size}", ← inferType pf7, pf7)
-        -- O1 clauses: mined pivot × sign-unknown cofactor
+        -- O1 clauses: mined or oracle-derived pivot × sign-unknown cofactor
         let le' (x y : Expr) : MetaM Expr := mkAppM ``LE.le #[x, y]
-        let (losA', hisA') ← mineBounds a
-        let (losB', hisB') ← mineBounds b
+        let (losA', hisA') := oc.augment a (← mineBounds a)
+        let (losB', hisB') := oc.augment b (← mineBounds b)
         if bU then
           for pv in hisA' do
             if let some ph := ← tryDischarge cache (← le' a (mkIntLit pv)) then
