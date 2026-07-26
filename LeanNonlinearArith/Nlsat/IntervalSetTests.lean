@@ -135,4 +135,63 @@ private def ratpunct : IntervalSet :=
 -- empty set: anything goes, zero preferred
 #guard pickInComplement none == some (.rat 0)
 
+/-! ## nla-25.5 — mkUnion differential test
+
+`mkUnion s₁ s₂` must behave as set union pointwise, and every surviving
+justification must come from one of the inputs. Probed exhaustively over
+a grid of small interval sets (all flag shapes over integer endpoints,
+rays, singletons, plus second-generation unions as multi-interval
+inputs) against half-integer rational probes that fall on, between, and
+outside every endpoint. -/
+
+/-- Rational membership oracle, straight from the interval semantics. -/
+private def memb (s : IntervalSet) (q : Rat) : Bool :=
+  match s with
+  | none => false
+  | some d => d.intervals.any fun iv =>
+    (iv.lowerInf || (match RAlg.compare iv.lower (.rat q) with
+      | .lt => true | .eq => !iv.lowerOpen | .gt => false)) &&
+    (iv.upperInf || (match RAlg.compare (.rat q) iv.upper with
+      | .lt => true | .eq => !iv.upperOpen | .gt => false))
+
+private def probes : List Rat :=
+  [-3, -5/2, -2, -3/2, -1, -1/2, 0, 1/3, 1/2, 1, 3/2, 2, 5/2, 3]
+
+private def gridEnds : List Rat := [-2, -1, 0, 1, 2]
+
+/-- Generation 1: every valid single-interval set over the grid. -/
+private def gen1 : List IntervalSet := Id.run do
+  let mut out : List IntervalSet := []
+  let bools := [false, true]
+  for a in gridEnds do
+    -- singleton [a, a]
+    out := mk false false (.rat a) false false (.rat a) j0 :: out
+    -- rays
+    for o in bools do
+      out := mk true true (.rat 0) o false (.rat a) j0 :: out    -- (−∞, a⟩
+      out := mk o false (.rat a) true true (.rat 0) j1 :: out    -- ⟨a, ∞)
+    -- bounded intervals a < b, all four openness shapes
+    for b in gridEnds do
+      if a < b then
+        for lo in bools do
+          for hi in bools do
+            out := mk lo false (.rat a) hi false (.rat b) j1 :: out
+  return out
+
+/-- Generation 2: some unions (multi-interval inputs for the test). -/
+private def gen2 : List IntervalSet :=
+  (gen1.take 12).flatMap fun s1 => (gen1.drop 30).take 6 |>.map (mkUnion s1)
+
+private def allSets : List IntervalSet := gen1 ++ gen2
+
+#guard allSets.all fun s1 => allSets.all fun s2 =>
+  let u := mkUnion s1 s2
+  probes.all fun q => memb u q == (memb s1 q || memb s2 q)
+
+#guard allSets.all fun s1 => allSets.all fun s2 =>
+  let (ls, _) := justifications (mkUnion s1 s2)
+  let (l1, _) := justifications s1
+  let (l2, _) := justifications s2
+  ls.all fun j => l1.contains j || l2.contains j
+
 end LeanNonlinearArith.Nlsat.Tests

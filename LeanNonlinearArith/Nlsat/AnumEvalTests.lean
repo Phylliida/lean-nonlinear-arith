@@ -61,6 +61,14 @@ private def elimSum : MPoly :=
 #guard (resultantElim (MPoly.sub y2 x0) 0 #[-4, 0, 2]).toQPoly? 2
   == some #[-4, 0, 2]
 
+-- nla-25.3: ≥3×3 multiplication matrix — Res_x(y − x, x³ − 2) = y³ − 2
+#guard (resultantElim (MPoly.sub y2 x0) 0 #[-2, 0, 0, 1]).toQPoly? 2
+  == some #[-2, 0, 0, 1]
+-- and the shifted variant exercises off-diagonal structure:
+-- Res_x(y − x², x³ − 2) = y³ − 4 (cube root of 4 = (∛2)²)
+#guard (resultantElim (MPoly.sub y2 (MPoly.mul x0 x0)) 0 #[-2, 0, 0, 1]).toQPoly? 2
+  == some #[-4, 0, 0, 1]
+
 -- constant-in-x f: Res_x(y, x² − 2) = y²
 #guard (resultantElim y2 0 #[-2, 0, 1]).toQPoly? 2 == some #[0, 0, 1]
 

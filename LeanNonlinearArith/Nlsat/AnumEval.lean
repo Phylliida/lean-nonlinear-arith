@@ -189,7 +189,8 @@ partial def detQTerms (m : Array (Array QTerms)) : QTerms :=
 degree (an algebraic cell's defining polynomial): eliminate `x` from `f`.
 
 Method: with `q̂ = q / lc(q)` monic of degree `d`,
-`Res(f, q) = lc(q)^{deg_x f} · (−1)^{deg_x f · d} · det(M)` where `M` is
+`Res(f, q) = lc(q)^{deg_x f} · det(M)` (`det(M) = ∏ f(β)` over `q`'s
+roots — the norm; no parity factor in this orientation) where `M` is
 the matrix of multiplication by `f mod q̂` on the basis
 `1, x, …, x^{d−1}` of `ℚ(other vars)[x]/(q̂)` — entries are polynomials
 in the remaining variables. Roots of the result (in the surviving
@@ -231,8 +232,12 @@ def resultantElim (f : MPoly) (x : Var) (q : QPoly) : MPoly := Id.run do
             m := m.set! row (mrow.set! j
               (QTerms.add mrow[j]! (QTerms.smulTerm coef [] gi)))
   let det := detQTerms m
-  let signFactor : Rat := if (degF * d) % 2 == 0 then 1 else -1
-  return QTerms.toMPolyScaled (QTerms.smulTerm (signFactor * lcq ^ degF) [] det)
+  -- Res_x(f, q) = lc(q)^{deg_x f} · ∏_{q(β)=0} f(β), and det(M) is
+  -- exactly the norm ∏ f(β): no parity factor for this orientation.
+  -- (A (−1)^{degF·d} factor sat here through 12b-i — a sign bug the
+  -- quadratic lane could never see, since d = 2 keeps the exponent
+  -- even; the nla-25.3 cube-root pin caught it.)
+  return QTerms.toMPolyScaled (QTerms.smulTerm (lcq ^ degF) [] det)
 
 /-- `k` such that every nonzero real root `α` of `p` has `|α| > 2^{−k}`
 (`upolynomial::nonzero_root_lower_bound` shape): strip the zero root
