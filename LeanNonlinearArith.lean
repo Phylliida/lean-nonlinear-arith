@@ -25,3 +25,5 @@ import LeanNonlinearArith.Kernel.RAlgTests
 import LeanNonlinearArith.Nlsat.Types
 import LeanNonlinearArith.Nlsat.IntervalSet
 import LeanNonlinearArith.Nlsat.IntervalSetTests
+import LeanNonlinearArith.Nlsat.AnumEval
+import LeanNonlinearArith.Nlsat.AnumEvalTests

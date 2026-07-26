@@ -130,6 +130,63 @@ verify by `decide` + fixed lemmas**, never "trust me" markers.)
   first fully-quadratic census row.
 - **nla-12e** (after 19b) integer branching + Int frontend relaxation.
 
+## 4b. Evaluator anum arithmetic (nla-12b; decision 2026-07-26)
+
+**Danielle's call: port Z3's actual shape — similarity is not compromised
+even where the mechanism doesn't affect emitted lemmas.** (This extends
+the source-fidelity directive to sign-evaluation strategy.) The
+resultant-only alternative was considered and rejected.
+
+The evaluator consumes exactly three anum entry points
+(`nlsat_evaluator.cpp:386,427,446,471`):
+`eval_sign_at(p, x2v)`, `isolate_roots(p, undef_var_assignment(x2v, x),
+roots[, signs])`, and `compare` (mini-anum, done). Z3's shapes, from
+`algebraic_numbers.cpp`:
+
+**`eval_sign_at` (:2246):**
+1. *Optimistic pass*: if all assigned values are rational, evaluate in ℚ.
+2. Substitute the rational fragment → `p′`; zero/const shortcuts.
+3. *Interval pass*: evaluate `p′` over the algebraic cells' isolating
+   intervals; refine cells (magnitude-gated) while the enclosure
+   contains zero; restart if a cell normalizes to rational.
+4. *Exact zero test via resultants*: `R(y) = Res_{x_i…}(y − p′, q_i(x_i))`
+   over each algebraic var's defining poly `q_i`; `L = 2^{−k}` from
+   `nonzero_root_lower_bound(R)`; refine until the enclosure excludes
+   zero (sign known) or fits in `(−L, L)` (value is exactly zero).
+
+**`isolate_roots` under partial assignment (:2547):** zero/const/
+univariate shortcuts → substitute rationals → resultant-eliminate each
+algebraic variable with its defining poly → univariate `q` whose roots
+⊇ the true roots → isolate (kernel) → **filter** candidates `r` by
+`eval_sign_at(p, x2v ∪ {x→r}) = 0`. Degenerate `q ≡ 0` fallbacks: linear
+coefficient solve; else the auxiliary-variable (`z·x^i + …`) nested
+path. **Signs variant (:2902):** refine roots to `DEFAULT_PRECISION`,
+then `eval_sign_at` at `int_lt`/`select`/`int_gt` sample points between
+consecutive roots.
+
+**Key porting simplification (checked against both call sites): every
+resultant elimination has a univariate rational-coefficient second
+argument** (defining polys of algebraic cells). So the only multivariate
+resultant needed is `Res_x(f, q)` with `q ∈ ℚ[x]`: computed as
+`lc(q)^{deg_x f} · det(mult-by-(f mod q̂) on ℚ(...)[x]/(q̂))` with `q̂`
+monic — a `deg q × deg q` determinant with MPoly entries by cofactor
+expansion (deg 2 dominant in the fragment).
+
+Declared divergences (representation-level, not mechanism-level):
+* interval endpoints are exact `Rat`, not dyadic `mpbq` — no outward
+  rounding anywhere, enclosures are never looser than Z3's;
+* our `refine` never discovers rationality (mini-anum normalizes only
+  linear defining polys), so `eval_sign_at`'s restart path is
+  unreachable — the exact `(−L, L)` test still terminates the loop;
+* magnitude gating uses interval width against a fixed `Rat` threshold
+  rather than binary magnitudes.
+
+Slice split: **12b-i** foundations (RatInterval arithmetic, MPoly
+interval evaluation, `resultantElim`, `nonzeroRootLowerBound`, RAlg
+accessors) — landed with this decision; **12b-ii** `evalSignAt` +
+`isolateRootsAt` assembly + the `q ≡ 0` fallback paths + evaluator
+`sign_table` + `infeasible_intervals`.
+
 ## 5. Risks / notes
 
 - **Trace payload design drift**: pin payloads only when the checker side

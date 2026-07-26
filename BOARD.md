@@ -384,10 +384,21 @@ containment direction is free.
   witness; declared divergences: am.select dyadic niceness, rational
   values in root representation). Tests pin union cases + the full
   preference ladder. Trace.lean deferred to 12d (payloads pin when the
-  checker consumes them, per design). Next: nla-12b Evaluator — needs
-  the anum-arithmetic decision (DESIGN-nlsat-quadratic §risks): port
-  resultant-based algebraic add/mul for substitution, vs Z3's
-  interval-arithmetic-first + exact fallback.
+  checker consumes them, per design). **anum decision (Danielle,
+  2026-07-26): Z3's actual shape, similarity uncompromised** — full spec
+  in DESIGN-nlsat-quadratic §4b. **nla-12b-i DONE (same day):**
+  `Nlsat/AnumEval.lean` — exact-Rat interval arithmetic w/ even-power
+  tightening + MPoly enclosure evaluation; `resultantElim` (the ONE
+  resultant shape both call sites need: second argument is always a
+  univariate rational defining poly — multiplication-matrix det mod
+  monic q̂, faithful lc/sign scalars); `nonzeroRootLowerBound`
+  (reverse-Cauchy 2^−k); RAlg interval accessors + width-gated
+  refinement. Tests pin the classic eliminations (√2 minimal poly, √6,
+  √2+√3 → x⁴−10x²+1, non-monic scaling). Next: **nla-12b-ii** —
+  evalSignAt (optimistic→substitute→interval-refine→exact (−L,L) test)
+  + isolateRootsAt (eliminate→isolate→filter + q≡0 fallbacks incl. the
+  auxiliary-z nested path) + evaluator sign_table +
+  infeasible_intervals.
 - **nla-13** `todo` Trace checker: discharge shapes 4/5 by per-instance ring,
   shape 2 by degree dispatch (ineq / Thom / nla-09), shapes 1/3 by S1 + S2.
 - **nla-14** `todo` Front-end tactic `nonlinear_arith`: Int -> Real relaxation,
