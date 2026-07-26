@@ -138,6 +138,84 @@ def refine1 : RAlg → RAlg
     | .inl (a', b') => .root p a' b'
     | .inr r => .rat r.toRat
 
+/-- z3 `am::refine_until_prec`: refine a root cell until its width is
+`< 1/2^prec` — the binary `lt_1div2k` gate (nla-26.6), replacing the
+`Rat` width threshold. An exact midpoint hit converts to basic. -/
+def refineUntilPrec (x : RAlg) (prec : Nat) : RAlg :=
+  match x with
+  | .rat q => .rat q
+  | .root p a b =>
+    match refineToPrecD p (evalSignAtD p a) a b prec with
+    | .inl (a', b') => .root p a' b'
+    | .inr r => .rat r.toRat
+
+/-- z3 `imp::magnitude(cell)`: binary magnitude of the isolating
+interval — the evaluator's refinement gate (nla-12b-ii). Basic values
+are exact; Z3 only ever queries cells, so `minMagnitude` ("already
+precise") is the natural reading for `.rat`. -/
+def magnitude : RAlg → Int
+  | .rat _ => minMagnitude
+  | .root _ a b => intervalMagnitude a b
+
+/-- z3 `am::int_lt` (`algebraic_numbers.cpp:2827`): an integer strictly
+below the value — refined to width < 1/2 first, so the answer stays
+near the value (`⌊lower⌋` for cells, `⌊v⌋ − 1` for basic values). -/
+def intLt (x : RAlg) : Int :=
+  match refineUntilPrec x 1 with
+  | .rat q => Mpbq.ratFloorInt q - 1
+  | .root _ a _ => Mpbq.floorInt a
+
+/-- z3 `am::int_gt` (`algebraic_numbers.cpp:2840`): an integer strictly
+above the value. -/
+def intGt (x : RAlg) : Int :=
+  match refineUntilPrec x 1 with
+  | .rat q => Mpbq.ratCeilInt q + 1
+  | .root _ _ b => Mpbq.ceilInt b
+
+/-- z3 `am::separate` (`algebraic_numbers.cpp:2794`): given `x < y`,
+refine until the isolating brackets clear each other (a became-basic
+cell breaks the loop, and `select` re-dispatches on the new shape).
+Terminates: distinct values ⇒ the halving brackets eventually separate. -/
+partial def separate (x y : RAlg) : RAlg × RAlg :=
+  match x, y with
+  | .rat p, .root _ cl _ =>
+    if cl.leRat p then
+      match refine1 y with
+      | y'@(.root _ _ _) => separate x y'
+      | y' => (x, y')          -- curr became basic
+    else (x, y)
+  | .root _ _ pu, .rat c =>
+    if pu.geRat c then
+      match refine1 x with
+      | x'@(.root _ _ _) => separate x' y
+      | x' => (x', y)          -- prev became basic
+    else (x, y)
+  | .root _ _ pu, .root _ cl _ =>
+    if Mpbq.ge pu cl then
+      let x' := refine1 x
+      let y' := refine1 y
+      match x', y' with
+      | .root _ _ _, .root _ _ _ => separate x' y'
+      | _, _ => (x', y')       -- one became basic
+    else (x, y)
+  | _, _ => (x, y)             -- basic/basic: do nothing
+
+/-- z3 `am::select` (`algebraic_numbers.cpp:2856`), nla-26.4: a "nice"
+(few-bit dyadic) value strictly between `x < y` — separate the brackets,
+then `select_small_core` on the four basic/algebraic shapes: open
+rational bounds on basic sides, the (cleared) bracket endpoints on
+algebraic sides. This is the witness picker's gap selection, replacing
+`ratBetween`. -/
+def select (x y : RAlg) : Rat :=
+  let (x, y) := separate x y
+  let w : Mpbq :=
+    match x, y with
+    | .rat p, .rat c => Mpbq.selectSmallCoreQQ p c
+    | .rat p, .root _ cl _ => Mpbq.selectSmallCoreQD p cl
+    | .root _ _ pu, .rat c => Mpbq.selectSmallCoreDQ pu c
+    | .root _ _ pu, .root _ cl _ => Mpbq.selectSmallCoreDD pu cl
+  w.toRat
+
 /-- z3 `compare_core` (`algebraic_numbers.cpp:1929`) — both arguments
 algebraic. Stages, each ending in the `COMPARE_INTERVAL` disjointness
 check:
@@ -224,77 +302,6 @@ def compare (x y : RAlg) : Ordering :=
 
 def lt (x y : RAlg) : Bool := compare x y == .lt
 def le (x y : RAlg) : Bool := compare x y != .gt
-
-/-- A rational strictly between `x < y` (fueled refinement; `none` only
-on fuel exhaustion or if the inputs are not actually ordered). The
-witness picker's workhorse: complements of infeasible sets get rational
-sample points whenever a gap is genuinely open. Returned witnesses are
-values of dyadic endpoints. (Replaced by the `am.select` port in
-nla-26.4.) -/
-def ratBetween (x y : RAlg) (fuel : Nat := 128) : Option Rat :=
-  match x, y with
-  | .rat p, .rat q => if p < q then some ((p + q) / 2) else none
-  | .rat q, .root p a b => Id.run do
-    -- need q < r < α: refine until the lower bracket clears q
-    let signA := evalSignAtD p a
-    let mut lo := a
-    let mut hi := b
-    for _ in [0:fuel] do
-      if lo.gtRat q then return some lo.toRat -- q < lo < α (lo non-root ⇒ lo ≠ α)
-      match refineCoreStepD p signA lo hi with
-      | .inl (lo', hi') => lo := lo'; hi := hi'
-      | .inr r =>
-        -- the root is exactly r: any rational in (q, r) works
-        let rv := r.toRat
-        return if q < rv then some ((q + rv) / 2) else none
-    return none
-  | .root p a b, .rat q => Id.run do
-    let signA := evalSignAtD p a
-    let mut lo := a
-    let mut hi := b
-    for _ in [0:fuel] do
-      if hi.ltRat q then return some hi.toRat -- α < hi < q
-      match refineCoreStepD p signA lo hi with
-      | .inl (lo', hi') => lo := lo'; hi := hi'
-      | .inr r =>
-        let rv := r.toRat
-        return if rv < q then some ((rv + q) / 2) else none
-    return none
-  | .root p1 a1 b1, .root p2 a2 b2 => Id.run do
-    let sA1 := evalSignAtD p1 a1
-    let sA2 := evalSignAtD p2 a2
-    let mut x1 := a1
-    let mut y1 := b1
-    let mut x2 := a2
-    let mut y2 := b2
-    -- exact values discovered by a midpoint hit (then that side stops
-    -- refining and the witness must clear the exact value strictly)
-    let mut ex1 : Option Rat := none
-    let mut ex2 : Option Rat := none
-    for _ in [0:fuel] do
-      match ex1, ex2 with
-      | some r1, some r2 =>
-        return if r1 < r2 then some ((r1 + r2) / 2) else none
-      | some r1, none =>
-        -- α₁ = r₁ exactly: need r₁ < w < α₂; x₂ works once it clears r₁
-        if x2.gtRat r1 then return some x2.toRat
-      | none, some r2 =>
-        -- α₂ = r₂ exactly: α₁ < y₁ < r₂ once y₁ clears r₂
-        if y1.ltRat r2 then return some y1.toRat
-      | none, none =>
-        if Mpbq.le y1 x2 then
-          -- α₁ < y₁ ≤ x₂ < α₂: y₁ works unless it IS α₂'s endpoint case:
-          -- y₁ ≤ x₂ < α₂ and α₁ < y₁, both strict ⇒ fine
-          return some y1.toRat
-      if ex1.isNone then
-        match refineCoreStepD p1 sA1 x1 y1 with
-        | .inl (x1', y1') => x1 := x1'; y1 := y1'
-        | .inr r => ex1 := some r.toRat
-      if ex2.isNone then
-        match refineCoreStepD p2 sA2 x2 y2 with
-        | .inl (x2', y2') => x2 := x2'; y2 := y2'
-        | .inr r => ex2 := some r.toRat
-    return none
 
 end RAlg
 

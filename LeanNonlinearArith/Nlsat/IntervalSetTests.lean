@@ -97,12 +97,15 @@ private def single1 : IntervalSet := mk false false (.rat 1) false false (.rat 1
 -- witness preferences: integer above everything
 private def uptofive : IntervalSet :=  -- (-∞, 0) ∪ [0, 5/2] under two justs
   mkUnion below0open (mk false false (.rat 0) false false (.rat (5/2)) j1)
-#guard pickInComplement uptofive == some (.rat 3)
+-- z3 int_gt on a basic value is ⌈v⌉ + 1 (strict even when v is an
+-- integer), hence 4 rather than 3 (nla-26.4 faithful pin)
+#guard pickInComplement uptofive == some (.rat 4)
 
 -- integer below everything: [-7/2, ∞) shape
 private def fromneg : IntervalSet :=
   mkUnion (mk false false (.rat (-7/2)) true true (.rat 0) j0) above0open
-#guard pickInComplement fromneg == some (.rat (-4))
+-- z3 int_lt on a basic value is ⌊v⌋ − 1: ⌊−7/2⌋ − 1 = −5
+#guard pickInComplement fromneg == some (.rat (-5))
 
 -- rational in a gap (zero excluded by coverage)
 private def gapset : IntervalSet :=

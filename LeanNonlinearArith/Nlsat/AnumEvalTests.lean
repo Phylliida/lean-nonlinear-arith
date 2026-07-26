@@ -80,14 +80,14 @@ private def sqrt2 : RAlg := .root #[-2, 0, 1] 1 2
 
 #guard RAlg.intervalOf sqrt2 == ((1 : Rat), 2)
 #guard RAlg.width (RAlg.rat (7/2)) == 0
-#guard RAlg.width (RAlg.refineUntilWidth sqrt2 (1/1024)) < 1/1024
+#guard RAlg.width (RAlg.refineUntilPrec sqrt2 10) < 1/1024
 -- refinement keeps enclosing √2: interval evaluation of x²−2 must span 0
 #guard (MPoly.sub (MPoly.mul x0 x0) (MPoly.ofRat 2)).evalInterval
-  (fun _ => RAlg.intervalOf (RAlg.refineUntilWidth sqrt2 (1/1024)))
+  (fun _ => RAlg.intervalOf (RAlg.refineUntilPrec sqrt2 10))
   |> RatInterval.containsZero
 
 -- nla-26.5 rationality discovery through refine_until_prec: a root cell
 -- whose midpoint hits the root exactly becomes basic
-#guard RAlg.refineUntilWidth (.root #[-4, 0, 1] 1 3) (1/1024) == RAlg.rat 2
+#guard RAlg.refineUntilPrec (.root #[-4, 0, 1] 1 3) 10 == RAlg.rat 2
 
 end LeanNonlinearArith.Nlsat.AnumEvalTests

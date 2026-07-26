@@ -21,14 +21,15 @@ Fidelity notes (source: `nlsat_interval_set.cpp`, case comments kept):
 * `pickInComplement` keeps Z3's deterministic (randomize=false)
   preference order: zero, an integer above everything, an integer below
   everything, a rational in some gap, a shared *rational* open endpoint,
-  and finally an irrational shared endpoint as the witness.
-  Declared minor divergences: Z3's `am.select` prefers "nice" dyadic
-  rationals inside gaps (we use `RAlg.ratBetween`'s refinement
-  endpoints — same spirit, not bit-identical), and a `root`-represented
-  value that happens to be rational (e.g. the root of `x²−4` in
-  `(1,3)`) is treated as irrational here because our mini-anum only
-  normalizes linear defining polynomials — the witness is still the
-  correct number, just in root representation.
+  and finally an irrational shared endpoint as the witness. Since
+  nla-26.4 the selection entry points are the actual `am` ports
+  (`intGt`/`intLt`/`select` with dyadic `select_small_core` niceness).
+  Remaining declared divergence: a `root`-represented value that
+  happens to be rational (e.g. the root of `x²−4` in `(1,3)`) is
+  treated as irrational by the shared-endpoint rational preference
+  (Z3's `is_rational` normalizes; our mini-anum discovers such values
+  only lazily through refinement) — the witness is still the correct
+  number, just in root representation.
 -/
 
 namespace LeanNonlinearArith.Nlsat
@@ -287,18 +288,11 @@ def cmpWithZero (iv : NInterval) : Int := Id.run do
     | _ => pure ()
   return 0
 
-/-- An integer strictly above the value. -/
-def intAbove : RAlg → Rat
-  | .rat q => (q.floor + 1 : Int)
-  | .root _ _ b => (Mpbq.floorInt b + 1 : Int)
-
-/-- An integer strictly below the value. -/
-def intBelow : RAlg → Rat
-  | .rat q => (q.ceil - 1 : Int)
-  | .root _ a _ => (Mpbq.ceilInt a - 1 : Int)
-
 /-- Pick a witness in the complement (Z3 preference order,
-randomize = false). Returns `none` only for a full set. -/
+randomize = false). Returns `none` only for a full set. nla-26.4: the
+three selection entry points are now the `am` ports — `intGt`/`intLt`
+(refine-then-floor/ceil) and `select` (separate + dyadic
+`select_small_core` smallest-denominator gap witnesses). -/
 def pickInComplement (s : IntervalSet) : Option RAlg := Id.run do
   match s with
   | none => return some (.rat 0)
@@ -318,17 +312,16 @@ def pickInComplement (s : IntervalSet) : Option RAlg := Id.run do
     if zeroOk then return some (.rat 0)
     -- an integer above everything
     if !ints[num - 1]!.upperInf then
-      return some (.rat (intAbove ints[num - 1]!.upper))
+      return some (.rat (RAlg.intGt ints[num - 1]!.upper : Int))
     -- an integer below everything
     if !ints[0]!.lowerInf then
-      return some (.rat (intBelow ints[0]!.lower))
-    -- a rational inside some non-unit gap
+      return some (.rat (RAlg.intLt ints[0]!.lower : Int))
+    -- a "nice" dyadic rational inside some non-unit gap
     for i in [1:num] do
       let u := ints[i-1]!.upper
       let l := ints[i]!.lower
       if RAlg.lt u l then
-        if let some r := RAlg.ratBetween u l then
-          return some (.rat r)
+        return some (.rat (RAlg.select u l))
     -- shared open endpoints: prefer a rational one
     let mut irrational : Option RAlg := none
     for i in [1:num] do

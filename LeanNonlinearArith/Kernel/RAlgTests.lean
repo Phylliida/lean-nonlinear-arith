@@ -64,15 +64,32 @@ def negSqrt2 : RAlg := .root #[-2, 0, 1] (-2) (-1)
 
 /-! ## Rational separation (witness picking) -/
 
-#guard (ratBetween sqrt2 sqrt3).any fun r =>
+-- nla-26.4: `select` = z3 am::select (separate + select_small_core).
+-- Strict betweenness on every shape:
+#guard
+  let r := RAlg.select sqrt2 sqrt3
   RAlg.compare sqrt2 (.rat r) == .lt && RAlg.compare (.rat r) sqrt3 == .lt
-#guard (ratBetween (.rat 1) sqrt2).any fun r =>
+#guard
+  let r := RAlg.select (.rat 1) sqrt2
   (1 : Rat) < r && RAlg.compare (.rat r) sqrt2 == .lt
-#guard (ratBetween sqrt2 (.rat (3/2))).any fun r =>
+#guard
+  let r := RAlg.select sqrt2 (.rat (3/2))
   r < 3/2 && RAlg.compare sqrt2 (.rat r) == .lt
-#guard (ratBetween sqrt2 phi).any fun r =>
+#guard
+  let r := RAlg.select sqrt2 phi
   RAlg.compare sqrt2 (.rat r) == .lt && RAlg.compare (.rat r) phi == .lt
-#guard (ratBetween (.rat (-1)) (.rat 1)).any fun r => r == 0
+-- …and the dyadic-niceness pins (smallest-denominator preference):
+#guard RAlg.select (.rat (-1)) (.rat 1) == 0        -- an integer if possible
+#guard RAlg.select (.rat 0) (.rat 1) == 1/2
+#guard RAlg.select sqrt2 sqrt3 == 3/2               -- few-bit gap witness
+#guard RAlg.select (.rat 0) sqrt2 == 1              -- integer bracket endpoint
+-- intGt/intLt (z3 refine-then-ceil/floor — note ceil(upper), not ⌊·⌋+1)
+#guard RAlg.intGt sqrt2 == 2
+#guard RAlg.intLt sqrt2 == 1
+#guard RAlg.intGt (.rat 2) == 3
+#guard RAlg.intLt (.rat 2) == 1
+#guard RAlg.intGt negSqrt2 == -1
+#guard RAlg.intLt negSqrt2 == -2
 
 /-! ## Unfueled compare mechanism (nla-26.3, z3 `compare_core` ladder) -/
 
