@@ -454,6 +454,11 @@ with `m_minimal` tracking. Consequences to implement WITH it:
 - eager rational-root discovery matches default Z3 (today ours is
   lazy-only via refine). [large: own arc, likely multi-session]
 
+**Sequencing decided 2026-07-26 (Danielle's guiding rule, DESIGN-endgame
+§6 Q4): EARLY — right after nla-28's signatures, before 12b-ii/12c.**
+Build the evaluator/solver once against default parity; re-derive the
+affected nla-26 behavioral pins from source during this arc.
+
 ## nla-28 `todo` — anum statefulness threading (Danielle, 2026-07-26 review; sequence BEFORE/WITH 12c)
 
 Z3's anum ops MUTATE cells and the refinement persists in solver state
@@ -467,7 +472,10 @@ arguments; `IntervalSet` endpoint comparisons and `pickInComplement`
 thread updated intervals back into the stored set; 12c's assignment map
 stores refined cells after every evaluator/compare call. [medium
 refactor, touches IntervalSet comparison helpers + mkUnion + 12b-ii/12c
-signatures]
+signatures] **Design CONFIRMED 2026-07-26 (DESIGN-endgame §6 Q2):
+explicit refined-arg tuple returns at RAlg + solver-state store at 12c.
+This is the next item; complete mutation-site list in DESIGN-endgame
+§2.1.**
 
 ## Kernel + kit
 

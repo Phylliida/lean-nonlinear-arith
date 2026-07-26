@@ -59,8 +59,13 @@ path); 27 (fidelity); 21, 22, 07b, 06 (L1 hardening); 23, 24-residual,
 
 ## 2. Critical path to Tier A
 
-Ordering: **28 → 12b-ii → 12c → 12d+19a (same arc) → 19b → 12e → 14 →
-15 → 27 → 16.** Rationale per item below.
+Ordering (revised 2026-07-26 under Danielle's guiding rule, see §6):
+**28 → 27 → 12b-ii → 12c → 12d+19a (same arc) → 19b → 12e → 14 → 15 →
+16.** nla-27 moved ahead of the evaluator/solver builds: `factor=false`
+is a live divergence from default z3, and the evaluator/solver behavior
+(became-basic paths, compareCore common path, witness shapes) depends
+on it — build the pipeline once, against default parity, rather than
+retrofit. Rationale per item below.
 
 ### 2.1 nla-28 — anum statefulness threading *(next up; ~1 session: ½ design + ½ signatures/implementation)*
 
@@ -171,14 +176,16 @@ DESIGN-nlsat-quadratic §3: `leafNumeric` → nla-09 certificates
 `linearRoot` → plain inequality lemmas; `cellBound` → the S3 4-lemma
 point-vs-root ordering family + linarith glue.
 
-**Q1 (the open question on the board, resolve here):** does the finite
-S3 ordering family + linarith cover ALL emitted cell shapes? Plan:
-empirical first — run 12d on hand goals + the first census rows, censor
-the emitted cell-literal shapes, check each against the family; if the
-enumeration closes, prove the coverage lemma (cell shapes are generated
-by a finite grammar — this should be a small case analysis, not a
-research item); if it doesn't close, extend the S3 family (same
-Templates/Quadratic style) before writing the coverage lemma.
+**Q1 (resolved 2026-07-26, rule 2 — prove over empiricism):** does the
+finite S3 ordering family + linarith cover ALL emitted cell shapes?
+Plan: derive the cell-shape grammar **from source** — enumerate what
+`add_cell_lits` + `mk_linear_root`/`mk_quadratic_root`/`mk_plinear_root`
+can emit by reading `nlsat_explain.cpp` (a finite grammar over
+root-atom kinds × openness × sample position) — and prove the coverage
+lemma against that grammar during 19a, before/while 12d exists. Real
+traces are confirmation of the grammar transcription, not the basis of
+the claim. If the grammar exceeds the current S3 family, extend the
+family (same Templates/Quadratic style) first.
 
 **Acceptance:** end-to-end on hand goals with algebraic cells (√2-grade),
 negative probes (corrupted trace rejected), and the first
@@ -224,7 +231,7 @@ Lean backend. Toolchain already aligned (identical lean+mathlib v4.25.0
 pins); integration is a `require` line + closer-string emission +
 crate-local check.sh gate. No design content remaining.
 
-### 2.9 nla-27 — univariate ℤ factorization *(3–5 sessions, own arc; AFTER 19b e2e, BEFORE 16)*
+### 2.9 nla-27 — univariate ℤ factorization *(3–5 sessions, own arc; SECOND — right after nla-28's signatures, before 12b-ii)*
 
 Board entry is the spec (port `upolynomial_factorization.cpp` ~1300
 lines: square-free factorization, Berlekamp over Z_p with prime trials
@@ -235,14 +242,17 @@ on cells; `compareCore` minimal-branch (refine-until-disjoint) becomes
 the common path and must be implemented; became-basic goes radical-only
 (F1 guard becomes pure safety net); eager rational-root discovery.
 
-**Sequencing rationale:** get the quadratic pipeline e2e green under
-`factor=false` parity first (a legitimate z3 configuration — one flag),
-then flip to default parity before the harness, since factor changes
-witness shapes and code-path reachability (the F1 finding). Expect to
-re-pin select/compare behavioral suites under factor=true (rational
-roots become basic at construction — several nla-26 pins will change
-values; that is fidelity working, not breakage — re-derive each from
-source when it happens).
+**Sequencing (resolved 2026-07-26, rules 1+3):** BEFORE 12b-ii/12c.
+The earlier after-e2e plan optimized for pipeline momentum at the cost
+of building the evaluator and solver against non-default cell behavior
+(the F1 finding showed factor changes code-path reachability;
+became-basic handling and the compareCore common path differ) and then
+re-validating. Right-way-first: land 28's signatures, then this arc,
+then build everything downstream against default parity exactly once.
+Immediate consequence: the nla-26 select/compare behavioral pins that
+assumed lazy rational discovery get re-derived from source under
+factor=true during this arc (rational roots become basic at
+construction) — that is fidelity working, not breakage.
 
 ### 2.10 nla-16 — parity harness *(1–2 sessions + fallout budget)*
 
@@ -345,43 +355,67 @@ A repo document (not code) assembling the guarantee end to end:
 
 ---
 
-## 6. Open questions for Danielle
+## 6. Decisions (Q1–Q7 resolved 2026-07-26)
 
-- **Q1 (19a):** S3 family coverage — plan is empirical-then-lemma
-  (§2.4). OK to defer the coverage lemma until real traces exist?
-- **Q2 (28):** threading shape — explicit refined-arg returns at RAlg +
-  solver-state store at 12c (§2.1). Confirm before signatures land.
-- **Q3 (12c):** confirm clause-learning minimization + restart policy
-  are ported exactly (parity directive reading: they shape which traces
-  emerge, so yes). Any z3 heuristic we're allowed to simplify needs a
-  written parity argument.
-- **Q4 (27):** sequencing after 19b / before 16 (§2.9), accepting that
-  a batch of nla-26 behavioral pins get re-derived under factor=true.
-- **Q5 (proof layer):** cheap tier opportunistically between arcs
-  (recommended) vs batched at the end?
-- **Q6 (16):** define "matching cost" acceptance concretely — proposal:
-  per-site heartbeat budget with the layered `withLayerHeartbeats`
-  shape, reported as a census table; no wall-clock gates (load
-  unreliability).
-- **Q7 (M4 timing):** start S1 (nla-11a/11c tracks parallelize with the
-  12c/12d ports) opportunistically, or hold until Tier A ships?
+**Danielle's guiding rule (verbatim intent):** 1. do things the right
+way first; 2. prioritize proving correctness over empiricism whenever
+possible; 3. follow z3 as closely as possible — any divergence is bad
+(the eager-sorted representation is explicitly fine).
+
+- **Q1 → grammar-first proof** (rule 2): derive the cell-shape grammar
+  from `nlsat_explain.cpp` source and prove the S3 coverage lemma
+  against it during 19a; traces confirm the transcription only (§2.4).
+- **Q2 → confirmed** (rule 3): explicit refined-arg returns at RAlg +
+  solver-state store at 12c — the faithful functional image of z3's
+  in-place mutation, provided every call site threads (§2.1).
+- **Q3 → exact port** (rule 3): clause-learning minimization and
+  restart policy ported verbatim; any simplification of any z3
+  heuristic requires a written parity argument in the commit.
+- **Q4 → nla-27 moved EARLY** (rules 1+3): right after 28's signatures,
+  before 12b-ii/12c — build the pipeline once against default
+  (`factor=true`) parity; re-derive the affected nla-26 pins from
+  source during the arc (§2.9).
+- **Q5 → prove-as-you-port** (rule 2): each cheap-tier proof item
+  attaches to the arc that touches its subject (e.g. gradedLexCompare
+  theorems land with 12b-ii, evalRat homomorphisms with the next
+  MPoly-touching arc); nothing waits for a cleanup phase.
+- **Q6 → heartbeat budgets** (rules 2+3): per-site
+  `withLayerHeartbeats` budgets reported as a census table; no
+  wall-clock gates.
+- **Q7 → S1 lane opens now** (rule 2): nla-11a (resultants) and 11c
+  (root continuity) run as a parallel lane interleaved with the port
+  arcs rather than waiting for Tier A — Tier B is the actual guarantee,
+  so its long pole starts immediately. 11a doubles as the semantic
+  proof for `resultantElim` (a 25.3 residual), making it the natural
+  first pick of the lane.
+
+**Approved divergence register (rule 3 exception list, complete):**
+eager-canonical polynomial representation (vs z3's lazy `lex_sort`;
+Danielle 2026-07-26 — "the sorting thingy seems fine"; the 25.4
+`cmp_mul_left` theorem is what it costs us and it is paid);
+Sturm-vs-Descartes isolation; ℚ[x] QPoly kernel bridged at `ofQPoly`;
+root-represented rationals at shared endpoints. `factor=false` leaves
+this list when nla-27 lands. Anything else appearing here needs
+Danielle's sign-off.
 
 ## 7. Estimates and shape of the remainder
 
 Critical path to Tier A: **~12–18 sessions**
-(28: 1 · 12b-ii: 1–2 · 12c: 2–4 · 12d+19a: 3–4 · 19b: 1–2 · 12e: 1–2 ·
-14: 1–2 · 15: ½ · 27: 3–5 · 16: 1–2, some overlap).
-L1 hardening: +5–8 parallel-safe. Proof layer cheap tier: +3–5
-opportunistic. Tier B (S1 + nla-10 + nla-13 general + M5 update):
-+12–25, research risk concentrated in 11b.
+(28: 1 · 27: 3–5 · 12b-ii: 1–2 · 12c: 2–4 · 12d+19a: 3–4 · 19b: 1–2 ·
+12e: 1–2 · 14: 1–2 · 15: ½ · 16: 1–2, some overlap). The 27-early
+resequencing front-loads cost but removes a re-validation pass.
+L1 hardening: +5–8 parallel-safe. Proof layer cheap tier: folded into
+the arcs (Q5). Tier B (S1 + nla-10 + nla-13 general + M5 update):
++12–25 with research risk concentrated in 11b; the 11a/11c lane starts
+now (Q7) and runs interleaved.
 
 Dependency skeleton:
 
 ```
-28 → 12b-ii → 12c → 12d ⇄ 19a → 19b → 12e → 14 → 15 → 16
-                                  ↑              27 ↗
-        21,22,07b,06 (parallel)   S1: 11a ∥ 11c → 11b → 11d → 13 → M5-full
-        proof-layer cheap tier (between arcs)
+28 → 27 → 12b-ii → 12c → 12d ⇄ 19a → 19b → 12e → 14 → 15 → 16
+        21,22,07b,06 (parallel lane)
+        S1 lane, opens now: 11a ∥ 11c → 11b → 11d → 13 → M5-full
+        proof-layer cheap tier: attached per-arc (Q5)
 ```
 
 ## 8. Standing directives that govern all remaining work
