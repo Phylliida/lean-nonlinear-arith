@@ -10,6 +10,8 @@ import LeanNonlinearArith.Templates.Divisions
 import LeanNonlinearArith.Templates.Intervals
 import LeanNonlinearArith.Tactic.Saturate
 import LeanNonlinearArith.Tactic.SaturateTests
+import LeanNonlinearArith.Kernel.Dyadic
+import LeanNonlinearArith.Kernel.DyadicTests
 import LeanNonlinearArith.Kernel.QPoly
 import LeanNonlinearArith.Kernel.QPolyTests
 import LeanNonlinearArith.Kernel.QPolyBench
