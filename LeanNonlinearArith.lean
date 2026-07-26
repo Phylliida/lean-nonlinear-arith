@@ -25,6 +25,7 @@ import LeanNonlinearArith.Templates.Quadratic
 import LeanNonlinearArith.Kernel.RAlg
 import LeanNonlinearArith.Kernel.RAlgTests
 import LeanNonlinearArith.Nlsat.Types
+import LeanNonlinearArith.Nlsat.TypesOrder
 import LeanNonlinearArith.Nlsat.IntervalSet
 import LeanNonlinearArith.Nlsat.IntervalSetTests
 import LeanNonlinearArith.Nlsat.AnumEval
