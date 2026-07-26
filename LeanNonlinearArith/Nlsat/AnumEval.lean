@@ -9,10 +9,12 @@ algebraic assignments, ported to Z3's actual shape (DESIGN-nlsat-quadratic
 §4b; Danielle: similarity uncompromised — interval arithmetic first,
 exact resultant-based zero test as fallback):
 
-* exact rational interval arithmetic (`RatInterval`) with MPoly
-  enclosure evaluation — endpoints are `Rat`, not Z3's dyadic `mpbq`;
-  no rounding anywhere, so enclosures are never looser (declared
-  representation divergence);
+* exact dyadic interval arithmetic (`MpbqI` — nla-26.1b second half:
+  the 1:1 `mpbqi`/`basic_interval.h` port, replacing the interim
+  `RatInterval` divergence) with MPoly enclosure evaluation; ℤ
+  coefficients (nla-26.2) + denominator-clearing substitution mean
+  nothing in the evaluator path ever needs rounding, exactly as in Z3
+  (`eval_sign_at` asserts every interval-phase value is algebraic);
 * `resultantElim`: `Res_x(f, q)` for `q` univariate rational — the only
   resultant both call sites need (algebraic cells' defining polynomials
   are univariate) — via the multiplication-matrix determinant on
@@ -30,53 +32,69 @@ namespace LeanNonlinearArith.Nlsat
 
 open LeanNonlinearArith.Kernel
 
-/-- Closed rational interval `[lo, hi]` (`lo ≤ hi` by construction). -/
-abbrev RatInterval := Rat × Rat
+/-- Closed dyadic interval `[lo, hi]` — z3 `mpbqi`
+(`basic_interval_manager<mpbq_manager, false>`; "for precise numerals":
+every operation below is exact, there are no rounding hooks). -/
+structure MpbqI where
+  lo : Mpbq
+  hi : Mpbq
+deriving Repr, Inhabited, BEq
 
-namespace RatInterval
+namespace MpbqI
 
-def ofRat (q : Rat) : RatInterval := (q, q)
+def ofMpbq (a : Mpbq) : MpbqI := ⟨a, a⟩
 
-def add (i j : RatInterval) : RatInterval := (i.1 + j.1, i.2 + j.2)
+def ofInt (n : Int) : MpbqI := ⟨.ofInt n, .ofInt n⟩
 
-def neg (i : RatInterval) : RatInterval := (-i.2, -i.1)
+/-- `basic_interval.h` add. -/
+def add (i j : MpbqI) : MpbqI := ⟨Mpbq.add i.lo j.lo, Mpbq.add i.hi j.hi⟩
 
-def mul (i j : RatInterval) : RatInterval :=
-  let c1 := i.1 * j.1
-  let c2 := i.1 * j.2
-  let c3 := i.2 * j.1
-  let c4 := i.2 * j.2
-  (min (min c1 c2) (min c3 c4), max (max c1 c2) (max c3 c4))
+/-- `basic_interval.h` sub (`lo − hi'`, `hi − lo'`). -/
+def sub (i j : MpbqI) : MpbqI := ⟨Mpbq.sub i.lo j.hi, Mpbq.sub i.hi j.lo⟩
 
-/-- Interval power with the even-power tightening (`[-2,3]² = [0,9]`,
-not `[-6,9]` — matches `mpbqi_manager::power`). -/
-def pow (i : RatInterval) (n : Nat) : RatInterval :=
-  if n == 0 then (1, 1)
-  else if n % 2 == 1 then (i.1 ^ n, i.2 ^ n)
+def neg (i : MpbqI) : MpbqI := ⟨Mpbq.neg i.hi, Mpbq.neg i.lo⟩
+
+/-- `basic_interval.h` mul: min/max over the four endpoint products. -/
+def mul (i j : MpbqI) : MpbqI :=
+  let c1 := Mpbq.mul i.lo j.lo
+  let c2 := Mpbq.mul i.lo j.hi
+  let c3 := Mpbq.mul i.hi j.lo
+  let c4 := Mpbq.mul i.hi j.hi
+  ⟨Mpbq.min (Mpbq.min c1 c2) (Mpbq.min c3 c4),
+   Mpbq.max (Mpbq.max c1 c2) (Mpbq.max c3 c4)⟩
+
+/-- `basic_interval.h` power (:326): odd exponents map endpoints;
+even exponents split on the interval's sign (`[-2,3]² = [0,9]`). -/
+def pow (i : MpbqI) (n : Nat) : MpbqI :=
+  if n % 2 == 1 then ⟨Mpbq.power i.lo n, Mpbq.power i.hi n⟩
   else
-    let l := i.1 ^ n
-    let h := i.2 ^ n
-    if i.1 ≥ 0 then (l, h)
-    else if i.2 ≤ 0 then (h, l)
-    else (0, max l h)
+    let l := Mpbq.power i.lo n
+    let h := Mpbq.power i.hi n
+    if i.lo.isNonneg then ⟨l, h⟩
+    else if i.hi.isNeg then ⟨h, l⟩
+    else ⟨Mpbq.ofInt 0, Mpbq.max l h⟩
 
-def containsZero (i : RatInterval) : Bool := i.1 ≤ 0 && 0 ≤ i.2
+def containsZero (i : MpbqI) : Bool := i.lo.isNonpos && i.hi.isNonneg
 
-def width (i : RatInterval) : Rat := i.2 - i.1
+def isPos (i : MpbqI) : Bool := i.lo.isPos
 
-end RatInterval
+def isNeg (i : MpbqI) : Bool := i.hi.isNeg
+
+def width (i : MpbqI) : Mpbq := Mpbq.sub i.hi i.lo
+
+end MpbqI
 
 namespace MPoly
 
 /-- Enclosure evaluation: every variable of `p` must be covered by `σ`.
-Coefficients are ℤ (nla-26.2) — exactly why Z3's evaluator never needs
-rounding: integer coefficients are exact dyadics. -/
-def evalInterval (p : MPoly) (σ : Var → RatInterval) : RatInterval :=
+ℤ coefficients (nla-26.2) enter as exact dyadic point intervals —
+nothing here rounds, exactly as in Z3's evaluator. -/
+def evalInterval (p : MPoly) (σ : Var → MpbqI) : MpbqI :=
   p.foldl (fun acc (a, m) =>
-    RatInterval.add acc
-      (m.foldl (fun acc (x, e) => RatInterval.mul acc (RatInterval.pow (σ x) e))
-        (RatInterval.ofRat (a : Rat))))
-    (0, 0)
+    MpbqI.add acc
+      (m.foldl (fun acc (x, e) => MpbqI.mul acc (MpbqI.pow (σ x) e))
+        (MpbqI.ofInt a)))
+    (MpbqI.ofInt 0)
 
 end MPoly
 
@@ -242,10 +260,12 @@ end AnumEval
 
 namespace RAlg
 
-/-- Enclosing interval (point interval for rationals). -/
-def intervalOf : RAlg → RatInterval
-  | .rat q => (q, q)
-  | .root _ a b => (a.toRat, b.toRat)
+/-- Isolating interval of an algebraic cell (z3 `var2interval` — only
+defined for non-basic values: rationals are substituted away before the
+interval phase, `eval_sign_at`'s `SASSERT(!v.is_basic())`). -/
+def intervalD : RAlg → Option MpbqI
+  | .rat _ => none
+  | .root _ a b => some ⟨a, b⟩
 
 def width : RAlg → Rat
   | .rat _ => 0

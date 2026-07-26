@@ -14,20 +14,23 @@ open LeanNonlinearArith.Kernel
 open LeanNonlinearArith.Nlsat
 open LeanNonlinearArith.Nlsat.AnumEval
 
-/-! ## Interval arithmetic -/
+/-! ## Interval arithmetic (`MpbqI` = mpbqi, exact dyadic) -/
 
-#guard RatInterval.pow (-2, 3) 2 == ((0 : Rat), 9)     -- even tightening
-#guard RatInterval.pow (-3, -1) 2 == ((1 : Rat), 9)    -- negative range
-#guard RatInterval.pow (-2, 3) 3 == ((-8 : Rat), 27)   -- odd is monotone
-#guard RatInterval.mul (1, 2) (-3, 4) == ((-6 : Rat), 8)
-#guard RatInterval.containsZero (-1, 1)
-#guard !RatInterval.containsZero (1/8, 1)
+#guard MpbqI.pow ⟨-2, 3⟩ 2 == (⟨0, 9⟩ : MpbqI)         -- even tightening
+#guard MpbqI.pow ⟨-3, -1⟩ 2 == (⟨1, 9⟩ : MpbqI)        -- negative range
+#guard MpbqI.pow ⟨-2, 3⟩ 3 == (⟨-8, 27⟩ : MpbqI)       -- odd is monotone
+#guard MpbqI.mul ⟨1, 2⟩ ⟨-3, 4⟩ == (⟨-6, 8⟩ : MpbqI)
+#guard MpbqI.containsZero ⟨-1, 1⟩
+#guard !MpbqI.containsZero ⟨Mpbq.mk 1 3, 1⟩
+-- dyadic endpoints stay exact through mul/pow
+#guard MpbqI.mul ⟨Mpbq.mk 1 1, Mpbq.mk 3 1⟩ ⟨Mpbq.mk 1 2, Mpbq.mk 5 2⟩
+  == (⟨Mpbq.mk 1 3, Mpbq.mk 15 3⟩ : MpbqI)  -- [1/2,3/2]·[1/4,5/4] = [1/8,15/8]
 
 -- x² + y over x ∈ [−1, 1], y ∈ [2, 3] ⇒ [2, 4]
 private def x0 : MPoly := MPoly.ofVar 0
 private def x1 : MPoly := MPoly.ofVar 1
 #guard (MPoly.add (MPoly.mul x0 x0) x1).evalInterval
-  (fun v => if v == 0 then (-1, 1) else (2, 3)) == ((2 : Rat), 4)
+  (fun v => if v == 0 then ⟨-1, 1⟩ else ⟨2, 3⟩) == (⟨2, 4⟩ : MpbqI)
 
 /-! ## Resultant elimination (`q` univariate rational) -/
 
@@ -78,13 +81,14 @@ private def checkBound (p : QPoly) (root : Rat) : Bool :=
 
 private def sqrt2 : RAlg := .root #[-2, 0, 1] 1 2
 
-#guard RAlg.intervalOf sqrt2 == ((1 : Rat), 2)
+#guard RAlg.intervalD sqrt2 == some ⟨1, 2⟩
+#guard RAlg.intervalD (RAlg.rat (7/2)) == none  -- basic values never enter
 #guard RAlg.width (RAlg.rat (7/2)) == 0
 #guard RAlg.width (RAlg.refineUntilPrec sqrt2 10) < 1/1024
 -- refinement keeps enclosing √2: interval evaluation of x²−2 must span 0
 #guard (MPoly.sub (MPoly.mul x0 x0) (MPoly.ofInt 2)).evalInterval
-  (fun _ => RAlg.intervalOf (RAlg.refineUntilPrec sqrt2 10))
-  |> RatInterval.containsZero
+  (fun _ => (RAlg.intervalD (RAlg.refineUntilPrec sqrt2 10)).getD ⟨0, 0⟩)
+  |> MpbqI.containsZero
 
 -- nla-26.5 rationality discovery through refine_until_prec: a root cell
 -- whose midpoint hits the root exactly becomes basic
