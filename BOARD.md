@@ -358,9 +358,25 @@ containment direction is free.
 
 ## L2/L3 — nlsat
 
-- **nla-12** `todo` nlsat search port (classic path of nlsat_solver.cpp /
-  nlsat_explain.cpp; no levelwise). Emits traces in the 5-shape language
-  (DESIGN.md section 2/L3) + integer branch splits.
+- **nla-12** `active` (lane opened 2026-07-26; slice plan + module map +
+  trace language + discharge map in **DESIGN-nlsat-quadratic.md**) nlsat
+  search port (classic path of nlsat_solver.cpp / nlsat_explain.cpp; no
+  levelwise). Emits traces in the 5-shape language (DESIGN.md section
+  2/L3) + integer branch splits. The search is generic in degree; the
+  quadratic fragment (deg ≤ 2 per top variable) is enforced at
+  explain/check time — S1-free per the one-identity insight
+  (`4a·p = (2ay+b)² − disc`). Done so far: **S3 Thom kit**
+  (`Templates/Quadratic.lean`, sorry-free: sign dictionary iffs both
+  lead signs, definite disc≤0 cases, the 4-lemma point-vs-root-interval
+  ordering family + roots-order; mirrors mk_quadratic_root
+  nlsat_explain.cpp:886) and **mini-anum** (`Kernel/RAlg.lean` +
+  tests: rat|root representation, compare with gcd common-root fast
+  path + fueled refinement separation, sign / signOfPolyAt via Tarski,
+  ratBetween for witness picking; mkRoot normalizes linear→rational for
+  Z3's rational-preference parity). Next slices: nla-12a Types/Trace +
+  IntervalSet (justification-preserving mk_union per
+  nlsat_interval_set.cpp), 12b Evaluator, 12c Solver loop, 12d Explain
+  (fragment-checked), then nla-19a Check.lean v0.
 - **nla-13** `todo` Trace checker: discharge shapes 4/5 by per-instance ring,
   shape 2 by degree dispatch (ineq / Thom / nla-09), shapes 1/3 by S1 + S2.
 - **nla-14** `todo` Front-end tactic `nonlinear_arith`: Int -> Real relaxation,

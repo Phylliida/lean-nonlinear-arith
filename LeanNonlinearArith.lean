@@ -19,3 +19,6 @@ import LeanNonlinearArith.Certificates.Defs
 import LeanNonlinearArith.Certificates.Sound
 import LeanNonlinearArith.Kernel.CertGen
 import LeanNonlinearArith.Certificates.Tests
+import LeanNonlinearArith.Templates.Quadratic
+import LeanNonlinearArith.Kernel.RAlg
+import LeanNonlinearArith.Kernel.RAlgTests
