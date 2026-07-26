@@ -261,11 +261,28 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
 
 ## Kernel + kit
 
-- **nla-08** `todo` Computational Q[x] kernel (untrusted): dense ops, gcd,
-  square-free decomposition, psc chains. Benchmark on specimen polynomials
-  (perf derisk).
-- **nla-09** `todo` Real algebraic numbers as (poly, isolating interval), sign
-  determination emitting nla-02-style certified claims.
+- **nla-08** `done` (2026-07-25) Computational ℚ[x] kernel (untrusted),
+  `Kernel/QPoly.lean`: dense ops, exact divRem, monic-Euclid gcd,
+  square-free part + Yun, Sturm chains + root counting, Cauchy bound;
+  psc/resultant chains computed as determinants of the EXACT Sylvester
+  submatrices from `Projection/S1Statement.lean` (spec-faithful — the
+  kernel's numbers are definitionally the spec's numbers). **Perf derisk
+  cleared decisively**: sturm/wilkinson-40 14ms, deg-16×16 psc chains
+  ~70ms, quadratic-lane degrees (≤8) sub-ms — determinant route stands,
+  subresultant-PRS fast path only if the deep tail ever demands it.
+  Benchmark honesty lesson recorded in `Kernel/QPolyBench.lean`: pure
+  computations must be forced (unless-throw) before the closing
+  timestamp, else the compiler defers them past it and every phase reads
+  0ms.
+- **nla-09** `active` Real algebraic numbers as (poly, isolating interval).
+  **Computational half done (2026-07-25)**, `Kernel/Roots.lean`:
+  Sturm-bisection isolation (disjoint rational open intervals, non-root
+  endpoints by split-nudging, square-free internally), interval
+  refinement, Tarski-query sign determination at an isolated root
+  (generalized chain `f, f'·g`; single-root TaQ = sign, incl. the 0 case).
+  Remaining: the trusted bridge — emitting nla-02-style certified claims
+  (IVT isolation witnesses, sign-from-rootlessness on the refined
+  intervals) that the checker consumes.
 - **nla-10** `todo` General Sturm theory — only if nla-02 says per-instance
   Rolle-chains don't suffice. AFP Sturm_Sequences as the map. Upstream-worthy.
 - **nla-11** `todo` **S1 proof campaign.** The long pole; two independent
