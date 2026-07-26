@@ -293,7 +293,19 @@ containment direction is free.
   which never proves its own tightness. Same treatment for corner-fold
   min/max and the k-th-root exactness window.
 
-## nla-25 `todo` — L2 kernel correctness upgrades (directives from Danielle, 2026-07-26)
+## nla-25 `partial` — L2 kernel correctness upgrades (directives from Danielle, 2026-07-26)
+
+**Status 2026-07-26 eve:** 25.1 resolved-by-removal (the gcd fast test
+is gone — nla-26.3's `am::compare` port decides different-poly equality
+via Sturm–Tarski `V == 0`; remaining counting trust = nla-10 as
+before). 25.3 test pins landed and **caught a real sign bug** — a
+`(−1)^{degF·d}` parity factor in `resultantElim` wrong for the
+documented `Res_x(f,q)` orientation, invisible in the quadratic lane
+(`d = 2` keeps the exponent even), exposed by the first `d = 3` pin and
+removed. 25.5 differential test landed (~10k union checks vs the
+membership oracle + justification provenance). **Open: 25.4** (order
+property theorems — now about `lexCompare`, see nla-26.2) and the
+proof-layer items (25.2 = nla-10, 25.3's semantic layer = nla-11a).
 
 From the fresh-context confidence audit + Danielle's review: fix
 correctly AND prove where feasible (documented now, scheduled later —
@@ -332,11 +344,47 @@ Scale flags are honest estimates.
    rational probes vs the "in s1 or s2" membership oracle +
    justification validity. [cheap]
 
-## nla-26 `todo` — fidelity hardening: divergence elimination (Danielle, 2026-07-26)
+## nla-26 `done` (2026-07-26 eve) — fidelity hardening: divergence elimination (Danielle, 2026-07-26)
 
-Divergence-by-divergence calls; sequence this arc BEFORE nla-12b-ii
-(evalSignAt sits directly on intervals/magnitude/refine). Source anchors
-gathered while hot.
+**ARC COMPLETE**, commits 4429381..d429841. What landed, per item:
+1. `Kernel/Mpbq.lean` — faithful `mpbq` port (renamed from Dyadic:
+   mathlib ships a root-level `Dyadic` that captured name resolution).
+   Surface = the `bqm()` census of algebraic_numbers/upolynomial;
+   declared non-ports: `root_lower/upper` (radical constructor),
+   `approx/approx_div` (no call sites; `basic_interval` is exact).
+   Threaded through: `isolateRootsD` (integer initial bound; the
+   bisection engine is dyadic-closed so it's shared, not duplicated),
+   `RAlg.root` endpoints, `MpbqI` = `mpbqi` interval port in AnumEval
+   (with 26.2's ℤ coefficients the evaluator path is rounding-free,
+   exactly Z3's shape — `eval_sign_at` reading: rationals are
+   substituted away, `SASSERT(!v.is_basic())`).
+2. ℤ coefficients + Z3 monomial orders in `Nlsat/Types.lean`
+   (`lexCompare` :625 = canonical storage order, the manager's only
+   sorted form; `gradedLexCompare` :710 = leading-monomial max-scan
+   order, storage-independent). `substRat` = denominator-clearing
+   positive scaling (z3 `substitute`); `resultantElim` internals on a
+   parallel ℚ-term copy, ℤ-scaled back.
+3. Unfueled `compare` = 1:1 `am::compare`/`compare_core` ladder
+   (disjointness / same-poly / magnitude equalization with
+   became-basic re-dispatch / precision-10 workaround / Sturm–Tarski).
+   Gcd fast test retired. `mkRoot` gained `am::normalize`
+   zero-straddle normalization (new cell invariant: 0 never strictly
+   inside).
+4. `am::select` port (`separate` + 4-shape `select_small_core`) +
+   `int_gt`/`int_lt` (`ceil(upper)`/`⌊v⌋−1` semantics — pick pins
+   updated) wired into `pickInComplement`; `ratBetween` deleted.
+5. Rationality discovery on refine (`refine_core` midpoint-zero test
+   first; `refine1`/`refineUntilPrec` convert to basic on exact hits).
+6. Binary magnitude/precision gating: `refineToPrecD` on `lt_1div2k`,
+   `intervalMagnitude` (imp::magnitude verbatim), `minMagnitude = −16`,
+   `RAlg.magnitude` for the 12b-ii evaluator gate.
+7. Pick determinism kept (confirmed non-divergence).
+Remaining declared divergences: Sturm-vs-Descartes isolation engine
+(nla-08), kernel `QPoly` ℚ[x] vs ℤ upolynomial (bridged at `ofQPoly`),
+root-represented rationals in the shared-endpoint preference,
+no factorization (`m_minimal` always false).
+
+Original item list (all done; anchors kept for reference):
 
 1. **Dyadic (`mpbq`) interval endpoints** — "Rat seems sus, investigate
    doing it the same." Port binary rationals (`num · 2^{−k}`) as
