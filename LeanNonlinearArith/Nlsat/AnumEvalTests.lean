@@ -86,4 +86,8 @@ private def sqrt2 : RAlg := .root #[-2, 0, 1] 1 2
   (fun _ => RAlg.intervalOf (RAlg.refineUntilWidth sqrt2 (1/1024)))
   |> RatInterval.containsZero
 
+-- nla-26.5 rationality discovery through refine_until_prec: a root cell
+-- whose midpoint hits the root exactly becomes basic
+#guard RAlg.refineUntilWidth (.root #[-4, 0, 1] 1 3) (1/1024) == RAlg.rat 2
+
 end LeanNonlinearArith.Nlsat.AnumEvalTests

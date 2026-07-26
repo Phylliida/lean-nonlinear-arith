@@ -74,4 +74,24 @@ def negSqrt2 : RAlg := .root #[-2, 0, 1] (-2) (-1)
   RAlg.compare sqrt2 (.rat r) == .lt && RAlg.compare (.rat r) phi == .lt
 #guard (ratBetween (.rat (-1)) (.rat 1)).any fun r => r == 0
 
+/-! ## Refinement + rationality discovery (nla-26.5, z3 `am::refine`) -/
+
+-- x² − 4 isolating 2 in (1, 3): the very first midpoint IS the root —
+-- the cell becomes basic (the divergence this port eliminates: the old
+-- nonRootSplit-based step dodged root midpoints forever)
+#guard refine1 (.root #[-4, 0, 1] 1 3) == RAlg.rat 2
+-- √2 in (1, 2): midpoint 3/2 has p > 0 = sign at b ⇒ (1, 3/2) survives
+#guard refine1 sqrt2 == RAlg.root #[-2, 0, 1] 1 (Mpbq.mk 3 1)
+-- iterated refinement stays a root cell and keeps bracketing √2
+#guard
+  let x := refine1 (refine1 (refine1 sqrt2))
+  match x with
+  | .root _ a b => a.ltRat (3/2) && b.gtRat (7/5) && Mpbq.lt a b
+  | .rat _ => false
+-- endpoint signs stay opposite through refinement (the refinable invariant)
+#guard
+  match refine1 (refine1 sqrt2) with
+  | .root p a b => QPoly.evalSignAtD p a * QPoly.evalSignAtD p b == -1
+  | .rat _ => false
+
 end LeanNonlinearArith.Kernel.RAlgTests

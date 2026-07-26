@@ -161,4 +161,25 @@ def refineIntervalD (p0 : QPoly) (a b : Mpbq) (iters : Nat) :
 def signAtRootD (g f : QPoly) (a b : Mpbq) : Int :=
   signAtRoot g f a.toRat b.toRat
 
+/-- Sign of `p` at a dyadic point. -/
+def evalSignAtD (p : QPoly) (x : Mpbq) : Int :=
+  let v := eval p x.toRat
+  if v < 0 then -1 else if v == 0 then 0 else 1
+
+/-- z3 `upolynomial::refine_core` (nla-26.5): one bisection step on a
+*refinable* interval — `p` square-free with opposite nonzero endpoint
+signs (`signA = sign p(a) ≠ 0`), which our `RAlg.root` invariant
+(exactly one root, simple, non-root endpoints) guarantees. The midpoint
+is tested FIRST: a zero midpoint means the actual root was found
+(`.inr`), the value-refinement behavior `nonRootSplit` deliberately
+dodges — right for isolation, wrong here. Otherwise the half keeping the
+sign change survives (`.inl`). -/
+def refineCoreStepD (p : QPoly) (signA : Int) (a b : Mpbq) :
+    (Mpbq × Mpbq) ⊕ Mpbq :=
+  let mid := Mpbq.div2 (Mpbq.add a b)
+  let s := evalSignAtD p mid
+  if s == 0 then .inr mid
+  else if s == signA then .inl (mid, b)
+  else .inl (a, mid)
+
 end LeanNonlinearArith.Kernel.QPoly

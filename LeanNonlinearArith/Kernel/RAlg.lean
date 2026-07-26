@@ -48,7 +48,12 @@ private def cnt (ch : Array QPoly) (x y : Rat) : Nat :=
   signVarAt ch x - signVarAt ch y
 
 /-- Smart constructor: normalize linear defining polynomials to their
-rational root; otherwise keep the `(poly, interval)` pair as given. -/
+rational root; otherwise keep the `(poly, interval)` pair as given.
+Revisited for nla-26.5: this IS Z3's shape — eager rational discovery
+happens only through factorization into degree-1 factors (which we don't
+port; declared), while rational roots of non-minimal higher-degree
+polynomials are discovered *lazily* by `refine1`'s midpoint-zero test,
+exactly as in `am::refine`. -/
 def mkRoot (p : QPoly) (a b : Mpbq) : RAlg :=
   if p.size == 2 then
     -- c₀ + c₁·x ⇒ root = −c₀/c₁
@@ -84,12 +89,19 @@ def signOfPolyAt (g : QPoly) : RAlg → Int
     if v < 0 then -1 else if v == 0 then 0 else 1
   | .root p a b => signAtRootD g p a b
 
-/-- One refinement step on a `root` (identity on rationals). -/
+/-- One refinement step (z3 `am::refine`, nla-26.5): identity on
+rationals; on a `root`, one `refineCoreStepD` bisection — and when the
+midpoint IS the root, the cell **becomes basic**: the exact rational
+value is discovered and the representation normalizes to `.rat`
+(z3 remark: "a root object may become basic when invoking this method,
+since we may find the actual rational root. This can only happen when
+non minimal polynomials are used to encode root objects."). -/
 def refine1 : RAlg → RAlg
   | .rat q => .rat q
   | .root p a b =>
-    let (a', b') := refineIntervalD p a b 1
-    .root p a' b'
+    match refineCoreStepD p (evalSignAtD p a) a b with
+    | .inl (a', b') => .root p a' b'
+    | .inr r => .rat r.toRat
 
 /-- Compare two algebraic numbers. Fueled: each round refines both
 intervals once; distinct numbers separate at depth logarithmic in their

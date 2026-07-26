@@ -207,18 +207,23 @@ def width : RAlg → Rat
   | .root _ a b => (Mpbq.sub b a).toRat
 
 /-- Refine until the isolating interval is narrower than `w` (fueled;
-rationals are already exact). -/
+rationals are already exact). z3 `refine_until_prec` shape (nla-26.5):
+the step is `refineCoreStepD`, so an exactly-hit rational root converts
+the value to basic (`.rat`) instead of refining forever around it. The
+`Rat` width gate becomes binary (`lt_1div2k`) with nla-26.6. -/
 def refineUntilWidth (x : RAlg) (w : Rat) (fuel : Nat := 128) : RAlg := Id.run do
   match x with
   | .rat q => return .rat q
   | .root p a b =>
+    let signA := Kernel.QPoly.evalSignAtD p a
     let mut lo := a
     let mut hi := b
     for _ in [0:fuel] do
       if (Mpbq.sub hi lo).ltRat w then
         return .root p lo hi
-      let (lo', hi') := Kernel.QPoly.refineIntervalD p lo hi 1
-      lo := lo'; hi := hi'
+      match Kernel.QPoly.refineCoreStepD p signA lo hi with
+      | .inl (lo', hi') => lo := lo'; hi := hi'
+      | .inr r => return .rat r.toRat
     return .root p lo hi
 
 end RAlg
