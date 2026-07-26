@@ -82,7 +82,7 @@ private def sqrt2 : RAlg := .root #[-2, 0, 1] 1 2
 #guard RAlg.width (RAlg.rat (7/2)) == 0
 #guard RAlg.width (RAlg.refineUntilPrec sqrt2 10) < 1/1024
 -- refinement keeps enclosing √2: interval evaluation of x²−2 must span 0
-#guard (MPoly.sub (MPoly.mul x0 x0) (MPoly.ofRat 2)).evalInterval
+#guard (MPoly.sub (MPoly.mul x0 x0) (MPoly.ofInt 2)).evalInterval
   (fun _ => RAlg.intervalOf (RAlg.refineUntilPrec sqrt2 10))
   |> RatInterval.containsZero
 

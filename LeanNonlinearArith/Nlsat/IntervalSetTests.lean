@@ -35,11 +35,11 @@ private def pxy : MPoly :=
 #guard pxy.maxVar == some 1
 #guard pxy.degreeIn 0 == 2
 #guard pxy.degreeIn 1 == 1
-#guard (MPoly.ofRat 5).maxVar == none
+#guard (MPoly.ofInt 5).maxVar == none
 #guard x0.maxVar == some 0
 
 -- univariate bridge: x² − 2 (in var 0) round-trips through QPoly
-private def x2m2 : MPoly := MPoly.sub (MPoly.mul x0 x0) (MPoly.ofRat 2)
+private def x2m2 : MPoly := MPoly.sub (MPoly.mul x0 x0) (MPoly.ofInt 2)
 #guard x2m2.toQPoly? 0 == some #[-2, 0, 1]
 #guard (MPoly.ofQPoly #[-2, 0, 1] 0) == x2m2
 -- not univariate ⇒ none

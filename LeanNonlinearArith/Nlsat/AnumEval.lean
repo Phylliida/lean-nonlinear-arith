@@ -68,13 +68,14 @@ end RatInterval
 
 namespace MPoly
 
-/-- Enclosure evaluation: every variable of `p` must be covered by `σ`
-(rational values enter as point intervals). -/
+/-- Enclosure evaluation: every variable of `p` must be covered by `σ`.
+Coefficients are ℤ (nla-26.2) — exactly why Z3's evaluator never needs
+rounding: integer coefficients are exact dyadics. -/
 def evalInterval (p : MPoly) (σ : Var → RatInterval) : RatInterval :=
   p.foldl (fun acc (a, m) =>
     RatInterval.add acc
       (m.foldl (fun acc (x, e) => RatInterval.mul acc (RatInterval.pow (σ x) e))
-        (RatInterval.ofRat a)))
+        (RatInterval.ofRat (a : Rat))))
     (0, 0)
 
 end MPoly
@@ -101,26 +102,69 @@ def powModTable (qhat : QPoly) (maxK : Nat) : Array QPoly := Id.run do
     tbl := tbl.push cur
   return tbl
 
-/-- Determinant of a small MPoly matrix by first-column Laplace
+/-! Since nla-26.2 `MPoly` is ℤ-coefficient; the multiplication-matrix
+construction needs ℚ scalars internally (monic reduction divides by
+`lc q`), so the matrix work runs on a small **parallel ℚ-term copy**
+(same shapes, `Rat` coefficients) and the final determinant is ℤ-scaled
+back by the positive lcm of denominators — root/sign-preserving,
+matching the scaling conventions of `substRat`/`ofQPoly`. -/
+
+/-- ℚ-coefficient terms for the matrix internals (parallel copy of the
+`MPoly` list representation). -/
+abbrev QTerms := List (Rat × Monomial)
+
+namespace QTerms
+
+def isZero (p : QTerms) : Bool := p.isEmpty
+
+def add : QTerms → QTerms → QTerms
+  | [], q => q
+  | p, [] => p
+  | (a, m) :: p, (b, n) :: q =>
+    match Monomial.cmp m n with
+    | .gt => (a, m) :: add p ((b, n) :: q)
+    | .lt => (b, n) :: add ((a, m) :: p) q
+    | .eq =>
+      let c := a + b
+      if c == 0 then add p q else (c, m) :: add p q
+
+def neg (p : QTerms) : QTerms := p.map fun (a, m) => (-a, m)
+
+def smulTerm (c : Rat) (mo : Monomial) (p : QTerms) : QTerms :=
+  if c == 0 then [] else p.map fun (a, m) => (c * a, Monomial.mul mo m)
+
+def mul (p q : QTerms) : QTerms :=
+  p.foldl (fun acc (a, m) => add acc (smulTerm a m q)) []
+
+def ofMPoly (p : MPoly) : QTerms := p.map fun (a, m) => ((a : Rat), m)
+
+/-- Back to ℤ coefficients, scaled by the positive lcm of denominators. -/
+def toMPolyScaled (p : QTerms) : MPoly :=
+  let l : Nat := p.foldl (fun (acc : Nat) (t : Rat × Monomial) => Nat.lcm acc t.1.den) 1
+  p.foldl (fun acc (a, m) => MPoly.add acc [((a * (l : Rat)).num, m)]) []
+
+end QTerms
+
+/-- Determinant of a small `QTerms` matrix by first-column Laplace
 expansion (matrix sizes = defining-poly degrees; 2 dominates the
 quadratic fragment). -/
-partial def detMPoly (m : Array (Array MPoly)) : MPoly :=
+partial def detQTerms (m : Array (Array QTerms)) : QTerms :=
   let n := m.size
-  if n == 0 then MPoly.ofRat 1
+  if n == 0 then [(1, [])]
   else if n == 1 then m[0]![0]!
   else Id.run do
-    let mut acc : MPoly := []
+    let mut acc : QTerms := []
     for i in [0:n] do
       let entry := m[i]![0]!
       if !entry.isZero then
-        let minor : Array (Array MPoly) := Id.run do
-          let mut rows : Array (Array MPoly) := #[]
+        let minor : Array (Array QTerms) := Id.run do
+          let mut rows : Array (Array QTerms) := #[]
           for r in [0:n] do
             if r != i then
               rows := rows.push (m[r]!.extract 1 n)
           return rows
-        let term := MPoly.mul entry (detMPoly minor)
-        acc := MPoly.add acc (if i % 2 == 0 then term else MPoly.neg term)
+        let term := QTerms.mul entry (detQTerms minor)
+        acc := QTerms.add acc (if i % 2 == 0 then term else QTerms.neg term)
     return acc
 
 /-- `Res_x(f, q)` for `q` a univariate rational polynomial of positive
@@ -137,7 +181,7 @@ def resultantElim (f : MPoly) (x : Var) (q : QPoly) : MPoly := Id.run do
   let degF := f.degreeIn x
   if q.size ≤ 1 then
     -- constant q: Res = q^{deg_x f}
-    return MPoly.ofRat ((QPoly.lc q) ^ degF)
+    return QTerms.toMPolyScaled [((QPoly.lc q) ^ degF, [])]
   let lcq := QPoly.lc q
   let qhat := QPoly.smul (1 / lcq) q
   let d := qhat.size - 1
@@ -145,17 +189,18 @@ def resultantElim (f : MPoly) (x : Var) (q : QPoly) : MPoly := Id.run do
   let tbl := powModTable qhat (degF + d)
   -- f mod q̂ as d coefficient-polynomials in the remaining variables
   let cs := f.coeffsIn x
-  let mut red : Array MPoly := Array.replicate d []
+  let mut red : Array QTerms := Array.replicate d []
   for k in [0:cs.size] do
     let ck := cs[k]!
     if !ck.isZero then
+      let ckq := QTerms.ofMPoly ck
       let rk := tbl[k]!
       for j in [0:d] do
         let coef := QPoly.coeff rk j
         if coef != 0 then
-          red := red.set! j (MPoly.add red[j]! (MPoly.smulTerm coef [] ck))
+          red := red.set! j (QTerms.add red[j]! (QTerms.smulTerm coef [] ckq))
   -- multiplication matrix: column j = (f mod q̂) · x^j mod q̂ in the basis
-  let mut m : Array (Array MPoly) := Array.replicate d (Array.replicate d [])
+  let mut m : Array (Array QTerms) := Array.replicate d (Array.replicate d [])
   for j in [0:d] do
     for i in [0:d] do
       let gi := red[i]!
@@ -166,10 +211,10 @@ def resultantElim (f : MPoly) (x : Var) (q : QPoly) : MPoly := Id.run do
           if coef != 0 then
             let mrow := m[row]!
             m := m.set! row (mrow.set! j
-              (MPoly.add mrow[j]! (MPoly.smulTerm coef [] gi)))
-  let det := detMPoly m
+              (QTerms.add mrow[j]! (QTerms.smulTerm coef [] gi)))
+  let det := detQTerms m
   let signFactor : Rat := if (degF * d) % 2 == 0 then 1 else -1
-  return MPoly.smulTerm (signFactor * lcq ^ degF) [] det
+  return QTerms.toMPolyScaled (QTerms.smulTerm (signFactor * lcq ^ degF) [] det)
 
 /-- `k` such that every nonzero real root `α` of `p` has `|α| > 2^{−k}`
 (`upolynomial::nonzero_root_lower_bound` shape): strip the zero root
