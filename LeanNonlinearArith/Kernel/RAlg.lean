@@ -92,6 +92,18 @@ def mkRoot (p : QPoly) (a b : Mpbq) : RAlg :=
   else
     .root p a b
 
+/-- Isolate all real roots of `p0` as `RAlg` values, sorted ascending —
+the `am::isolate_roots` shape (F5 review fix: the isolation engine works
+on `squarefreePart p0`, and cells must carry THAT polynomial; this
+constructor is the one place the pairing happens, so callers can't get
+it wrong). Rational roots surface as `.rat` via `mkRoot`'s linear and
+zero-straddle normalizations, or lazily through refinement; with
+factorization (nla-27) more of them will surface eagerly, as in default
+Z3. -/
+def isolateRoots (p0 : QPoly) : Array RAlg :=
+  let sp := squarefreePart p0
+  (isolateRootsD p0).map fun (a, b) => mkRoot sp a b
+
 /-- Position of an isolated root relative to a rational `q` — z3
 `compare(algebraic_cell, mpq)` (`algebraic_numbers.cpp:1910`): endpoint
 checks, then the sign trick — `p(q) = 0` means `q` is THE root, and
@@ -173,22 +185,35 @@ def intGt (x : RAlg) : Int :=
   | .root _ _ b => Mpbq.ceilInt b
 
 /-- z3 `am::separate` (`algebraic_numbers.cpp:2794`): given `x < y`,
-refine until the isolating brackets clear each other (a became-basic
-cell breaks the loop, and `select` re-dispatches on the new shape).
-Terminates: distinct values ⇒ the halving brackets eventually separate. -/
+refine until the isolating brackets clear each other.
+
+**Declared divergence from the literal source (F1 review fix,
+2026-07-26): on a became-basic cell we re-dispatch `separate` on the
+new shapes instead of breaking.** Z3's loops `break` because their
+conditions dereference `to_algebraic()` — and its debug builds then
+`SASSERT(gt(upper, lower))` inside `select_small_core`, i.e. the
+*contract* is "brackets cleared", which the break does not deliver.
+The state is unreachable in default Z3 only because `factor=true`
+makes rational-rooted cells basic at construction; we have no
+factorization yet (nla-27), so the probe
+`select (x²−4 cell (1,3)) (x²−9 cell (0,4))` reached the broken
+dispatch and returned a non-strict witness. Recursing enforces the
+SASSERT contract and is a no-op whenever the source's break was safe.
+Terminates: distinct values ⇒ the halving brackets separate, and at
+most two became-basic shape changes can occur. -/
 partial def separate (x y : RAlg) : RAlg × RAlg :=
   match x, y with
   | .rat p, .root _ cl _ =>
     if cl.leRat p then
       match refine1 y with
       | y'@(.root _ _ _) => separate x y'
-      | y' => (x, y')          -- curr became basic
+      | y' => (x, y')          -- curr became basic: rat/rat needs nothing
     else (x, y)
   | .root _ _ pu, .rat c =>
     if pu.geRat c then
       match refine1 x with
       | x'@(.root _ _ _) => separate x' y
-      | x' => (x', y)          -- prev became basic
+      | x' => (x', y)          -- prev became basic: rat/rat needs nothing
     else (x, y)
   | .root _ _ pu, .root _ cl _ =>
     if Mpbq.ge pu cl then
@@ -196,7 +221,7 @@ partial def separate (x y : RAlg) : RAlg × RAlg :=
       let y' := refine1 y
       match x', y' with
       | .root _ _ _, .root _ _ _ => separate x' y'
-      | _, _ => (x', y')       -- one became basic
+      | _, _ => separate x' y' -- shape changed: re-dispatch (see above)
     else (x, y)
   | _, _ => (x, y)             -- basic/basic: do nothing
 
@@ -223,9 +248,11 @@ check:
 1. interval disjointness (cheap path);
 2. same defining polynomial + overlapping intervals ⇒ same root
    (`compare_p`; sound by the same-isolation-run invariant);
-3. *(z3's minimal-polynomial refine-forever branch is unreachable for
-   us: it requires factorization, which sets `m_minimal` — we never do,
-   matching `set(…, minimal := false)` at our construction sites)*;
+3. *(z3's minimal-polynomial refine-until-disjoint branch is
+   unreachable for us today: it requires factorization, which sets
+   `m_minimal`. NOTE: in DEFAULT z3 (`factor=true`) this is the COMMON
+   path — it must be implemented when nla-27 lands, at which point our
+   current state is `factor=false` parity only)*;
 4. magnitude equalization: refine the coarser cell down to
    `target = max(minMagnitude, min aM bM)`, then both to
    `minMagnitude`, one step at a time — any exact-root discovery

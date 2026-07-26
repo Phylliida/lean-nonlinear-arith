@@ -182,7 +182,19 @@ private def gen1 : List IntervalSet := Id.run do
 private def gen2 : List IntervalSet :=
   (gen1.take 12).flatMap fun s1 => (gen1.drop 30).take 6 |>.map (mkUnion s1)
 
-private def allSets : List IntervalSet := gen1 ++ gen2
+/-- Algebraic-endpoint sets (2026-07-26 review: the differential sweep
+previously covered rational endpoints only). Probes stay rational — the
+oracle exercises the root-vs-rat compare path. -/
+private def sqrt3 : RAlg := .root #[-3, 0, 1] 1 2
+private def genAlg : List IntervalSet :=
+  [mk true false (.rat 0) true false sqrt2 j0,          -- (0, √2)
+   mk false false (.rat 1) true false sqrt3 j1,         -- [1, √3)
+   mk true false sqrt2 true false sqrt3 j0,             -- (√2, √3)
+   mk true true (.rat 0) true false sqrt2 j1,           -- (−∞, √2)
+   mk false false sqrt3 true true (.rat 0) j0,          -- [√3, ∞)
+   mk true false (.root #[-2, 0, 1] (-2) (-1)) false false sqrt2 j1]  -- (−√2, √2]
+
+private def allSets : List IntervalSet := gen1 ++ gen2 ++ genAlg
 
 #guard allSets.all fun s1 => allSets.all fun s2 =>
   let u := mkUnion s1 s2

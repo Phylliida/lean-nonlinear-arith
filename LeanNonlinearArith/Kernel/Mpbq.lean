@@ -242,13 +242,6 @@ def ofRat (q : Rat) : Mpbq × Bool :=
     if q.den == 1 <<< s then (mk q.num s, true)
     else (mk q.num (s + 1), false)
 
-/-- Conversion for rationals that are *known* to be dyadic (endpoints
-produced by dyadic-closed bisection). Panics on a non-dyadic input —
-that would be a kernel bug, not a data condition. -/
-def ofRatExact (q : Rat) : Mpbq :=
-  let (d, exact) := ofRat q
-  if exact then d else panic! s!"ofRatExact: {q} is not a binary rational"
-
 /-- z3 `refine_upper`: given dyadic `l < q < u` with `q` NOT dyadic
 (denominator not a power of two — the precondition Z3 asserts; it is
 what makes every bisection midpoint ≠ `q`, hence termination), tighten

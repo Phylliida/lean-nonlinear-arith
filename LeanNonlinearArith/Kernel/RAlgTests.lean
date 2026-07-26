@@ -83,6 +83,37 @@ def negSqrt2 : RAlg := .root #[-2, 0, 1] (-2) (-1)
 #guard RAlg.select (.rat 0) (.rat 1) == 1/2
 #guard RAlg.select sqrt2 sqrt3 == 3/2               -- few-bit gap witness
 #guard RAlg.select (.rat 0) sqrt2 == 1              -- integer bracket endpoint
+-- F1 regression (2026-07-26 review): a cell that becomes basic mid-
+-- separate must not leave the other bracket uncleared — this exact pair
+-- returned the non-strict witness 2 before the separate re-dispatch fix
+#guard
+  let r := RAlg.select (.root #[-4, 0, 1] 1 3) (.root #[-9, 0, 1] 0 4)
+  (2 : Rat) < r && r < 3
+-- mirrored shape (curr becomes basic, prev bracket uncleared)
+#guard
+  let r := RAlg.select (.root #[-4, 0, 1] 0 4) (.root #[-9, 0, 1] 1 5)
+  (2 : Rat) < r && r < 3
+
+/-! ## isolateRoots (F5: cells always carry the square-free part) -/
+
+-- x²−4: two root cells (no eager factoring — nla-27), values ±2
+#guard
+  let rs := RAlg.isolateRoots #[-4, 0, 1]
+  rs.size == 2 &&
+  RAlg.compare rs[0]! (.rat (-2)) == .eq &&
+  RAlg.compare rs[1]! (.rat 2) == .eq
+-- x(x−2)(x+2): the middle root surfaces as .rat 0 via zero-straddle
+#guard
+  let rs := RAlg.isolateRoots #[0, -4, 0, 1]
+  rs.map RAlg.sign == #[-1, 0, 1] && rs[1]! == RAlg.rat 0
+-- non-square-free input: (x²−2)² isolates √2, −√2 ONCE, and cells
+-- carry the square-free part (degree 2, not the degree-4 input; the
+-- refinable-interval invariant would break with the original poly)
+#guard
+  let rs := RAlg.isolateRoots (QPoly.mul #[-2, 0, 1] #[-2, 0, 1])
+  rs.size == 2 && RAlg.compare rs[1]! sqrt2 == .eq &&
+  (match rs[1]! with | .root p _ _ => p.size == 3 | _ => false)
+
 -- intGt/intLt (z3 refine-then-ceil/floor — note ceil(upper), not ⌊·⌋+1)
 #guard RAlg.intGt sqrt2 == 2
 #guard RAlg.intLt sqrt2 == 1

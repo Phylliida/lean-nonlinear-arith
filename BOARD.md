@@ -422,6 +422,41 @@ Original item list (all done; anchors kept for reference):
    nla-16's parity harness measures whether it costs coverage vs stock
    Z3 anywhere.
 
+## nla-27 `todo` — univariate ℤ factorization (default-Z3 parity; Danielle, 2026-07-26 review)
+
+The 2026-07-26 review found `factor` defaults to **true** in Z3
+(`algebraic_params.pyg`), so our "no factorization" state matches
+`factor=false`, not default Z3 — and Danielle wants default parity.
+Port `upolynomial_factorization.cpp` (~1300 lines): square-free
+factorization, Berlekamp over `Z_p` (prime trials per
+`factor_max_prime`/`factor_num_primes`), lifting + recombination
+(`factor_search_size`). Wire into `RAlg.isolateRoots` per
+`am::isolate_roots` (:605): strip zero roots → factor → degree-1
+factors become basic `−b/a` directly, higher factors isolate per-factor
+with `m_minimal` tracking. Consequences to implement WITH it:
+- cells gain a `minimal` flag; `compareCore`'s minimal-branch
+  (refine-until-disjoint loop, currently declared unreachable) becomes
+  the COMMON path and must be implemented;
+- became-basic paths become radical-only (as in default Z3), making the
+  F1 `separate` guard a pure safety net;
+- eager rational-root discovery matches default Z3 (today ours is
+  lazy-only via refine). [large: own arc, likely multi-session]
+
+## nla-28 `todo` — anum statefulness threading (Danielle, 2026-07-26 review; sequence BEFORE/WITH 12c)
+
+Z3's anum ops MUTATE cells and the refinement persists in solver state
+— `compare`/`select`/`separate` take `numeral&`, and `int_gt`/`int_lt`
+even `const_cast` (`algebraic_numbers.cpp:2830`) to refine interval-set
+endpoints stored behind const pointers. Our pure ports discard that
+work, so later magnitude gates and select niceness see WIDER intervals
+than Z3 would — a behavioral divergence (witness drift), not just
+performance. Design: RAlg ops return their (possibly refined)
+arguments; `IntervalSet` endpoint comparisons and `pickInComplement`
+thread updated intervals back into the stored set; 12c's assignment map
+stores refined cells after every evaluator/compare call. [medium
+refactor, touches IntervalSet comparison helpers + mkUnion + 12b-ii/12c
+signatures]
+
 ## Kernel + kit
 
 - **nla-08** `done` (2026-07-25) Computational ℚ[x] kernel (untrusted),

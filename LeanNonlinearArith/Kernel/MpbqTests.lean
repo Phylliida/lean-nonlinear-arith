@@ -179,6 +179,16 @@ where
 -- binary-search branch (min k > threshold), incl. negative mirror
 #guard selectSmallCoreDD (mk 2049 12) (mk 2051 12) == mk 1025 11
 #guard selectSmallCoreDD (mk (-2051) 12) (mk (-2049) 12) == mk (-1025) 11
+-- 2026-07-26 review: the smallest-k oracle property, forced through
+-- the BINARY branch (the sample grid above only reaches the linear one)
+def deepSamples : List Mpbq :=
+  [mk 12289 13, mk 12291 13, mk 12345 13, mk (-12291) 13, mk (-12289) 13,
+   mk 999425 15, mk 999427 15, mk 5243 9, mk 5245 9, mk (-5243) 9]
+#guard deepSamples.all fun a => deepSamples.all fun b =>
+  lt b a ||
+  (let r := selectSmallCoreDD a b
+   Nat.min a.k b.k > linearSearchThreshold &&
+   le a r && le r b && normalized r && r.k == smallestK a b)
 -- the result always lies in [lower, upper] and at the oracle's k
 #guard samples.all fun a => samples.all fun b =>
   lt b a ||   -- skip unordered pairs (precondition is a ≤ b)
