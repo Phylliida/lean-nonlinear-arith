@@ -293,38 +293,86 @@ containment direction is free.
   which never proves its own tightness. Same treatment for corner-fold
   min/max and the k-th-root exactness window.
 
-## nla-25 `todo` — L2 lane review checklist (fresh-context confidence audit, 2026-07-26)
+## nla-25 `todo` — L2 kernel correctness upgrades (directives from Danielle, 2026-07-26)
 
-Named while context was hot, ordered by risk. All kernel-side (checker
-re-verifies everything — these affect search correctness/completeness,
-never soundness).
+From the fresh-context confidence audit + Danielle's review: fix
+correctly AND prove where feasible (documented now, scheduled later —
+"none of this needs to happen now… but I do want to fix eventually").
+Scale flags are honest estimates.
 
-1. **`RAlg.compareCore` gcd-equality endpoint-roots**: the overlap count
-   assumes non-root endpoints for `gcd(p₁,p₂)`; a Sturm miscount at an
-   endpoint root could yield a false `.eq` for distinct numbers (and the
-   fuel-exhaustion `.eq` default is only principled if the eager test
-   never lies). Fix shape: `nonRootSplit`-style nudging of `lo`/`hi` off
-   roots of `g` before counting; add endpoint-root test battery.
-2. **`CertGen.rootFreeOn` Sturm endpoint conventions**: `(a, b]`
-   semantics asserted, not pinned — battery with roots just
-   inside/at/outside each endpoint.
-3. **`detMPoly` ≥ 3×3 untested**: add a cube-root elimination pin
-   (`Res_x(y − x, x³ − 2) = y³ − 2`) to exercise Laplace recursion +
-   minor extraction.
-4. **MPoly order properties**: `Monomial.cmp` totality/antisymmetry is
-   what canonical-form maintenance rides on — property round
-   (add/mul comm/assoc, canonical-invariant checker); docstring calls it
-   degree-lex loosely.
-5. **`mkUnion` differential test**: random small sets, rational probe
-   points vs the "in s1 or s2" membership oracle + justification
-   validity (result intervals justified by a covering input interval).
+1. **`RAlg.compareCore` gcd-equality endpoint-roots** — fix by
+   `nonRootSplit`-style nudging of `lo`/`hi` off roots of `g` before
+   counting; endpoint-root test battery. *Proof (Danielle: "ideally"):*
+   layered — the cheap half ("a shared root of both polys inside both
+   open isolating intervals ⇒ the numbers are equal") is provable NOW
+   from root-uniqueness, no Sturm needed; the counting half ("Sturm says
+   ≥ 1 root in the open overlap" is truthful) is nla-10 territory.
+   [quick fix + cheap-half proof; counting proof gated on nla-10]
+2. **`CertGen.rootFreeOn` Sturm conventions** — *prove* (Danielle:
+   "worth trying"). This IS the Sturm correctness theorem = **nla-10
+   revival** (AFP Sturm_Sequences as the map; upstream-worthy; a real
+   multi-session subproject). Note the pragmatic layer that already
+   exists: rootFreeOn is only a fast pre-check — the derivative
+   root-freeness it gates gets re-certified by `genNoRoot` +
+   `checkNoRoot` anyway, so its correctness affects completeness, not
+   soundness. [subproject: nla-10]
+3. **`detMPoly` / `resultantElim` correctness** — *proof not just tests*
+   (Danielle). Two layers: (a) det-of-Laplace-expansion = spec
+   determinant [medium, self-contained]; (b) the semantic property the
+   call sites consume — common solutions survive elimination — is
+   resultant theory = the **nla-11a orbit** (already boarded as the
+   algebra track; this gives it a second consumer). Meanwhile add the
+   cube-root ≥ 3×3 test pin (`Res_x(y − x, x³ − 2) = y³ − 2`). [test
+   now-ish; proofs medium / nla-11a]
+4. **MPoly order property theorems** (Danielle: yes) —
+   totality/transitivity/antisymmetry of `Monomial.cmp` + canonical-form
+   preservation through `add`/`mul`. Pure list induction. [cheap-medium,
+   one session]
+5. **`mkUnion` differential test** (Danielle: yes) — random small sets,
+   rational probes vs the "in s1 or s2" membership oracle +
+   justification validity. [cheap]
 
-Consolidated divergence inventory lives in the 2026-07-26 session notes
-(DESIGN-nlsat-quadratic §4b declared set + pick_in_complement
-randomize=false + am.select niceness + compareCore fuel + monomial
-order + ℚ-vs-ℤ coefficients + no rationality discovery on refine);
-nla-16's parity harness is where the behavior-affecting ones get
-measured.
+## nla-26 `todo` — fidelity hardening: divergence elimination (Danielle, 2026-07-26)
+
+Divergence-by-divergence calls; sequence this arc BEFORE nla-12b-ii
+(evalSignAt sits directly on intervals/magnitude/refine). Source anchors
+gathered while hot.
+
+1. **Dyadic (`mpbq`) interval endpoints** — "Rat seems sus, investigate
+   doing it the same." Port binary rationals (`num · 2^{−k}`) as
+   endpoint type + the rounding entry points `mpbqi` evaluation uses
+   (rational coefficients round outward under a precision parameter);
+   this is the KEYSTONE — it also makes 26.6 magnitude and 26.4 select
+   natural. [medium]
+2. **ℤ coefficients + Z3's monomial order** — "could we do their
+   order?" Port `polynomial.cpp` ordering (`lex_compare` :625,
+   `graded_lex_compare` :710 — read which one the manager actually keys
+   monomial storage on) and integer-coefficient polys with Z3's
+   normalization. Refactor of `Nlsat/Types.lean`. [medium]
+3. **Unfueled `compare`** — "worries me to not be the same." Read
+   Z3's `am.compare` mechanism (refine-until-disjoint + its exact
+   equality detection) and port it 1:1, dropping our fuel/`.eq`-default.
+   Interacts with 25.1. [small-medium after 25.1]
+4. **`am.select` port** — "prefer Z3's way": dyadic
+   smallest-denominator selection in gaps, replacing `ratBetween` in
+   `pickInComplement`. Natural after 26.1. [small]
+5. **Rationality discovery on refine** — "seems wrong, match Z3." Port
+   `refine_core` (`algebraic_numbers.cpp:929`; became-basic sites :251,
+   :306): bisection tests the midpoint sign and a zero midpoint
+   normalizes the cell to a rational. Root cause of our divergence:
+   `RAlg.refine1` delegates to `refineInterval`, whose `nonRootSplit`
+   deliberately dodges root midpoints (right for isolation, wrong for
+   value refinement). Fix shape: value-refinement path tests the
+   midpoint root FIRST (`eval p m == 0 → .rat m` — the unique root is
+   found exactly), then falls back to isolation-style splitting. Also
+   revisit `mkRoot` (currently normalizes only linear). [small]
+6. **Magnitude gating** — "do what Z3 does": binary magnitudes over
+   dyadic endpoints (exponent arithmetic), replacing the Rat width
+   threshold. Rides on 26.1. [small after 26.1]
+7. **`pick_in_complement` determinism** — Danielle: keep deterministic
+   (randomize = false path) — CONFIRMED, not a divergence to fix.
+   nla-16's parity harness measures whether it costs coverage vs stock
+   Z3 anywhere.
 
 ## Kernel + kit
 
