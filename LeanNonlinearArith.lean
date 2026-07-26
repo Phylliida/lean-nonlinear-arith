@@ -13,3 +13,5 @@ import LeanNonlinearArith.Tactic.SaturateTests
 import LeanNonlinearArith.Kernel.QPoly
 import LeanNonlinearArith.Kernel.QPolyTests
 import LeanNonlinearArith.Kernel.QPolyBench
+import LeanNonlinearArith.Kernel.Roots
+import LeanNonlinearArith.Kernel.RootsTests
