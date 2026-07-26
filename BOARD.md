@@ -293,6 +293,39 @@ containment direction is free.
   which never proves its own tightness. Same treatment for corner-fold
   min/max and the k-th-root exactness window.
 
+## nla-25 `todo` — L2 lane review checklist (fresh-context confidence audit, 2026-07-26)
+
+Named while context was hot, ordered by risk. All kernel-side (checker
+re-verifies everything — these affect search correctness/completeness,
+never soundness).
+
+1. **`RAlg.compareCore` gcd-equality endpoint-roots**: the overlap count
+   assumes non-root endpoints for `gcd(p₁,p₂)`; a Sturm miscount at an
+   endpoint root could yield a false `.eq` for distinct numbers (and the
+   fuel-exhaustion `.eq` default is only principled if the eager test
+   never lies). Fix shape: `nonRootSplit`-style nudging of `lo`/`hi` off
+   roots of `g` before counting; add endpoint-root test battery.
+2. **`CertGen.rootFreeOn` Sturm endpoint conventions**: `(a, b]`
+   semantics asserted, not pinned — battery with roots just
+   inside/at/outside each endpoint.
+3. **`detMPoly` ≥ 3×3 untested**: add a cube-root elimination pin
+   (`Res_x(y − x, x³ − 2) = y³ − 2`) to exercise Laplace recursion +
+   minor extraction.
+4. **MPoly order properties**: `Monomial.cmp` totality/antisymmetry is
+   what canonical-form maintenance rides on — property round
+   (add/mul comm/assoc, canonical-invariant checker); docstring calls it
+   degree-lex loosely.
+5. **`mkUnion` differential test**: random small sets, rational probe
+   points vs the "in s1 or s2" membership oracle + justification
+   validity (result intervals justified by a covering input interval).
+
+Consolidated divergence inventory lives in the 2026-07-26 session notes
+(DESIGN-nlsat-quadratic §4b declared set + pick_in_complement
+randomize=false + am.select niceness + compareCore fuel + monomial
+order + ℚ-vs-ℤ coefficients + no rationality discovery on refine);
+nla-16's parity harness is where the behavior-affecting ones get
+measured.
+
 ## Kernel + kit
 
 - **nla-08** `done` (2026-07-25) Computational ℚ[x] kernel (untrusted),
