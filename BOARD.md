@@ -303,9 +303,18 @@ before). 25.3 test pins landed and **caught a real sign bug** — a
 documented `Res_x(f,q)` orientation, invisible in the quadratic lane
 (`d = 2` keeps the exponent even), exposed by the first `d = 3` pin and
 removed. 25.5 differential test landed (~10k union checks vs the
-membership oracle + justification provenance). **Open: 25.4** (order
-property theorems — now about `lexCompare`, see nla-26.2) and the
-proof-layer items (25.2 = nla-10, 25.3's semantic layer = nla-11a).
+membership oracle + justification provenance). **25.4 DONE 2026-07-26
+(279680c, `Nlsat/TypesOrder.lean`):** `Monomial.cmp` proven a linear
+order (refl / eq-iff-list-equality / swap / lt+gt-trans), `Canon`
+predicates formalize the Types.lean storage invariants, preservation
+proven through `Monomial.mul` and `MPoly.add/neg/sub/smulTerm/mul`;
+keystone `cmp_mul_left` (`cmp (mul k m) (mul k n) = cmp m n`, an order
+*equality*) via the dense exponent-vector characterization
+(`go_eq_dense` + `degreeIn_mul` + `Nat.compare` translation-invariance)
+— the fact z3's `lex_sort`ed storage relies on silently. Residual (out
+of scope, note for later): `substRat`/`ofQPoly`/`coeffsIn` canonicity
+not yet stated. **Still open:** proof-layer items only (25.2 = nla-10,
+25.3's semantic layer = nla-11a).
 
 From the fresh-context confidence audit + Danielle's review: fix
 correctly AND prove where feasible (documented now, scheduled later —
@@ -339,7 +348,7 @@ Scale flags are honest estimates.
 4. **MPoly order property theorems** (Danielle: yes) —
    totality/transitivity/antisymmetry of `Monomial.cmp` + canonical-form
    preservation through `add`/`mul`. Pure list induction. [cheap-medium,
-   one session]
+   one session] **DONE 2026-07-26 eve, 279680c — see status above.**
 5. **`mkUnion` differential test** (Danielle: yes) — random small sets,
    rational probes vs the "in s1 or s2" membership oracle +
    justification validity. [cheap]
