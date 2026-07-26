@@ -172,14 +172,16 @@ resultant needed is `Res_x(f, q)` with `q ∈ ℚ[x]`: computed as
 monic — a `deg q × deg q` determinant with MPoly entries by cofactor
 expansion (deg 2 dominant in the fragment).
 
-Declared divergences (representation-level, not mechanism-level):
-* interval endpoints are exact `Rat`, not dyadic `mpbq` — no outward
-  rounding anywhere, enclosures are never looser than Z3's;
-* our `refine` never discovers rationality (mini-anum normalizes only
-  linear defining polys), so `eval_sign_at`'s restart path is
-  unreachable — the exact `(−L, L)` test still terminates the loop;
-* magnitude gating uses interval width against a fixed `Rat` threshold
-  rather than binary magnitudes.
+Declared divergences: **the three originally listed here (Rat-not-mpbq
+endpoints, no refine rationality discovery, width-not-magnitude gating)
+were all ELIMINATED by the nla-26 fidelity arc (2026-07-26)** — dyadic
+`Mpbq`/`MpbqI` endpoints everywhere, `refine_core`-faithful
+midpoint-zero-first refinement with became-basic re-dispatch, and
+binary `lt_1div2k` magnitude/precision gating are now the shipped
+shapes. The live remaining divergence list is in BOARD.md (nla-26
+closing note): Sturm-vs-Descartes isolation, the ℚ[x] QPoly kernel
+bridged at `ofQPoly`, root-represented rationals at shared endpoints,
+and no factorization (= `factor=false` parity, → nla-27).
 
 Slice split: **12b-i** foundations (RatInterval arithmetic, MPoly
 interval evaluation, `resultantElim`, `nonzeroRootLowerBound`, RAlg
