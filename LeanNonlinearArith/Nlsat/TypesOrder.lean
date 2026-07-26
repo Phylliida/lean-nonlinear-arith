@@ -30,8 +30,12 @@ Contents:
   compare `degreeIn` from the top variable down), which is
   representation-order-free; `degreeIn_mul` (exponents add under the
   sorted merge) and translation-invariance of `Nat.compare` finish it.
-  z3 relies on this silently every time `mul` feeds `lex_sort`ed
-  storage; here it is a theorem.
+  Fidelity note on who owes this theorem: **z3 does not rely on it** —
+  z3 products are accumulated unsorted (`som_buffer`) and `m_lex_sorted`
+  is only ever set by an explicit `lex_sort` (bucket sort, never carried
+  through a product). The obligation is created by *our* eager
+  representation, whose `smulTerm` keeps sorted storage without
+  re-sorting; z3 pays a re-sort where we pay this theorem.
 
 Proof-engineering note: `omega` in this toolchain only recognizes
 comparisons whose head type argument is literally `Nat`/`Int` — facts
@@ -535,7 +539,8 @@ theorem denseCompare_mul_left {k m n : Monomial}
 /-- Multiplying on the left by a fixed canonical monomial preserves the
 `cmp` verdict *as an equality* — the lex order is translation-invariant
 on exponent vectors. This is what makes `MPoly.smulTerm`'s map preserve
-strictly-descending storage order. -/
+strictly-descending storage order without the re-sort z3 performs
+(`lex_sort`; z3 itself never carries sortedness through a product). -/
 theorem cmp_mul_left {k m n : Monomial} (hk : Canon k) (hm : Canon m) (hn : Canon n) :
     cmp (Monomial.mul k m) (Monomial.mul k n) = cmp m n := by
   have h1 := lexCompare_eq_dense

@@ -311,7 +311,10 @@ proven through `Monomial.mul` and `MPoly.add/neg/sub/smulTerm/mul`;
 keystone `cmp_mul_left` (`cmp (mul k m) (mul k n) = cmp m n`, an order
 *equality*) via the dense exponent-vector characterization
 (`go_eq_dense` + `degreeIn_mul` + `Nat.compare` translation-invariance)
-— the fact z3's `lex_sort`ed storage relies on silently. Residual (out
+— review correction: z3 does NOT rely on this (products are unsorted
+`som_buffer` accumulation, `m_lex_sorted` only ever set by an explicit
+`lex_sort`); the theorem discharges OUR eager representation's skipped
+re-sort in `smulTerm`. Residual (out
 of scope, note for later): `substRat`/`ofQPoly`/`coeffsIn` canonicity
 not yet stated. **Still open:** proof-layer items only (25.2 = nla-10,
 25.3's semantic layer = nla-11a).
