@@ -182,4 +182,28 @@ def refineCoreStepD (p : QPoly) (signA : Int) (a b : Mpbq) :
   else if s == signA then .inl (mid, b)
   else .inl (a, mid)
 
+/-- Iterate `refineCoreStepD` `k` times (the loop inside z3
+`am::refine(a, k)`), stopping early when the root is found exactly. -/
+def refineStepsD (p : QPoly) (signA : Int) (a b : Mpbq) (k : Nat) :
+    (Mpbq × Mpbq) ⊕ Mpbq := Id.run do
+  let mut lo := a
+  let mut hi := b
+  for _ in [0:k] do
+    match refineCoreStepD p signA lo hi with
+    | .inl (lo', hi') => lo := lo'; hi := hi'
+    | .inr r => return .inr r
+  return .inl (lo, hi)
+
+/-- z3 `upolynomial::refine(…, prec_k)` (what `am::get_interval` runs on
+a *copy* of the cell interval): refine until the width is `< 1/2^precK`
+— the binary `lt_1div2k` gate — or the root is found exactly. Terminates:
+the width halves every step. -/
+partial def refineToPrecD (p : QPoly) (signA : Int) (a b : Mpbq)
+    (precK : Nat) : (Mpbq × Mpbq) ⊕ Mpbq :=
+  if (Mpbq.sub b a).lt1Div2k precK then .inl (a, b)
+  else
+    match refineCoreStepD p signA a b with
+    | .inl (a', b') => refineToPrecD p signA a' b' precK
+    | .inr r => .inr r
+
 end LeanNonlinearArith.Kernel.QPoly

@@ -14,17 +14,24 @@ failed check, never unsoundness.
 
 Representation: `rat q` (Z3 "basic" values stay exact rationals), or
 `root p (a, b)` = the unique root of square-free `p` in the open interval
-`(a, b)` with non-root **dyadic** endpoints (nla-26.1b: Z3 keeps
-isolating intervals in `mpbq` binary rationals; `isolateRootsD` emits
-exactly this shape). `mkRoot` normalizes degree-1 defining polynomials to
-rationals (Z3's rational fast path; `pick_in_complement` prefers rational
-witnesses, so keeping rationals syntactic matters for trace parity).
+`(a, b)` with non-root **dyadic** endpoints (nla-26.1b; `isolateRootsD`
+emits this shape). Cell invariants beyond that, maintained by `mkRoot`
+(z3 `am::normalize`): zero is never strictly inside an isolating interval
+(a straddling interval is snapped at 0, or the value IS 0 and becomes
+basic), and cells sharing a defining polynomial come from the same
+isolation run, so overlapping intervals ⇒ same root.
 
-Comparison strategy (`compare`): interval disjointness decides instantly;
-on overlap, a common root of `gcd(p₁, p₂)` inside both open intervals
-decides equality (each poly has a *unique* root in its interval, so a
-shared root in the overlap identifies both); otherwise the numbers are
-distinct and fueled refinement separates the intervals.
+Comparison (`compare`, nla-26.3): the **unfueled** 1:1 port of
+`am::compare` / `compare_core` (`algebraic_numbers.cpp:1889-2122`) —
+interval disjointness, same-polynomial fast path, magnitude
+equalization with rationality discovery, the interval-expansion
+"Sturm workaround", and the Sturm–Tarski sign evaluation as the
+deciding step. No fuel, no `.eq`-on-exhaustion default: every branch
+terminates structurally (refinement counts are magnitude differences;
+Sturm–Tarski always decides). This retires the previous gcd
+common-root fast test and with it the nla-25.1 endpoint-root risk —
+different-polynomial equality is decided by `V == 0`, not gcd root
+counting.
 -/
 
 namespace LeanNonlinearArith.Kernel
@@ -33,8 +40,9 @@ open QPoly
 
 /-- Real algebraic number (kernel representation). Invariants for
 `root p a b` (maintained by constructors, relied on by everything):
-`p` square-free with exactly one real root in `(a, b)`, `a < b`, and
-`eval p a ≠ 0 ≠ eval p b`. Endpoints are dyadic (z3 `mpbq`). -/
+`p` square-free with exactly one real root in `(a, b)`, `a < b`,
+`eval p a ≠ 0 ≠ eval p b`, and `0 ∉ (a, b)` (z3 `am::normalize` — build
+through `mkRoot`). Endpoints are dyadic (z3 `mpbq`). -/
 inductive RAlg
   | rat (q : Rat)
   | root (p : QPoly) (a b : Mpbq)
@@ -42,35 +50,62 @@ deriving Repr, Inhabited, BEq
 
 namespace RAlg
 
-/-- Roots of the (square-free) chain's polynomial in `(x, y]`, via Sturm.
-`signVarAt` is non-increasing, so `Nat` subtraction is exact. -/
-private def cnt (ch : Array QPoly) (x y : Rat) : Nat :=
-  signVarAt ch x - signVarAt ch y
+/-- z3 `m_min_magnitude = −min_mag`, `min_mag` default 16
+(`algebraic_params.pyg`): refinement in the compare ladder stops
+tightening once intervals reach width-magnitude `−16`. -/
+def minMagnitude : Int := -16
 
-/-- Smart constructor: normalize linear defining polynomials to their
-rational root; otherwise keep the `(poly, interval)` pair as given.
-Revisited for nla-26.5: this IS Z3's shape — eager rational discovery
-happens only through factorization into degree-1 factors (which we don't
-port; declared), while rational roots of non-minimal higher-degree
-polynomials are discovered *lazily* by `refine1`'s midpoint-zero test,
-exactly as in `am::refine`. -/
+/-- z3 `imp::magnitude(l, u)` (`algebraic_numbers.cpp:903`), verbatim:
+an approximation of the interval size's binary magnitude. Precondition
+(z3 SASSERT): the interval does not straddle zero — guaranteed for cells
+built via `mkRoot`. The two sign branches of the source coincide under
+`natAbs`, so the function is total anyway. -/
+def intervalMagnitude (l u : Mpbq) : Int :=
+  if l.k == u.k then Mpbq.magnitudeUb l
+  else if l.isNonneg then
+    (Nat.log2 u.num.natAbs : Int) - (Nat.log2 l.num.natAbs : Int)
+      - u.k + l.k - u.k
+  else
+    -- mlog2(u) − mlog2(l) − u_k + l_k − u_k; mlog2 x = log2 (−x)
+    (Nat.log2 u.num.natAbs : Int) - (Nat.log2 l.num.natAbs : Int)
+      - u.k + l.k - u.k
+
+/-- Smart constructor (z3 cell construction + `am::normalize`):
+degree-1 polynomials collapse to their rational root (eager rational
+discovery beyond degree 1 happens only through factorization in Z3,
+which we don't port — declared; higher-degree rational roots are instead
+discovered lazily by `refine1`'s midpoint-zero test, exactly as in
+`am::refine`). A zero-straddling interval is normalized per
+`upolynomial::normalize_interval_core`: if 0 is the root the value
+becomes basic, otherwise the endpoint on 0's sign side snaps to 0. -/
 def mkRoot (p : QPoly) (a b : Mpbq) : RAlg :=
   if p.size == 2 then
     -- c₀ + c₁·x ⇒ root = −c₀/c₁
     .rat (-(p.coeff 0) / p.coeff 1)
+  else if a.isNeg && b.isPos then
+    if eval p 0 == 0 then .rat 0    -- has_zero_roots: zero IS the root
+    else
+      let signA := evalSignAtD p a
+      let signZ : Int := if eval p 0 < 0 then -1 else 1
+      if signA == signZ then .root p (Mpbq.ofInt 0) b
+      else .root p a (Mpbq.ofInt 0)
   else
     .root p a b
 
-/-- Position of a rational `q` relative to an isolated root: `.lt` if the
-root is `< q`… returned as the *root's* ordering versus `q`. -/
+/-- Position of an isolated root relative to a rational `q` — z3
+`compare(algebraic_cell, mpq)` (`algebraic_numbers.cpp:1910`): endpoint
+checks, then the sign trick — `p(q) = 0` means `q` is THE root, and
+otherwise the root is above `q` iff `p(q)` has the same sign as `p` at
+the lower endpoint (`p` changes sign exactly once in the interval). -/
 def compareRootRat (p : QPoly) (a b : Mpbq) (q : Rat) : Ordering :=
   if b.leRat q then .lt          -- α < b ≤ q
   else if a.geRat q then .gt     -- q ≤ a < α
-  else if eval p q == 0 then .eq   -- q ∈ (a, b) and a root ⇒ q is THE root
   else
-    -- q ∈ (a, b), not a root: α ∈ (a, q) or (q, b)?
-    let ch := sturmChain p
-    if cnt ch a.toRat q == 1 then .lt else .gt
+    let v := eval p q
+    if v == 0 then .eq
+    else
+      let sq : Int := if v < 0 then -1 else 1
+      if sq == evalSignAtD p a then .gt else .lt
 
 /-- Sign of the algebraic number itself (−1 / 0 / 1). -/
 def sign : RAlg → Int
@@ -103,52 +138,89 @@ def refine1 : RAlg → RAlg
     | .inl (a', b') => .root p a' b'
     | .inr r => .rat r.toRat
 
-/-- Compare two algebraic numbers. Fueled: each round refines both
-intervals once; distinct numbers separate at depth logarithmic in their
-gap. `none` on fuel exhaustion (callers treat as "give up on this
-candidate" — kernel-side only). -/
-def compareCore (x y : RAlg) (fuel : Nat := 128) : Option Ordering :=
-  match x, y with
-  | .rat p, .rat q => some (if p < q then .lt else if p == q then .eq else .gt)
-  | .root p a b, .rat q => some (compareRootRat p a b q)
-  | .rat q, .root p a b => some (compareRootRat p a b q).swap
-  | .root p1 a1 b1, .root p2 a2 b2 => Id.run do
-    -- equality test once, on the initial overlap: a common root of
-    -- gcd(p₁, p₂) lying in both open intervals identifies both roots
-    let g := squarefreePart (gcd p1 p2)
-    if !g.isEmpty && g.size > 1 then
-      let lo := Mpbq.max a1 a2
-      let hi := Mpbq.min b1 b2
-      if Mpbq.lt lo hi then
-        -- guard endpoints: count on (lo, hi] then discount a root at hi;
-        -- a root at lo is outside the open overlap
-        let chg := sturmChain g
-        let inOpen : Nat :=
-          cnt chg lo.toRat hi.toRat - (if eval g hi.toRat == 0 then 1 else 0)
-        if inOpen ≥ 1 then
-          -- γ ∈ (lo, hi) ⊆ both open intervals, root of both ⇒ α₁ = γ = α₂
-          return some .eq
-    -- distinct: refine until the intervals separate
-    let mut x1 := a1
-    let mut y1 := b1
-    let mut x2 := a2
-    let mut y2 := b2
-    for _ in [0:fuel] do
-      if Mpbq.le y1 x2 then return some .lt
-      if Mpbq.le y2 x1 then return some .gt
-      let (x1', y1') := refineIntervalD p1 x1 y1 1
-      x1 := x1'; y1 := y1'
-      let (x2', y2') := refineIntervalD p2 x2 y2 1
-      x2 := x2'; y2 := y2'
-    return none
+/-- z3 `compare_core` (`algebraic_numbers.cpp:1929`) — both arguments
+algebraic. Stages, each ending in the `COMPARE_INTERVAL` disjointness
+check:
 
-/-- Total comparison. The `.eq` default on fuel exhaustion is principled,
-not arbitrary: distinct numbers separate within the fuel bound (128
-halvings), so exhaustion happens only when refinement never separates —
-i.e. when the numbers are equal but the `gcd` fast test missed an
-endpoint-root edge case. Tests pin the real cases. -/
+1. interval disjointness (cheap path);
+2. same defining polynomial + overlapping intervals ⇒ same root
+   (`compare_p`; sound by the same-isolation-run invariant);
+3. *(z3's minimal-polynomial refine-forever branch is unreachable for
+   us: it requires factorization, which sets `m_minimal` — we never do,
+   matching `set(…, minimal := false)` at our construction sites)*;
+4. magnitude equalization: refine the coarser cell down to
+   `target = max(minMagnitude, min aM bM)`, then both to
+   `minMagnitude`, one step at a time — any exact-root discovery
+   converts that side to a rational and re-dispatches (z3
+   `return compare(a, b)`);
+5. "Sturm workaround" (z3 comment: Sturm sequences have open bugs, so
+   first try separating refined *copies*): refine copies to width
+   `< 1/2^40` (`get_interval` at precision 10, ×4 binary digits) and
+   compare; skipped if either copy discovers its root exactly;
+6. Sturm–Tarski: `V = TaQ(p₂, p₁; a₁, b₁)` = sign of `p₂` at `α₁`;
+   `V = 0` ⇒ equal, else the sign of `p₂` at `b₂`'s lower endpoint
+   orients the answer. -/
+def compareCore (p1 : QPoly) (a1 b1 : Mpbq) (p2 : QPoly) (a2 b2 : Mpbq) :
+    Ordering := Id.run do
+  -- COMPARE_INTERVAL
+  if Mpbq.le b1 a2 then return .lt
+  if Mpbq.ge a1 b2 then return .gt
+  -- compare_p: same polynomial + overlap ⇒ same root
+  if p1 == p2 then return .eq
+  let s1 := evalSignAtD p1 a1
+  let s2 := evalSignAtD p2 a2
+  let mut x1 := a1; let mut y1 := b1
+  let mut x2 := a2; let mut y2 := b2
+  -- magnitude equalization
+  let aM := intervalMagnitude x1 y1
+  let bM := intervalMagnitude x2 y2
+  let targetM := max minMagnitude (min aM bM)
+  if bM > targetM then
+    match refineStepsD p2 s2 x2 y2 (bM - targetM).toNat with
+    | .inr r => return compareRootRat p1 x1 y1 r.toRat
+    | .inl (x2', y2') =>
+      x2 := x2'; y2 := y2'
+      if Mpbq.le y1 x2 then return .lt
+      if Mpbq.ge x1 y2 then return .gt
+  if aM > targetM then
+    match refineStepsD p1 s1 x1 y1 (aM - targetM).toNat with
+    | .inr r => return (compareRootRat p2 x2 y2 r.toRat).swap
+    | .inl (x1', y1') =>
+      x1 := x1'; y1 := y1'
+      if Mpbq.le y1 x2 then return .lt
+      if Mpbq.ge x1 y2 then return .gt
+  if targetM > minMagnitude then
+    for _ in [0:(targetM - minMagnitude).toNat] do
+      match refineCoreStepD p1 s1 x1 y1 with
+      | .inr r => return (compareRootRat p2 x2 y2 r.toRat).swap
+      | .inl (x1', y1') =>
+        x1 := x1'; y1 := y1'
+        match refineCoreStepD p2 s2 x2 y2 with
+        | .inr r => return compareRootRat p1 x1 y1 r.toRat
+        | .inl (x2', y2') =>
+          x2 := x2'; y2 := y2'
+          if Mpbq.le y1 x2 then return .lt
+          if Mpbq.ge x1 y2 then return .gt
+  -- Sturm workaround: separate refined copies (precision 10 ⇒ 40 bits)
+  match refineToPrecD p1 s1 x1 y1 40, refineToPrecD p2 s2 x2 y2 40 with
+  | .inl (la, ua), .inl (lb, ub) =>
+    if Mpbq.gt la ub then return .gt
+    if Mpbq.lt ua lb then return .lt
+  | _, _ => pure ()
+  -- expensive case: Sturm–Tarski
+  let V : Int := tarskiQuery p2 p1 x1.toRat y1.toRat
+  if V == 0 then return .eq
+  if (V < 0) == (s2 < 0) then return .lt
+  return .gt
+
+/-- Total comparison — z3 `am::compare` dispatch
+(`algebraic_numbers.cpp:2108`). Unfueled: see `compareCore`. -/
 def compare (x y : RAlg) : Ordering :=
-  (compareCore x y).getD .eq
+  match x, y with
+  | .rat p, .rat q => if p < q then .lt else if p == q then .eq else .gt
+  | .root p a b, .rat q => compareRootRat p a b q
+  | .rat q, .root p a b => (compareRootRat p a b q).swap
+  | .root p1 a1 b1, .root p2 a2 b2 => compareCore p1 a1 b1 p2 a2 b2
 
 def lt (x y : RAlg) : Bool := compare x y == .lt
 def le (x y : RAlg) : Bool := compare x y != .gt
@@ -157,41 +229,71 @@ def le (x y : RAlg) : Bool := compare x y != .gt
 on fuel exhaustion or if the inputs are not actually ordered). The
 witness picker's workhorse: complements of infeasible sets get rational
 sample points whenever a gap is genuinely open. Returned witnesses are
-values of dyadic endpoints. -/
+values of dyadic endpoints. (Replaced by the `am.select` port in
+nla-26.4.) -/
 def ratBetween (x y : RAlg) (fuel : Nat := 128) : Option Rat :=
   match x, y with
   | .rat p, .rat q => if p < q then some ((p + q) / 2) else none
   | .rat q, .root p a b => Id.run do
     -- need q < r < α: refine until the lower bracket clears q
+    let signA := evalSignAtD p a
     let mut lo := a
     let mut hi := b
     for _ in [0:fuel] do
       if lo.gtRat q then return some lo.toRat -- q < lo < α (lo non-root ⇒ lo ≠ α)
-      let (lo', hi') := refineIntervalD p lo hi 1
-      lo := lo'; hi := hi'
+      match refineCoreStepD p signA lo hi with
+      | .inl (lo', hi') => lo := lo'; hi := hi'
+      | .inr r =>
+        -- the root is exactly r: any rational in (q, r) works
+        let rv := r.toRat
+        return if q < rv then some ((q + rv) / 2) else none
     return none
   | .root p a b, .rat q => Id.run do
+    let signA := evalSignAtD p a
     let mut lo := a
     let mut hi := b
     for _ in [0:fuel] do
       if hi.ltRat q then return some hi.toRat -- α < hi < q
-      let (lo', hi') := refineIntervalD p lo hi 1
-      lo := lo'; hi := hi'
+      match refineCoreStepD p signA lo hi with
+      | .inl (lo', hi') => lo := lo'; hi := hi'
+      | .inr r =>
+        let rv := r.toRat
+        return if rv < q then some ((rv + q) / 2) else none
     return none
   | .root p1 a1 b1, .root p2 a2 b2 => Id.run do
-    let mut y1 := b1
+    let sA1 := evalSignAtD p1 a1
+    let sA2 := evalSignAtD p2 a2
     let mut x1 := a1
+    let mut y1 := b1
     let mut x2 := a2
     let mut y2 := b2
+    -- exact values discovered by a midpoint hit (then that side stops
+    -- refining and the witness must clear the exact value strictly)
+    let mut ex1 : Option Rat := none
+    let mut ex2 : Option Rat := none
     for _ in [0:fuel] do
-      if Mpbq.le y1 x2 then
-        -- α₁ < y₁ ≤ x₂ < α₂: y₁ works unless it IS α₂'s endpoint case:
-        -- y₁ ≤ x₂ < α₂ and α₁ < y₁, both strict ⇒ fine
-        return some y1.toRat
-      let (x1', y1') := refineIntervalD p1 x1 y1 1
-      x1 := x1'; y1 := y1'
-      let (x2', y2') := refineIntervalD p2 x2 y2 1
-      x2 := x2'; y2 := y2'
+      match ex1, ex2 with
+      | some r1, some r2 =>
+        return if r1 < r2 then some ((r1 + r2) / 2) else none
+      | some r1, none =>
+        -- α₁ = r₁ exactly: need r₁ < w < α₂; x₂ works once it clears r₁
+        if x2.gtRat r1 then return some x2.toRat
+      | none, some r2 =>
+        -- α₂ = r₂ exactly: α₁ < y₁ < r₂ once y₁ clears r₂
+        if y1.ltRat r2 then return some y1.toRat
+      | none, none =>
+        if Mpbq.le y1 x2 then
+          -- α₁ < y₁ ≤ x₂ < α₂: y₁ works unless it IS α₂'s endpoint case:
+          -- y₁ ≤ x₂ < α₂ and α₁ < y₁, both strict ⇒ fine
+          return some y1.toRat
+      if ex1.isNone then
+        match refineCoreStepD p1 sA1 x1 y1 with
+        | .inl (x1', y1') => x1 := x1'; y1 := y1'
+        | .inr r => ex1 := some r.toRat
+      if ex2.isNone then
+        match refineCoreStepD p2 sA2 x2 y2 with
+        | .inl (x2', y2') => x2 := x2'; y2 := y2'
+        | .inr r => ex2 := some r.toRat
     return none
 
 end RAlg
