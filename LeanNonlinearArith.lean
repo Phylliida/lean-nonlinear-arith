@@ -15,3 +15,7 @@ import LeanNonlinearArith.Kernel.QPolyTests
 import LeanNonlinearArith.Kernel.QPolyBench
 import LeanNonlinearArith.Kernel.Roots
 import LeanNonlinearArith.Kernel.RootsTests
+import LeanNonlinearArith.Certificates.Defs
+import LeanNonlinearArith.Certificates.Sound
+import LeanNonlinearArith.Kernel.CertGen
+import LeanNonlinearArith.Certificates.Tests
