@@ -41,13 +41,13 @@ namespace LeanNonlinearArith.Kernel
 (maintained by every constructor below, matching `mpbq_manager`):
 `num = 0 → k = 0`, and `k > 0 → num` odd. The raw anonymous constructor
 is the only escape hatch — don't use it outside this file/tests. -/
-structure Dyadic where
+structure Mpbq where
   raw ::
   num : Int
   k   : Nat
 deriving Repr, Inhabited, DecidableEq
 
-namespace Dyadic
+namespace Mpbq
 
 /-- `n * 2^s` (z3 `mul2k` on `mpz`). -/
 private def shl (n : Int) (s : Nat) : Int := n * ((1 <<< s : Nat) : Int)
@@ -59,7 +59,7 @@ private def twoAdicCapped : Nat → Nat → Nat
   | cap + 1, n => if n % 2 == 0 && n != 0 then 1 + twoAdicCapped cap (n / 2) else 0
 
 /-- z3 `mpbq_manager::normalize`. -/
-def normalize (a : Dyadic) : Dyadic :=
+def normalize (a : Mpbq) : Mpbq :=
   if a.k == 0 then a
   else if a.num == 0 then ⟨0, 0⟩
   else
@@ -68,134 +68,139 @@ def normalize (a : Dyadic) : Dyadic :=
     ⟨a.num / ((1 <<< t : Nat) : Int), a.k - t⟩
 
 /-- General constructor (z3 `set(a, n, k)` — normalizes). -/
-def mk (n : Int) (k : Nat) : Dyadic := normalize ⟨n, k⟩
+def mk (n : Int) (k : Nat) : Mpbq := normalize ⟨n, k⟩
 
-def ofInt (n : Int) : Dyadic := ⟨n, 0⟩
+def ofInt (n : Int) : Mpbq := ⟨n, 0⟩
 
-instance : OfNat Dyadic n := ⟨ofInt n⟩
+instance : OfNat Mpbq n := ⟨ofInt n⟩
 
-def isInt (a : Dyadic) : Bool := a.k == 0
-def isZero (a : Dyadic) : Bool := a.num == 0
-def isPos (a : Dyadic) : Bool := 0 < a.num
-def isNeg (a : Dyadic) : Bool := a.num < 0
-def isNonneg (a : Dyadic) : Bool := 0 ≤ a.num
-def isNonpos (a : Dyadic) : Bool := a.num ≤ 0
+def isInt (a : Mpbq) : Bool := a.k == 0
+def isZero (a : Mpbq) : Bool := a.num == 0
+def isPos (a : Mpbq) : Bool := 0 < a.num
+def isNeg (a : Mpbq) : Bool := a.num < 0
+def isNonneg (a : Mpbq) : Bool := 0 ≤ a.num
+def isNonpos (a : Mpbq) : Bool := a.num ≤ 0
 
 /-- Value as an exact rational. -/
-def toRat (a : Dyadic) : Rat := (a.num : Rat) / (((1 <<< a.k : Nat) : Int) : Rat)
+def toRat (a : Mpbq) : Rat := (a.num : Rat) / (((1 <<< a.k : Nat) : Int) : Rat)
 
 /-! ## Ring operations -/
 
-def add (a b : Dyadic) : Dyadic :=
+def add (a b : Mpbq) : Mpbq :=
   if a.k == b.k then normalize ⟨a.num + b.num, a.k⟩
   else if a.k < b.k then normalize ⟨shl a.num (b.k - a.k) + b.num, b.k⟩
   else normalize ⟨a.num + shl b.num (a.k - b.k), a.k⟩
 
-def sub (a b : Dyadic) : Dyadic :=
+def sub (a b : Mpbq) : Mpbq :=
   if a.k == b.k then normalize ⟨a.num - b.num, a.k⟩
   else if a.k < b.k then normalize ⟨shl a.num (b.k - a.k) - b.num, b.k⟩
   else normalize ⟨a.num - shl b.num (a.k - b.k), a.k⟩
 
-def neg (a : Dyadic) : Dyadic := ⟨-a.num, a.k⟩
+def neg (a : Mpbq) : Mpbq := ⟨-a.num, a.k⟩
 
-def mul (a b : Dyadic) : Dyadic :=
+instance : Neg Mpbq := ⟨neg⟩
+
+def mul (a b : Mpbq) : Mpbq :=
   -- z3 skips normalize when both k > 0 (odd·odd is odd); same result
   if a.k == 0 || b.k == 0 then normalize ⟨a.num * b.num, a.k + b.k⟩
   else ⟨a.num * b.num, a.k + b.k⟩
 
-def addInt (a : Dyadic) (b : Int) : Dyadic :=
+def addInt (a : Mpbq) (b : Int) : Mpbq :=
   if a.k == 0 then ⟨a.num + b, 0⟩ else normalize ⟨a.num + shl b a.k, a.k⟩
 
-def subInt (a : Dyadic) (b : Int) : Dyadic :=
+def subInt (a : Mpbq) (b : Int) : Mpbq :=
   if a.k == 0 then ⟨a.num - b, 0⟩ else normalize ⟨a.num - shl b a.k, a.k⟩
 
-def mulInt (a : Dyadic) (b : Int) : Dyadic := normalize ⟨a.num * b, a.k⟩
+def mulInt (a : Mpbq) (b : Int) : Mpbq := normalize ⟨a.num * b, a.k⟩
 
 /-- Divide by 2: bump `k`; only an old integer can need normalization
 (z3 comment: "when dividing by 2, we only need to normalize if m_k was
 zero"). -/
-def div2 (a : Dyadic) : Dyadic :=
+def div2 (a : Mpbq) : Mpbq :=
   if a.k == 0 then normalize ⟨a.num, 1⟩ else ⟨a.num, a.k + 1⟩
 
-def div2k (a : Dyadic) (s : Nat) : Dyadic :=
+def div2k (a : Mpbq) (s : Nat) : Mpbq :=
   if a.k == 0 then normalize ⟨a.num, s⟩ else ⟨a.num, a.k + s⟩
 
-def mul2 (a : Dyadic) : Dyadic :=
+def mul2 (a : Mpbq) : Mpbq :=
   if a.k == 0 then ⟨a.num * 2, 0⟩ else ⟨a.num, a.k - 1⟩
 
-def mul2k (a : Dyadic) (s : Nat) : Dyadic :=
+def mul2k (a : Mpbq) (s : Nat) : Mpbq :=
   if s == 0 then a
   else if a.k < s then ⟨shl a.num (s - a.k), 0⟩
   else ⟨a.num, a.k - s⟩
 
 /-- `a^n`. No normalization needed: an integer stays an integer, and an
 odd numerator's power stays odd (z3 comment). -/
-def power (a : Dyadic) (n : Nat) : Dyadic := ⟨a.num ^ n, a.k * n⟩
+def power (a : Mpbq) (n : Nat) : Mpbq := ⟨a.num ^ n, a.k * n⟩
 
 /-! ## Comparisons (dyadic / rational / integer) -/
 
 /-- Structural equality is value equality on normalized dyadics
 (z3 `eq`: `a.m_k == b.m_k && eq(a.m_num, b.m_num)`). -/
-instance : BEq Dyadic := ⟨fun a b => a.num == b.num && a.k == b.k⟩
+instance : BEq Mpbq := ⟨fun a b => a.num == b.num && a.k == b.k⟩
 
-def lt (a b : Dyadic) : Bool :=
+def lt (a b : Mpbq) : Bool :=
   if a.k == b.k then a.num < b.num
   else if a.k < b.k then shl a.num (b.k - a.k) < b.num
   else a.num < shl b.num (a.k - b.k)
 
-def gt (a b : Dyadic) : Bool := lt b a
-def le (a b : Dyadic) : Bool := !lt b a
-def ge (a b : Dyadic) : Bool := !lt a b
+def gt (a b : Mpbq) : Bool := lt b a
+def le (a b : Mpbq) : Bool := !lt b a
+def ge (a b : Mpbq) : Bool := !lt a b
 
-def cmp (a b : Dyadic) : Ordering :=
+def cmp (a b : Mpbq) : Ordering :=
   if lt a b then .lt else if a == b then .eq else .gt
 
+def max (a b : Mpbq) : Mpbq := if lt a b then b else a
+def min (a b : Mpbq) : Mpbq := if lt a b then a else b
+
 /-- z3 `eq(mpbq, mpq)`. -/
-def eqRat (a : Dyadic) (b : Rat) : Bool :=
+def eqRat (a : Mpbq) (b : Rat) : Bool :=
   if a.k == 0 && b.den == 1 then a.num == b.num
   else shl b.num a.k == a.num * (b.den : Int)
 
 /-- z3 `lt(mpbq, mpq)`: `a.num · b.den < b.num · 2^{a.k}`. -/
-def ltRat (a : Dyadic) (b : Rat) : Bool :=
+def ltRat (a : Mpbq) (b : Rat) : Bool :=
   if a.k == 0 && b.den == 1 then a.num < b.num
   else a.num * (b.den : Int) < shl b.num a.k
 
-def leRat (a : Dyadic) (b : Rat) : Bool :=
+def leRat (a : Mpbq) (b : Rat) : Bool :=
   if a.k == 0 && b.den == 1 then a.num ≤ b.num
   else a.num * (b.den : Int) ≤ shl b.num a.k
 
-def gtRat (a : Dyadic) (b : Rat) : Bool := !leRat a b
-def geRat (a : Dyadic) (b : Rat) : Bool := !ltRat a b
+def gtRat (a : Mpbq) (b : Rat) : Bool := !leRat a b
+def geRat (a : Mpbq) (b : Rat) : Bool := !ltRat a b
 
-def eqInt (a : Dyadic) (n : Int) : Bool := a.k == 0 && a.num == n
+def eqInt (a : Mpbq) (n : Int) : Bool := a.k == 0 && a.num == n
 
-def ltInt (a : Dyadic) (n : Int) : Bool :=
+def ltInt (a : Mpbq) (n : Int) : Bool :=
   if a.k == 0 then a.num < n else a.num < shl n a.k
 
-def leInt (a : Dyadic) (n : Int) : Bool :=
+def leInt (a : Mpbq) (n : Int) : Bool :=
   if a.k == 0 then a.num ≤ n else a.num ≤ shl n a.k
 
-def gtInt (a : Dyadic) (n : Int) : Bool := !leInt a n
-def geInt (a : Dyadic) (n : Int) : Bool := !ltInt a n
+def gtInt (a : Mpbq) (n : Int) : Bool := !leInt a n
+def geInt (a : Mpbq) (n : Int) : Bool := !ltInt a n
 
 /-! ## Magnitude (binary order of magnitude — nla-26.6 rides on these) -/
 
 /-- z3 `magnitude_lb`: for `a > 0`, `2^r ≤ a ≤ 2^{r+1}`; for `a < 0`,
 `-2^{r+1} ≤ a ≤ -2^r` — with `log2 = ⌊log₂⌋` of the magnitude.
 Examples from the source: `5/2^3 ↦ -1`, `21/2^2 ↦ 2`, `-3/2^4 ↦ -2`. -/
-def magnitudeLb (a : Dyadic) : Int :=
+def magnitudeLb (a : Mpbq) : Int :=
   if a.num == 0 then 0
   else if 0 < a.num then (Nat.log2 a.num.natAbs : Int) - a.k
   else (Nat.log2 a.num.natAbs : Int) - a.k + 1
 
 /-- z3 `magnitude_ub`: `a ≤ 2^r` (positive) / `a ≤ -2^r` (negative). -/
-def magnitudeUb (a : Dyadic) : Int :=
+def magnitudeUb (a : Mpbq) : Int :=
   if a.num == 0 then 0
   else if 0 < a.num then (Nat.log2 a.num.natAbs : Int) - a.k + 1
   else (Nat.log2 a.num.natAbs : Int) - a.k
 
 /-- z3 `lt_1div2k`: `a < 1/2^s`. -/
-def lt1Div2k (a : Dyadic) (s : Nat) : Bool :=
+def lt1Div2k (a : Mpbq) (s : Nat) : Bool :=
   if a.num ≤ 0 then true
   else if a.k ≤ s then false   -- num ≥ 1 ⇒ a ≥ 1/2^{a.k} ≥ 1/2^s
   else a.num < ((1 <<< (a.k - s) : Nat) : Int)
@@ -205,14 +210,14 @@ def lt1Div2k (a : Dyadic) (s : Nat) : Bool :=
 /-- z3 `floor`: machine (truncating) shift of the numerator, then a `−1`
 adjustment for negatives. Exact on normalized values (`k > 0 ⇒ num` odd,
 so the truncation is never already exact). -/
-def floorInt (a : Dyadic) : Int :=
+def floorInt (a : Mpbq) : Int :=
   if a.k == 0 then a.num
   else
     let f : Int := a.num.sign * ((a.num.natAbs >>> a.k : Nat) : Int)
     if a.num < 0 then f - 1 else f
 
 /-- z3 `ceil` (mirror of `floorInt`). -/
-def ceilInt (a : Dyadic) : Int :=
+def ceilInt (a : Mpbq) : Int :=
   if a.k == 0 then a.num
   else
     let f : Int := a.num.sign * ((a.num.natAbs >>> a.k : Nat) : Int)
@@ -230,23 +235,30 @@ def ratCeilInt (q : Rat) : Int := -((-q.num).fdiv (q.den : Int))
 flag); otherwise the flag is `false` and the result is the approximation
 `q.num / 2^{⌊log₂ den⌋ + 1}`, to be bracketed by `refineLower`/
 `refineUpper`. -/
-def ofRat (q : Rat) : Dyadic × Bool :=
+def ofRat (q : Rat) : Mpbq × Bool :=
   if q.den == 1 then (⟨q.num, 0⟩, true)
   else
     let s := Nat.log2 q.den
     if q.den == 1 <<< s then (mk q.num s, true)
     else (mk q.num (s + 1), false)
 
+/-- Conversion for rationals that are *known* to be dyadic (endpoints
+produced by dyadic-closed bisection). Panics on a non-dyadic input —
+that would be a kernel bug, not a data condition. -/
+def ofRatExact (q : Rat) : Mpbq :=
+  let (d, exact) := ofRat q
+  if exact then d else panic! s!"ofRatExact: {q} is not a binary rational"
+
 /-- z3 `refine_upper`: given dyadic `l < q < u` with `q` NOT dyadic
 (denominator not a power of two — the precondition Z3 asserts; it is
 what makes every bisection midpoint ≠ `q`, hence termination), tighten
 `u` to a dyadic `u'` with `q < u' < u`, possibly also raising `l`. -/
-partial def refineUpper (q : Rat) (l u : Dyadic) : Dyadic × Dyadic :=
+partial def refineUpper (q : Rat) (l u : Mpbq) : Mpbq × Mpbq :=
   let mid := div2 (add l u)
   if gtRat mid q then (l, mid) else refineUpper q mid u
 
 /-- z3 `refine_lower` (mirror). -/
-partial def refineLower (q : Rat) (l u : Dyadic) : Dyadic × Dyadic :=
+partial def refineLower (q : Rat) (l u : Mpbq) : Mpbq × Mpbq :=
   let mid := div2 (add l u)
   if ltRat mid q then (mid, u) else refineLower q l mid
 
@@ -254,7 +266,7 @@ partial def refineLower (q : Rat) (l u : Dyadic) : Dyadic × Dyadic :=
 
 /-- z3 `select_integer(mpbq, mpbq)`: some integer in `[lower, upper]`,
 preferring the endpoints then `⌈lower⌉`. -/
-def selectIntegerDD (lower upper : Dyadic) : Option Int :=
+def selectIntegerDD (lower upper : Mpbq) : Option Int :=
   if lower.k == 0 then some lower.num
   else if upper.k == 0 then some upper.num
   else
@@ -262,14 +274,14 @@ def selectIntegerDD (lower upper : Dyadic) : Option Int :=
     if cl ≤ floorInt upper then some cl else none
 
 /-- z3 `select_integer(mpq, mpbq)`: some integer in `(lower, upper]`. -/
-def selectIntegerQD (lower : Rat) (upper : Dyadic) : Option Int :=
+def selectIntegerQD (lower : Rat) (upper : Mpbq) : Option Int :=
   if upper.k == 0 then some upper.num
   else
     let cl := if lower.den == 1 then lower.num + 1 else ratCeilInt lower
     if cl ≤ floorInt upper then some cl else none
 
 /-- z3 `select_integer(mpbq, mpq)`: some integer in `[lower, upper)`. -/
-def selectIntegerDQ (lower : Dyadic) (upper : Rat) : Option Int :=
+def selectIntegerDQ (lower : Mpbq) (upper : Rat) : Option Int :=
   if lower.k == 0 then some lower.num
   else
     let cl := ceilInt lower
@@ -291,7 +303,7 @@ def linearSearchThreshold : Nat := 8
 /-- Linear branch: scale both endpoints by 2 until the scaled interval
 contains an integer. Terminates: at `k = min(lower.k, upper.k)` one
 endpoint is an integer. -/
-private partial def selectSmallLinear (l2k u2k : Dyadic) (k : Nat) : Dyadic :=
+private partial def selectSmallLinear (l2k u2k : Mpbq) (k : Nat) : Mpbq :=
   let l := mul2 l2k
   let u := mul2 u2k
   let k := k + 1
@@ -302,7 +314,7 @@ private partial def selectSmallLinear (l2k u2k : Dyadic) (k : Nat) : Dyadic :=
 /-- Binary-search branch (faithful transcription of the `min_k`/`max_k`
 loop, including the recompute-at-`max_k` corner when the last probe
 failed). -/
-private partial def selectSmallBinary (lower upper : Dyadic) (minK maxK : Nat) : Dyadic :=
+private partial def selectSmallBinary (lower upper : Mpbq) (minK maxK : Nat) : Mpbq :=
   let midK := minK + (maxK - minK) / 2
   match selectIntegerDD (mul2k lower midK) (mul2k upper midK) with
   | some n =>
@@ -318,61 +330,61 @@ private partial def selectSmallBinary (lower upper : Dyadic) (minK maxK : Nat) :
 /-- z3 `select_small_core(mpbq, mpbq)`: some dyadic in `[lower, upper]`
 minimizing size in bits — an integer if the interval contains one,
 otherwise the smallest `k` whose `2^k`-scaling does. Pre: `lower ≤ upper`. -/
-partial def selectSmallCoreDD (lower upper : Dyadic) : Dyadic :=
+partial def selectSmallCoreDD (lower upper : Mpbq) : Mpbq :=
   match selectIntegerDD lower upper with
   | some n => ofInt n
   | none =>
-    let maxK := min lower.k upper.k
+    let maxK := Nat.min lower.k upper.k
     if maxK ≤ linearSearchThreshold then selectSmallLinear lower upper 0
     else selectSmallBinary lower upper 0 maxK
 
 /-- z3 `select_small`: `none` iff `lower > upper`. -/
-def selectSmall (lower upper : Dyadic) : Option Dyadic :=
+def selectSmall (lower upper : Mpbq) : Option Mpbq :=
   if gt lower upper then none else some (selectSmallCoreDD lower upper)
 
 /-- z3 `select_small_core(mpq, mpbq)`: some dyadic in `(lower, upper]`.
 Pre: `lower < upper`. Terminates: doubling makes the scaled open interval
 wider than 1. -/
-partial def selectSmallCoreQD (lower : Rat) (upper : Dyadic) : Dyadic :=
+partial def selectSmallCoreQD (lower : Rat) (upper : Mpbq) : Mpbq :=
   match selectIntegerQD lower upper with
   | some n => ofInt n
   | none => go (lower * 2) (mul2 upper) 1
 where
-  go (l2k : Rat) (u2k : Dyadic) (k : Nat) : Dyadic :=
+  go (l2k : Rat) (u2k : Mpbq) (k : Nat) : Mpbq :=
     match selectIntegerQD l2k u2k with
     | some n => mk n k
     | none => go (l2k * 2) (mul2 u2k) (k + 1)
 
 /-- z3 `select_small_core(mpbq, mpq)`: some dyadic in `[lower, upper)`.
 Pre: `lower < upper`. -/
-partial def selectSmallCoreDQ (lower : Dyadic) (upper : Rat) : Dyadic :=
+partial def selectSmallCoreDQ (lower : Mpbq) (upper : Rat) : Mpbq :=
   match selectIntegerDQ lower upper with
   | some n => ofInt n
   | none => go (mul2 lower) (upper * 2) 1
 where
-  go (l2k : Dyadic) (u2k : Rat) (k : Nat) : Dyadic :=
+  go (l2k : Mpbq) (u2k : Rat) (k : Nat) : Mpbq :=
     match selectIntegerDQ l2k u2k with
     | some n => mk n k
     | none => go (mul2 l2k) (u2k * 2) (k + 1)
 
 /-- z3 `select_small_core(mpq, mpq)`: some dyadic in `(lower, upper)`.
 Pre: `lower < upper`. -/
-partial def selectSmallCoreQQ (lower upper : Rat) : Dyadic :=
+partial def selectSmallCoreQQ (lower upper : Rat) : Mpbq :=
   match selectIntegerQQ lower upper with
   | some n => ofInt n
   | none => go (lower * 2) (upper * 2) 1
 where
-  go (l2k u2k : Rat) (k : Nat) : Dyadic :=
+  go (l2k u2k : Rat) (k : Nat) : Mpbq :=
     match selectIntegerQQ l2k u2k with
     | some n => mk n k
     | none => go (l2k * 2) (u2k * 2) (k + 1)
 
-instance : ToString Dyadic :=
+instance : ToString Mpbq :=
   ⟨fun a =>
     if a.k == 0 then toString a.num
     else if a.k == 1 then s!"{a.num}/2"
     else s!"{a.num}/2^{a.k}"⟩
 
-end Dyadic
+end Mpbq
 
 end LeanNonlinearArith.Kernel

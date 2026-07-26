@@ -290,12 +290,12 @@ def cmpWithZero (iv : NInterval) : Int := Id.run do
 /-- An integer strictly above the value. -/
 def intAbove : RAlg → Rat
   | .rat q => (q.floor + 1 : Int)
-  | .root _ _ b => (b.floor + 1 : Int)
+  | .root _ _ b => (Mpbq.floorInt b + 1 : Int)
 
 /-- An integer strictly below the value. -/
 def intBelow : RAlg → Rat
   | .rat q => (q.ceil - 1 : Int)
-  | .root _ a _ => (a.ceil - 1 : Int)
+  | .root _ a _ => (Mpbq.ceilInt a - 1 : Int)
 
 /-- Pick a witness in the complement (Z3 preference order,
 randomize = false). Returns `none` only for a full set. -/

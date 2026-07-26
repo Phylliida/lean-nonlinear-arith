@@ -1,7 +1,7 @@
-import LeanNonlinearArith.Kernel.Dyadic
+import LeanNonlinearArith.Kernel.Mpbq
 
 /-!
-# Dyadic (mpbq) tests
+# Mpbq (mpbq) tests
 
 `#guard` pins. Two layers: `toRat` as the semantic oracle over a sample
 grid (ring ops, comparisons, floor/ceil, normalization), and pins
@@ -9,20 +9,20 @@ transcribed from z3 `mpbq.h/cpp` doc comments (magnitude examples,
 `to_mpbq` rounding, select behavior).
 -/
 
-namespace LeanNonlinearArith.Kernel.DyadicTests
+namespace LeanNonlinearArith.Kernel.MpbqTests
 
 open LeanNonlinearArith.Kernel
-open LeanNonlinearArith.Kernel.Dyadic
+open LeanNonlinearArith.Kernel.Mpbq
 
 /-- Sample values hitting: integers (incl. 0, negatives), normalized
 k > 0, and inputs that need normalization through `mk`. -/
-def samples : List Dyadic :=
+def samples : List Mpbq :=
   [mk 0 0, mk 1 0, mk (-1) 0, mk 7 0, mk (-12) 0,
    mk 1 1, mk (-1) 1, mk 3 1, mk 5 3, mk (-5) 3, mk 21 2, mk (-3) 4,
    mk 4 2, mk (-6) 1, mk 40 3, mk 1024 5, mk (-1024) 12, mk 12345 7]
 
 /-- Normalized invariant: `num = 0 → k = 0`; `k > 0 → num` odd. -/
-def normalized (a : Dyadic) : Bool :=
+def normalized (a : Mpbq) : Bool :=
   (a.num != 0 || a.k == 0) && (a.k == 0 || a.num % 2 != 0)
 
 #guard samples.all normalized
@@ -164,7 +164,7 @@ def pow2 (e : Int) : Rat :=
 
 /-- Brute-force oracle: the smallest `k` such that `[l·2^k, u·2^k]`
 contains an integer (what `select_small_core` minimizes). -/
-def smallestK (l u : Dyadic) : Nat := go 0
+def smallestK (l u : Mpbq) : Nat := go 0
 where
   go (k : Nat) : Nat :=
     if k > l.k + u.k + 1 then k  -- unreachable: k = min(l.k,u.k) succeeds
@@ -209,4 +209,4 @@ where
 #guard toString (mk 3 1) == "3/2"
 #guard toString (ofInt (-7)) == "-7"
 
-end LeanNonlinearArith.Kernel.DyadicTests
+end LeanNonlinearArith.Kernel.MpbqTests

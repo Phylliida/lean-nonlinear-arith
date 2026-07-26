@@ -200,11 +200,11 @@ namespace RAlg
 /-- Enclosing interval (point interval for rationals). -/
 def intervalOf : RAlg → RatInterval
   | .rat q => (q, q)
-  | .root _ a b => (a, b)
+  | .root _ a b => (a.toRat, b.toRat)
 
 def width : RAlg → Rat
   | .rat _ => 0
-  | .root _ a b => b - a
+  | .root _ a b => (Mpbq.sub b a).toRat
 
 /-- Refine until the isolating interval is narrower than `w` (fueled;
 rationals are already exact). -/
@@ -215,9 +215,9 @@ def refineUntilWidth (x : RAlg) (w : Rat) (fuel : Nat := 128) : RAlg := Id.run d
     let mut lo := a
     let mut hi := b
     for _ in [0:fuel] do
-      if hi - lo < w then
+      if (Mpbq.sub hi lo).ltRat w then
         return .root p lo hi
-      let (lo', hi') := Kernel.QPoly.refineInterval p lo hi 1
+      let (lo', hi') := Kernel.QPoly.refineIntervalD p lo hi 1
       lo := lo'; hi := hi'
     return .root p lo hi
 

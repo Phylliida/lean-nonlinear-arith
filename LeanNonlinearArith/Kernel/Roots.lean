@@ -1,4 +1,5 @@
 import LeanNonlinearArith.Kernel.QPoly
+import LeanNonlinearArith.Kernel.Mpbq
 
 /-!
 # nla-09 (computational half) — root isolation and algebraic sign
@@ -111,5 +112,53 @@ def refineInterval (p0 : QPoly) (a b : Rat) (iters : Nat) : Rat × Rat := Id.run
 the sign itself. `f` is square-freed internally to match `isolateRoots`. -/
 def signAtRoot (g f : QPoly) (a b : Rat) : Int :=
   tarskiQuery g (squarefreePart f) a b
+
+/-! ## Mpbq-endpoint interface (nla-26.1b)
+
+Z3 keeps isolating intervals in binary rationals (`mpbq`); ours now do
+too. The bisection engine above is *dyadic-closed* — midpoints are
+`div2 (a + b)` and `nonRootSplit` offsets are `(b − a)/4^k` — so seeding
+it with dyadic values keeps every emitted endpoint dyadic, and these
+variants share the engine rather than duplicating it: they run it on
+`toRat` images and convert the (exactly representable) results back with
+`ofRatExact`. The one genuine change is the initial bound: `⌈rootBound⌉`
+(an integer, hence dyadic) instead of the rational Cauchy bound. The
+isolation *engine* remains Sturm-bisection vs Z3's Descartes frames —
+that is the declared nla-08 engine divergence, unchanged here; what this
+interface fixes is the endpoint representation that `am.select` niceness
+(nla-26.4) and binary magnitude gating (nla-26.6) read. -/
+
+/-- `isolateRoots` with dyadic endpoints: integer initial bound, dyadic
+splits throughout. -/
+def isolateRootsD (p0 : QPoly) : Array (Mpbq × Mpbq) := Id.run do
+  let p := squarefreePart p0
+  if p.size ≤ 1 then return #[]
+  let ch := sturmChain p
+  let cnt (a b : Rat) : Nat := signVarAt ch a - signVarAt ch b
+  let M : Rat := (Mpbq.ratCeilInt (rootBound p) : Int)
+  let mut work : Array (Rat × Rat) := #[(-M, M)]
+  let mut out : Array (Mpbq × Mpbq) := #[]
+  while !work.isEmpty do
+    let (a, b) := work.back!
+    work := work.pop
+    let n := cnt a b
+    if n == 0 then continue
+    if n == 1 then
+      out := out.push (Mpbq.ofRatExact a, Mpbq.ofRatExact b)
+    else
+      let m := nonRootSplit p a b
+      work := work.push (a, m)
+      work := work.push (m, b)
+  return out.qsort (fun x y => Mpbq.lt x.1 y.1)
+
+/-- `refineInterval` on dyadic endpoints (dyadic-closed, see above). -/
+def refineIntervalD (p0 : QPoly) (a b : Mpbq) (iters : Nat) :
+    Mpbq × Mpbq :=
+  let (a', b') := refineInterval p0 a.toRat b.toRat iters
+  (Mpbq.ofRatExact a', Mpbq.ofRatExact b')
+
+/-- `signAtRoot` at a dyadic-endpoint isolating interval. -/
+def signAtRootD (g f : QPoly) (a b : Mpbq) : Int :=
+  signAtRoot g f a.toRat b.toRat
 
 end LeanNonlinearArith.Kernel.QPoly

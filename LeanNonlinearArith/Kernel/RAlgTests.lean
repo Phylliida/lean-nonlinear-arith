@@ -14,8 +14,9 @@ open LeanNonlinearArith.Kernel.RAlg
 
 /-- √2 as the root of x² − 2 in (1, 2). -/
 def sqrt2 : RAlg := .root #[-2, 0, 1] 1 2
-/-- √2 again, as the only root of (x² − 2)(x² − 3) in (1, 8/5). -/
-def sqrt2' : RAlg := .root #[6, 0, -5, 0, 1] 1 (8/5)
+/-- √2 again, as the only root of (x² − 2)(x² − 3) in (1, 13/8)
+(dyadic upper endpoint between √2 ≈ 1.414 and √3 ≈ 1.732). -/
+def sqrt2' : RAlg := .root #[6, 0, -5, 0, 1] 1 (Mpbq.mk 13 3)
 /-- √3. -/
 def sqrt3 : RAlg := .root #[-3, 0, 1] 1 2
 /-- Golden ratio φ ≈ 1.618, root of x² − x − 1 in (1, 2). -/
