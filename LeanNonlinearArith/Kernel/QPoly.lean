@@ -293,7 +293,11 @@ def signVarAtInf (chain : Array QPoly) (pos : Bool) : Nat := Id.run do
       prev := s
   return v
 
-/-- Number of distinct real roots in the half-open interval `(a, b]`. -/
+/-- Number of distinct real roots strictly between `a` and `b`, **for
+non-root endpoints** (`p(a) ≠ 0 ≠ p(b)`) — the classical Sturm hypothesis.
+At root endpoints the variation counts are convention-dependent and this
+function makes no promise; every internal caller (isolation, refinement)
+maintains the non-root-endpoint invariant. -/
 def countRootsBetween (p : QPoly) (a b : Rat) : Nat :=
   let ch := sturmChain p
   signVarAt ch a - signVarAt ch b

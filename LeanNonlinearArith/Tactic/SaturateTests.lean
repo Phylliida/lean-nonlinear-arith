@@ -442,6 +442,16 @@ example (a b c : ℤ) (h1 : b ≤ a + 2) (h2 : a ≤ 5) (h3 : 0 ≤ b)
 example (a b : ℤ) (h1 : a ≤ b - 1) (h2 : 3 ≤ a) : 16 ≤ b ^ 2 := by
   nla_saturate
 
+-- rounding quadrants of the propagation formulas (2026-07-26 review; the
+-- formulas are characterized by `cdivPos_le_iff`/`le_fdiv_iff_mul_le` in
+-- Oracle.lean — these pin the plumbing that feeds them):
+-- negative-coefficient ub with |c| > 1: 3b ≤ 10 ⟹ b ≤ ⌊10/3⌋ = 3
+example (b : ℤ) (h1 : 3 * b ≤ 10) (h2 : 0 ≤ b) : b ^ 2 ≤ 9 := by
+  nla_saturate
+-- positive-coefficient lb with negative dividend: -3b ≤ 10 ⟹ b ≥ ⌈-10/3⌉ = -3
+example (b c : ℤ) (h1 : -3 * b ≤ 10) (h2 : b ≤ -1) (h3 : 2 ≤ c) (h4 : c ≤ 5) :
+    -15 ≤ b * c := by nla_saturate
+
 /-! ### Oracle v1: O4 ±-equivalences (RULES O4, Z3 evars/generate_mon_ol)
 
 The oracle's parity union-find derives unit ±-equalities; fully-equivalent
@@ -466,6 +476,13 @@ example (a b c d : ℤ) (h1 : d = -c) (h2 : 0 < c) (h3 : a + b ≤ -1) :
 -- equivalence through the union-find chain (d = e, e = -c)
 example (a c d e : ℤ) (h1 : d = e) (h2 : e = -c) (h3 : 3 ≤ a * c) :
     a * d ≤ -3 := by nla_saturate
+
+-- octagon feed (Z3 collect_equivs, nla_core.cpp:516; matched 2026-07-26):
+-- the equivalence asserted as an inequality PAIR, never as an Eq
+example (a c d : ℤ) (h1 : d ≤ -c) (h2 : -c ≤ d) (h3 : 3 ≤ a * c) :
+    a * d ≤ -3 := by nla_saturate
+example (a c d : ℤ) (h1 : d ≤ c) (h2 : c ≤ d) (h3 : 3 ≤ a * c) :
+    3 ≤ a * d := by nla_saturate
 
 /-! ### nla-07: the Gröbner layer (RULES row G1)
 
@@ -500,3 +517,19 @@ example (a b c d e : ℤ) (h1 : a = b * c) (h2 : d = b * e) :
 -- attempt at the post-eager Gröbner position
 example (a b c d e : ℤ) (h1 : a = b * c) (h2 : d = b * e) :
     a * e ≤ d * c := by nla_saturate
+
+-- same core through a ≥ goal (the `refine le_of_eq ?_` unification goes
+-- through the reducible `GE.ge` unfold — pinned 2026-07-26)
+example (a b c d e : ℤ) (h1 : a = b * c) (h2 : d = b * e) :
+    a * e ≥ d * c := by nla_saturate
+
+/- KNOWN GAP (nla-07b, documented 2026-07-26): ideal cores of the form
+`l - r = k` with literal `k ≠ 0`. Z3's Gröbner derives the equation and
+propagates it to the linear solver; our grind reuse cannot (cutsat does
+not consume ring-derived equalities) and `le_of_eq` needs `k = 0`.
+Motivating specimen — currently FAILS, flips green when nla-07b's
+meta-Buchberger lands:
+
+  example (a b c d e : ℤ) (h1 : a = b * c - 1) (h2 : d = b * e)
+      (h3 : c = e) : a ≤ d := by nla_saturate
+-/

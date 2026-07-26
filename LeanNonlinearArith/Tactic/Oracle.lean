@@ -149,7 +149,42 @@ private def consOfHyp (ty : Expr) : StateRefT OracleParse MetaM (Array LinForm) 
   return out
 
 /-- `ceil(x / y)` for `y > 0`. -/
-private def cdivPos (x y : Int) : Int := -((-x).fdiv y)
+def cdivPos (x y : Int) : Int := -((-x).fdiv y)
+
+/-! ### Rounding-formula correctness
+
+The two tighten formulas in `propagate` are *fully characterized* by the
+iffs below (2026-07-26 review): the forward direction is soundness (every
+solution of the constraint satisfies the emitted bound — so the omega
+discharge of an oracle suggestion can never fail for arithmetic reasons),
+the backward direction is tightness (the bound is attained by an integer
+satisfying the row inequality, i.e. no strictly better integer bound
+exists from this row alone). The residual trust in `propagate` is the
+sup-accumulation plumbing, tracked with the kernel-correctness follow-ons
+on the board. -/
+
+/-- Floor-division bound, positive divisor: `a ≤ ⌊b/c⌋ ↔ a·c ≤ b`. This is
+verbatim the ub tighten step (`cand = (-r).fdiv (-ci)` with `b = -r`,
+`c = -ci`). -/
+theorem le_fdiv_iff_mul_le {b c : Int} (hc : 0 < c) (a : Int) :
+    a ≤ b.fdiv c ↔ a * c ≤ b := by
+  rw [Int.fdiv_eq_ediv_of_nonneg b hc.le]
+  exact Int.le_ediv_iff_mul_le hc
+
+/-- Ceiling-division bound, positive divisor: `⌈r/c⌉ ≤ x ↔ r ≤ c·x` —
+verbatim the lb tighten step. -/
+theorem cdivPos_le_iff {c r : Int} (hc : 0 < c) (x : Int) :
+    cdivPos r c ≤ x ↔ r ≤ c * x := by
+  unfold cdivPos
+  constructor
+  · intro h
+    have h' : -x ≤ (-r).fdiv c := by omega
+    have h'' : -x * c ≤ -r := (le_fdiv_iff_mul_le hc (-x)).mp h'
+    linarith
+  · intro h
+    have h'' : -x * c ≤ -r := by linarith
+    have := (le_fdiv_iff_mul_le hc (-x)).mpr h''
+    omega
 
 /-- Interval bound propagation to a fixpoint, capped rounds. For each
 constraint `Σ cᵢxᵢ + k ≥ 0` and target term `cⱼxⱼ`: the residual sup of the
@@ -187,11 +222,16 @@ private def propagate (n : Nat) (cons : Array LinForm) :
         -- cᵢxᵢ ≥ -(k + supRest)
         let r := -(c.k + supRest)
         if ci > 0 then
+          -- xᵢ ≥ r/cᵢ: exact ℤ bound is `cdivPos r ci`, characterized by
+          -- `cdivPos_le_iff` below (soundness AND tightness)
           let cand := cdivPos r ci
           if lb[i]!.all (· < cand) then
             lb := lb.set! i (some cand); changed := true
         else
-          let cand := r.fdiv ci
+          -- xᵢ ≤ r/cᵢ (cᵢ < 0): computed in positive-divisor form —
+          -- `(-r).fdiv (-cᵢ)` equals `r.fdiv cᵢ` but is characterized
+          -- verbatim by `le_fdiv_iff_mul_le` below
+          let cand := (-r).fdiv (-ci)
           if ub[i]!.all (cand < ·) then
             ub := ub.set! i (some cand); changed := true
     if !changed then break
@@ -224,6 +264,51 @@ private def buildUF (n : Nat) (pmEqs : Array (Nat × Nat × Bool)) :
     -- it to the omega leaf
   return uf
 
+/-- The `collect_equivs` analogue (Z3 nla_core.cpp:516, exact mechanism):
+octagon forms `±xᵢ ± xⱼ` (two entries, unit coefficients) whose derived
+bounds pin them to zero yield ±-equalities. This is how Z3's `evars` sees
+equalities asserted as inequality *pairs* (`x ≤ y` and `y ≤ x` never
+produce an `Eq` hypothesis, but both bound the same octagon term). A
+constraint `±T + k ≥ 0` contributes a lower/upper bound `∓k` on the term
+`T`; best-lb ≥ 0 together with best-ub ≤ 0 forces `T = 0` in every model
+(or infeasibility, where any merge is vacuously safe — every discharge
+succeeds). Z3 restricts to unit coefficients; the direct-`Eq` feed in
+`consOfHyp` additionally catches scaled forms, a strict superset in the
+containment direction. -/
+private def octagonEqs (cons : Array LinForm) : Array (Nat × Nat × Bool) := Id.run do
+  -- key: (min var, max var, isSum); value: (best lb, best ub) of the term
+  -- T = x_a - x_b (diff) or T = x_a + x_b (sum), a < b
+  let mut bounds : Std.HashMap (Nat × Nat × Bool) (Option Int × Option Int) := {}
+  for c in cons do
+    if c.coeffs.size != 2 then continue
+    let (i, ci) := c.coeffs[0]!
+    let (j, cj) := c.coeffs[1]!
+    if ci.natAbs != 1 || cj.natAbs != 1 then continue
+    let a := min i j
+    let b := max i j
+    let ca := if i == a then ci else cj
+    let cb := if i == a then cj else ci
+    let isSum := ca == cb
+    -- form = ca·x_a + cb·x_b + k ≥ 0. With T as above: coefficient of T is
+    -- `ca` for diff (ca = -cb) and `ca` for sum (ca = cb) — both cases
+    -- read `ca·T + k ≥ 0`.
+    let key := (a, b, isSum)
+    let (lo, hi) := bounds.getD key (none, none)
+    if ca == 1 then
+      -- T ≥ -k
+      let v := -c.k
+      if lo.all (· < v) then bounds := bounds.insert key (some v, hi)
+    else
+      -- T ≤ k
+      let v := c.k
+      if hi.all (v < ·) then bounds := bounds.insert key (lo, some v)
+  let mut out : Array (Nat × Nat × Bool) := #[]
+  for (key, lo, hi) in bounds.toList do
+    if lo.any (0 ≤ ·) && hi.any (· ≤ 0) then
+      -- diff pinned to 0 ⟹ x_a = x_b (neg = false); sum ⟹ x_a = -x_b
+      out := out.push (key.1, key.2.1, key.2.2)
+  return out
+
 /-- Build the oracle from the current local context. Call inside the goal's
 context. Untrusted throughout — results only steer anchor selection. -/
 def runOracle : MetaM OracleCtx := do
@@ -236,7 +321,7 @@ def runOracle : MetaM OracleCtx := do
   let ((), s) ← act.run {}
   let (lb, ub) := propagate s.atoms.size s.cons
   return { atoms := s.atoms, index := s.index, lb, ub,
-           uf := buildUF s.atoms.size s.pmEqs }
+           uf := buildUF s.atoms.size (s.pmEqs ++ octagonEqs s.cons) }
 
 /-- Derived bounds for an expr, `(lb?, ub?)`. -/
 def OracleCtx.boundsOf (oc : OracleCtx) (e : Expr) : Option Int × Option Int :=

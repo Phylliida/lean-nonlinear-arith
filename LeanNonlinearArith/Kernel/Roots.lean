@@ -49,18 +49,19 @@ def tarskiQuery (g f : QPoly) (a b : Rat) : Int :=
   (signVarAt ch a : Int) - (signVarAt ch b : Int)
 
 /-- Nudge a proposed split point off the roots of `p`: tries
-`m + (b-a)/4^k` for `k = 1, 2, …`; some try succeeds because `p` has
-finitely many roots. Falls back to `m` if the fuel runs dry (harmless
-downstream: the checker re-certifies everything). -/
+`m + (b-a)/4^k` for `k = 1, 2, …`. The try count `p.size + 1` is
+*provably* sufficient, not heuristic: the candidate points are pairwise
+distinct and `p` has at most `deg p` roots, so some candidate is a
+non-root. All candidates stay inside `(a, b)` (offsets are `≤ (b-a)/4`). -/
 def nonRootSplit (p : QPoly) (a b : Rat) : Rat := Id.run do
   let m := (a + b) / 2
   if eval p m != 0 then return m
   let mut off := (b - a) / 4
-  for _ in [0:64] do
+  for _ in [0:p.size + 1] do
     let m' := m + off
     if eval p m' != 0 then return m'
     off := off / 4
-  return m
+  return m  -- unreachable by the counting argument above
 
 /-- Isolate the distinct real roots of `p`: returns disjoint open intervals
 `(a, b)` with rational non-root endpoints, each containing exactly one real
@@ -74,9 +75,11 @@ def isolateRoots (p0 : QPoly) : Array (Rat × Rat) := Id.run do
   let M := rootBound p
   let mut work : Array (Rat × Rat) := #[(-M, M)]
   let mut out : Array (Rat × Rat) := #[]
-  let mut fuel := 256 * p.size
-  while fuel > 0 && !work.isEmpty do
-    fuel := fuel - 1
+  -- runs to completion: bisection of a square-free polynomial terminates
+  -- because distinct roots have positive separation, so no fuel — a fuel
+  -- cutoff here silently DROPPED unfinished intervals (whole roots missing
+  -- from the output with no signal; 2026-07-26 review fix)
+  while !work.isEmpty do
     let (a, b) := work.back!
     work := work.pop
     let n := cnt a b

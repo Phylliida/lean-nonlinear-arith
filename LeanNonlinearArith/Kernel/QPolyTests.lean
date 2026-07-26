@@ -39,6 +39,22 @@ private def p (cs : Array Rat) : QPoly := trim cs
 -- Yun on a square-free cubic: single block, (x-1)(x+1)(x-2) = x³-2x²-x+2
 #guard yun (mul (p #[-1, 1]) (mul (p #[1, 1]) (p #[-2, 1])))
   == #[p #[2, -1, -2, 1]]
+-- Yun at multiplicity ≥ 3 (2026-07-26 review): (x-1)³ → [1, 1, x-1]
+-- (index = multiplicity, filler blocks are the constant 1)
+#guard yun (mul (p #[-1, 1]) (mul (p #[-1, 1]) (p #[-1, 1])))
+  == #[p #[1], p #[1], p #[-1, 1]]
+-- mixed multiplicities: (x-1)(x+2)³ → [x-1, 1, x+2]
+#guard yun (mul (p #[-1, 1]) (mul (p #[2, 1]) (mul (p #[2, 1]) (p #[2, 1]))))
+  == #[p #[-1, 1], p #[1], p #[2, 1]]
+-- reconstruction check: ∏ aᵢ^i rebuilds the (monic) input
+#guard Id.run do
+  let q := mul (mul (p #[-1, 1]) (p #[-1, 1])) (mul (p #[2, 1]) (p #[3, 2]))
+  let blocks := yun q
+  let mut acc : QPoly := #[1]
+  for i in [0:blocks.size] do
+    for _ in [0:i+1] do
+      acc := mul acc blocks[i]!
+  return acc == monic q
 
 -- ## psc / resultant / discriminant
 -- res(x²-1, x²-4) = lc^2·f(2)·f(-2) = 3·3 = 9

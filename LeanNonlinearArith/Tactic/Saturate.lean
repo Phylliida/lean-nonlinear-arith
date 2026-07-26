@@ -1847,6 +1847,22 @@ def generate (cache : DCache) (noted : NotedSet) (ms : Array Expr)
   let bridgesNew ← generateEquivBridges cache noted ms
   return new || pairsNew || bridgesNew
 
+/-- Run `x` as its own budget layer: the heartbeat clock restarts, the
+user's `maxHeartbeats` applies to this layer alone. This is the
+budget-shape discipline (2026-07-26): Lean's heartbeat system is
+per-scope-reset — `omega` already shields itself with `withCurrHeartbeats`
+internally, so tactic layers naturally get fresh budgets rather than
+slices of a shared global one. Making every layer explicitly fresh gives
+the Z3-like per-module shape (each generator runs bounded, none can
+starve another; the total is #layers × budget, deterministic). A
+"fraction of the remaining outer budget" model was tried first and is
+WRONG here — the outer scope barely ticks while shielded tactics run, so
+"remaining" is not the operative quantity, and capping below the natural
+per-layer budget aborts layers that were on track to close. -/
+def withLayerHeartbeats (x : TacticM α) : TacticM α := do
+  let now ← IO.getNumHeartbeats
+  withTheReader Core.Context (fun c => { c with initHeartbeats := now }) x
+
 /-- The Gröbner layer's engine (nla-07, RULES row G1): sandboxed,
 heartbeat-capped `grind` — per the design decision we reuse grind's
 commutative-ring engine (an unthrottled Gröbner basis over the hypothesis
@@ -1874,19 +1890,16 @@ def tryGrobner : TacticM Bool := do
       if isIntCmp t then
         pure #[← `(tactic| grind), ← `(tactic| (refine le_of_eq ?_; grind))]
       else pure #[]
-    | _ => pure #[← `(tactic| grind)]
+    -- other shapes (Ne, ∨, …): no grind attempt — the ring engine is
+    -- speculative there and its budget slice starves the clause tiers,
+    -- which ARE the designed closers for those shapes (2026-07-26 budget
+    -- review). Ideal-conflict refutation for arbitrary goals arrives with
+    -- the nla-07b meta-Buchberger consumers.
+    | _ => pure #[]
   for tac in cands do
     let s ← saveState
-    let ctx ← readThe Core.Context
-    let now ← IO.getNumHeartbeats
-    let remaining := if ctx.maxHeartbeats == 0 then 200000 * 1000
-      else ctx.maxHeartbeats - min ctx.maxHeartbeats (now - ctx.initHeartbeats)
     let closed ← tryCatchRuntimeEx
-      (do
-        withTheReader Core.Context (fun c =>
-          { c with initHeartbeats := now, maxHeartbeats := remaining / 2 }) do
-          evalTactic tac
-        pure true)
+      (do withLayerHeartbeats (evalTactic tac); pure true)
       (fun _ => do restoreState s; pure false)
     if closed then return true
   return false
@@ -2000,26 +2013,33 @@ def saturateCore (stats : Bool := false) (maxRounds : Option Nat := none) : Tact
     if ← tryGrobner then
       pure 3
     else
+      -- budget shape (Z3 analogue, 2026-07-26): each layer runs as its own
+      -- fresh heartbeat scope (`withLayerHeartbeats` — see its docstring
+      -- for why fractions-of-remaining is the wrong model here), so a
+      -- blowup in one tier is bounded by one user budget and cannot
+      -- starve the next. The runtime catch turns a tier-1 blowout into
+      -- fall-through instead of tactic death.
       generateClauses cache noted ms 1
       let s2 ← saveState
-      try
-        evalTactic (← `(tactic| omega))
+      let t1ok ← tryCatchRuntimeEx
+        (do withLayerHeartbeats (evalTactic (← `(tactic| omega))); pure true)
+        (fun _ => do restoreState s2; pure false)
+      if t1ok then
         pure 1
-      catch _ =>
-        restoreState s2
+      else
         generateClauses cache noted ms 2
-        evalTactic (← `(tactic| omega))
+        withLayerHeartbeats (evalTactic (← `(tactic| omega)))
         pure 2
   let t3 ← IO.monoMsNow
   if stats then
-    let tail := match retried with
-      | 0 => ""
-      | 3 => " (closed by the Gröbner layer)"
-      | t => s!" (clause retry tier {t})"
+    let (leaf, tail) := match retried with
+      | 0 => ("omega", "")
+      | 3 => ("grind", " (closed by the Gröbner layer)")
+      | t => ("omega", s!" (clause retry tier {t})")
     logInfo s!"nla_saturate: ring_nf {t1 - t0}ms · generate {t2 - t1}ms \
       ({ms.size} monomials, {rounds}/{maxR} rounds, {← nlaTacticCall.get} tactic calls, \
       {← nlaCacheHit.get} cache hits, {← nlaLitFast.get} literal fast) \
-      · omega {t3 - t2}ms{tail}"
+      · {leaf} {t3 - t2}ms{tail}"
 
 /-- `nla_saturate (n)?` — optional numeral overrides the round bound
 (default: depth-adaptive, ≥ 3). -/
