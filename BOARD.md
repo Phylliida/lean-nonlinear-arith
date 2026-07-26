@@ -373,10 +373,21 @@ containment direction is free.
   tests: rat|root representation, compare with gcd common-root fast
   path + fueled refinement separation, sign / signOfPolyAt via Tarski,
   ratBetween for witness picking; mkRoot normalizes linear→rational for
-  Z3's rational-preference parity). Next slices: nla-12a Types/Trace +
-  IntervalSet (justification-preserving mk_union per
-  nlsat_interval_set.cpp), 12b Evaluator, 12c Solver loop, 12d Explain
-  (fragment-checked), then nla-19a Check.lean v0.
+  Z3's rational-preference parity). **nla-12a DONE (same day):**
+  `Nlsat/Types.lean` (Literal/IneqAtom w/ parity-tagged factors/RootAtom
+  per nlsat_types.h; sparse ℚ MPoly with univariate view + QPoly
+  bridge) + `Nlsat/IntervalSet.lean` (the mk_union nine-case sweep
+  transcribed 1:1 incl. justification-preserving splits,
+  same-justification-only compression, slack/full computation;
+  pickInComplement deterministic preference ladder: zero → int above →
+  int below → gap rational → shared rational endpoint → irrational
+  witness; declared divergences: am.select dyadic niceness, rational
+  values in root representation). Tests pin union cases + the full
+  preference ladder. Trace.lean deferred to 12d (payloads pin when the
+  checker consumes them, per design). Next: nla-12b Evaluator — needs
+  the anum-arithmetic decision (DESIGN-nlsat-quadratic §risks): port
+  resultant-based algebraic add/mul for substitution, vs Z3's
+  interval-arithmetic-first + exact fallback.
 - **nla-13** `todo` Trace checker: discharge shapes 4/5 by per-instance ring,
   shape 2 by degree dispatch (ineq / Thom / nla-09), shapes 1/3 by S1 + S2.
 - **nla-14** `todo` Front-end tactic `nonlinear_arith`: Int -> Real relaxation,
