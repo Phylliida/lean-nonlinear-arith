@@ -199,6 +199,11 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   the simplex adds a feasible point over the same structure. Consumers
   waiting on the model: clause-phase relevance filtering, model-anchored
   D4/D5/M/T tightness, derived product-pair comparisons (O2/O3 residual).
+  Documented divergence to close here (2026-07-26): Z3's column bounds
+  can come from simplex TABLEAU rows — linear combinations of the
+  original constraints — which row-interval propagation over the original
+  rows cannot reach; the simplex port restores that strength (and its
+  octagon-term bounds then feed `collect_equivs` at full Z3 strength).
 - **nla-07** `done` (2026-07-25) Gröbner layer via grind's ring engine, per
   the DESIGN §L1 decision (no PDD port). ℤ-equality goals: sandboxed fast
   path before saturation (Z3 stage-3 scheduling). All shapes: a second
@@ -223,6 +228,21 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   each certified by `linear_combination` with delaborated cofactors (or
   discharged by a grind call on the equality subgoal). Pairs naturally
   with the nla-06 simplex work.
+
+## Standing directive: source-fidelity over empirical confirmation
+
+(Danielle, 2026-07-26) Where we lean on an *equivalent* engine instead of
+porting Z3's ("grind's Buchberger ⊇ Z3's throttled PDD, checked by the
+nla-16 harness"; "ring_nf ≈ emonics"), prefer making it THE SAME — we
+have the source code. Consequences: nla-07b's meta-Buchberger should be a
+faithful port of the `nla_grobner` pipeline (its five consumers:
+conflict, propagate_fixed, propagate_factorization, propagate_gcd_test,
+propagate_quotients), after which grind demotes to an auxiliary layer and
+containment no longer rests on a reading of grind's internals; nla-21's
+shared-atom-space design should reconsider the emonics port likewise.
+The octagon `collect_equivs` port (2026-07-26) is the template: read the
+site, match the mechanism, keep any strict superset only where the
+containment direction is free.
 
 ## L1 hardening (from the 2026-07-25 code review; directives from Danielle)
 
@@ -250,6 +270,20 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
   bounds, factor signs, atom bounds) gained a fact. Directive: the goal is
   to be IDENTICAL to Z3's behavior, so port the todo-list structure from
   nla_core/monomial_bounds rather than inventing an equivalent.
+- **nla-24** `active` **Kernel/oracle correctness lemmas** (2026-07-26).
+  Proving the untrusted computations right where it is cheap, per
+  Danielle's review directives. Done: the oracle tighten formulas are
+  fully characterized (`cdivPos_le_iff` / `le_fdiv_iff_mul_le` in
+  Oracle.lean — iff = soundness + tightness; the ub step recomputed in
+  positive-divisor form to match the lemma verbatim); `nonRootSplit`'s
+  try count made provably sufficient (counting argument in the
+  docstring). Remaining candidates, roughly by value: `propagate`'s
+  sup-accumulation loop (the residual trust in the oracle),
+  `QPoly.psc = S1Statement.psc` bridge (the kernel's numbers ARE the
+  spec's numbers — currently by construction-mirroring, provable as a
+  determinant identity), Yun reconstruction (`∏ aᵢ^i = monic p` — pinned
+  by #guard on specimens today), Sturm correctness (= S2/nla-10
+  territory, don't duplicate).
 - **nla-23** `todo` **q-formula optimality proofs.** The D4/D5 quotient
   candidates and down-prop β formulas are hand-derived Euclidean interval
   reasoning; soundness rides on templates (wrong formula = lost tightness
