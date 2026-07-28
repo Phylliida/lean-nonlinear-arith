@@ -5,8 +5,8 @@ import Mathlib
 
 Arithmetic mod `m` for polynomial factorization: prime moduli `p ≤ 31`
 (Berlekamp, `factor_max_prime` default) and prime-power moduli `p^e`
-(Hensel lifting). Elements are kept normalized to `[0, m)` (z3
-`p_normalize`). Polynomial ops mirror the `zp_manager` surface the
+(Hensel lifting). Elements are kept balanced in `(−m/2, m/2]` (z3
+`mpzzp_manager::p_normalize_core`). Polynomial ops mirror the `zp_manager` surface the
 factorization pipeline uses: schoolbook `divRem` (requires a unit
 leading coefficient — always true over prime fields, and the lifted
 factors are monic over prime powers), Euclid `gcd` with monic result,
@@ -19,21 +19,26 @@ certificates downstream, never unsoundness.
 
 namespace LeanNonlinearArith.Kernel
 
-/-- Modulus context. `m` is the prime `p` or a prime power `p^e`. -/
+/-- Modulus context. `m` is the prime `p` or a prime power `p^e`.
+Elements are kept BALANCED in `(−m/2, m/2]` (z3 `mpzzp_manager`:
+`upper = m/2`, `lower = −m/2 (+1 if even)`, `p_normalize_core`) — this
+matters beyond cosmetics: the factorization pipeline's `exact_div` and
+CRA steps consume the balanced representatives directly. -/
 structure ZpCtx where
   m : Int
 deriving Repr, BEq, Inhabited
 
 namespace ZpCtx
 
-/-- z3 `p_normalize`: reduce into `[0, m)`. Lean's `%` is the
-non-negative remainder for positive divisors. -/
-def norm (c : ZpCtx) (a : Int) : Int := a % c.m
+/-- z3 `p_normalize_core`: reduce into `(−m/2, m/2]`. -/
+def norm (c : ZpCtx) (a : Int) : Int :=
+  let r := a % c.m
+  if r > c.m / 2 then r - c.m else r
 
-def add (c : ZpCtx) (a b : Int) : Int := (a + b) % c.m
-def sub (c : ZpCtx) (a b : Int) : Int := (a - b) % c.m
-def mul (c : ZpCtx) (a b : Int) : Int := (a * b) % c.m
-def neg (c : ZpCtx) (a : Int) : Int := (-a) % c.m
+def add (c : ZpCtx) (a b : Int) : Int := c.norm (a + b)
+def sub (c : ZpCtx) (a b : Int) : Int := c.norm (a - b)
+def mul (c : ZpCtx) (a b : Int) : Int := c.norm (a * b)
+def neg (c : ZpCtx) (a : Int) : Int := c.norm (-a)
 
 /-- Multiplicative inverse mod `m` (z3 `zp_numeral_manager::inv`).
 Precondition (z3 SASSERT): `gcd(a, m) = 1` — over prime fields every
@@ -41,15 +46,17 @@ nonzero element, over prime powers every non-multiple of `p` (the
 lifted factors are monic, so their leading coefficients are units).
 Via Bézout (mathlib `Nat.gcdA`): `gcdA·a' + gcdB·m = gcd(a', m) = 1`. -/
 def inv (c : ZpCtx) (a : Int) : Int :=
-  (Nat.gcdA (c.norm a).natAbs c.m.natAbs) % c.m
+  let a' := c.norm a
+  let i := Nat.gcdA a'.natAbs c.m.natAbs
+  c.norm (if a' < 0 then -i else i)
 
 /-- `a·b + out` mod m (z3 `addmul`). -/
-def addmul (c : ZpCtx) (a b out : Int) : Int := (a * b + out) % c.m
+def addmul (c : ZpCtx) (a b out : Int) : Int := c.norm (a * b + out)
 
 /-- `out − a·b` mod m (z3 `submul`). -/
-def submul (c : ZpCtx) (a b out : Int) : Int := (out - a * b) % c.m
+def submul (c : ZpCtx) (a b out : Int) : Int := c.norm (out - a * b)
 
-/-! ## Polynomials over the context (dense, trimmed, coefficients in `[0, m)`) -/
+/-! ## Polynomials over the context (dense, trimmed, coefficients balanced) -/
 
 /-- Trim trailing zeros (z3 `trim`). -/
 def ptrim (p : Array Int) : Array Int := Id.run do
@@ -58,8 +65,7 @@ def ptrim (p : Array Int) : Array Int := Id.run do
     n := n - 1
   p.extract 0 n
 
-/-- Normalize every coefficient into `[0, m)` and trim (z3
-`to_zp_manager`). -/
+/-- Normalize every coefficient balanced and trim (z3 `to_zp_manager`). -/
 def pnorm (c : ZpCtx) (p : Array Int) : Array Int :=
   ptrim (p.map (c.norm ·))
 

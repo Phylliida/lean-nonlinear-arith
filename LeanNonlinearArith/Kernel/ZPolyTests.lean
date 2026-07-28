@@ -18,11 +18,10 @@ open LeanNonlinearArith.Kernel
 -- inverse mod prime power: 3·9 = 27 ≡ 1 (mod 13)? no — 27 % 13 = 1? 27-26=1 yes
 #guard (⟨169⟩ : ZpCtx).mul 3 ((⟨169⟩ : ZpCtx).inv 3) == 1
 
--- division mod 7: (x² − 1) / (x + 1) = x − 1 ≡ x + 6, remainder 0
--- (outputs are normalized to [0, 7))
-#guard (⟨7⟩ : ZpCtx).pdivRem #[-1, 0, 1] #[1, 1] == (#[6, 1], #[])
--- gcd mod 7 of (x²−1)(x+2) and (x²−1)(x−3) is x²−1 (monic, normalized)
-#guard (⟨7⟩ : ZpCtx).pgcd #[-2, -1, 2, 1] #[3, -1, -3, 1] == #[6, 0, 1]
+-- division mod 7: (x² − 1) / (x + 1) = x − 1 (balanced representatives)
+#guard (⟨7⟩ : ZpCtx).pdivRem #[-1, 0, 1] #[1, 1] == (#[-1, 1], #[])
+-- gcd mod 7 of (x²−1)(x+2) and (x²−1)(x−3) is x²−1 (monic, balanced)
+#guard (⟨7⟩ : ZpCtx).pgcd #[-2, -1, 2, 1] #[3, -1, -3, 1] == #[-1, 0, 1]
 -- ext gcd: U·(x+1) + V·(x−1) = 1 over GF(7)
 #guard
   let (u, v, d) := (⟨7⟩ : ZpCtx).pextGcd #[1, 1] #[-1, 1]

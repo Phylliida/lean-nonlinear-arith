@@ -21,7 +21,7 @@ open LeanNonlinearArith.Kernel
 -- non-monic input: 3x²−3 = 3(x+1)(x−1) over GF(7): constant carries the lc
 #guard
   let fs := zpSquareFreeFactor (⟨7⟩ : ZpCtx) #[-3, 0, 3]
-  fs.constant == 3 && fs.factors == #[(#[6, 0, 1], 1)]
+  fs.constant == 3 && fs.factors == #[(#[-1, 0, 1], 1)]
 
 /-! ## Berlekamp -/
 
