@@ -66,74 +66,78 @@ private def above0open : IntervalSet :=    -- (0, ∞)
   mk true false (.rat 0) true true (.rat 0) j1
 
 -- (-∞, 0] ∪ [0, ∞) covers ℝ
-#guard isFull (mkUnion below0closed above0closed)
+#guard isFull (mkUnion below0closed above0closed).2.2
 -- (-∞, 0) ∪ (0, ∞) misses {0}: not full, and zero is the witness
-#guard !isFull (mkUnion below0open above0open)
-#guard pickInComplement (mkUnion below0open above0open) == some (.rat 0)
+#guard !isFull (mkUnion below0open above0open).2.2
+#guard (pickInComplement (mkUnion below0open above0open).2.2).1 == some (.rat 0)
 
 -- overlap splits keep the earlier interval's justification: [0,2]j0 ∪ [1,3]j1
 private def i02 : IntervalSet := mk false false (.rat 0) false false (.rat 2) j0
 private def i13 : IntervalSet := mk false false (.rat 1) false false (.rat 3) j1
-#guard numIntervals (mkUnion i02 i13) == 2
-#guard (justifications (mkUnion i02 i13)).1 == #[j0, j1]
+#guard numIntervals (mkUnion i02 i13).2.2 == 2
+#guard (justifications (mkUnion i02 i13).2.2).1 == #[j0, j1]
 -- the split point: first interval becomes [0, 1) — its upper is now open
-#guard (mkUnion i02 i13).any fun d =>
+#guard (mkUnion i02 i13).2.2.any fun d =>
   d.intervals[0]!.upperOpen && d.intervals[0]!.upper == .rat 1
     && !d.intervals[1]!.lowerOpen
 
 -- same-justification adjacency merges: [0,1)j0 ∪ [1,2]j0 ⇒ one interval
 private def i01 : IntervalSet := mk false false (.rat 0) true false (.rat 1) j0
 private def i12 : IntervalSet := mk false false (.rat 1) false false (.rat 2) j0
-#guard numIntervals (mkUnion i01 i12) == 1
+#guard numIntervals (mkUnion i01 i12).2.2 == 1
 -- different justifications stay separate even when adjacent
 private def i12' : IntervalSet := mk false false (.rat 1) false false (.rat 2) j1
-#guard numIntervals (mkUnion i01 i12') == 2
+#guard numIntervals (mkUnion i01 i12').2.2 == 2
 
 -- singleton at a covered left endpoint is consumed: [1,1] ∪ [1,2] ⇒ [1,2]
 private def single1 : IntervalSet := mk false false (.rat 1) false false (.rat 1) j0
-#guard numIntervals (mkUnion single1 i12) == 1
-#guard (justifications (mkUnion single1 i12)).1 == #[j0]
+#guard numIntervals (mkUnion single1 i12).2.2 == 1
+#guard (justifications (mkUnion single1 i12).2.2).1 == #[j0]
 
 -- witness preferences: integer above everything
 private def uptofive : IntervalSet :=  -- (-∞, 0) ∪ [0, 5/2] under two justs
-  mkUnion below0open (mk false false (.rat 0) false false (.rat (5/2)) j1)
+  (mkUnion below0open (mk false false (.rat 0) false false (.rat (5/2)) j1)).2.2
 -- z3 int_gt on a basic value is ⌈v⌉ + 1 (strict even when v is an
 -- integer), hence 4 rather than 3 (nla-26.4 faithful pin)
-#guard pickInComplement uptofive == some (.rat 4)
+#guard (pickInComplement uptofive).1 == some (.rat 4)
 
 -- integer below everything: [-7/2, ∞) shape
 private def fromneg : IntervalSet :=
-  mkUnion (mk false false (.rat (-7/2)) true true (.rat 0) j0) above0open
+  (mkUnion (mk false false (.rat (-7/2)) true true (.rat 0) j0) above0open).2.2
 -- z3 int_lt on a basic value is ⌊v⌋ − 1: ⌊−7/2⌋ − 1 = −5
-#guard pickInComplement fromneg == some (.rat (-5))
+#guard (pickInComplement fromneg).1 == some (.rat (-5))
 
 -- rational in a gap (zero excluded by coverage)
 private def gapset : IntervalSet :=
-  mkUnion (mk true true (.rat 0) false false (.rat 1) j0)
-          (mk false false (.rat 2) true true (.rat 0) j1)
-#guard (pickInComplement gapset).any fun w =>
+  (mkUnion (mk true true (.rat 0) false false (.rat 1) j0)
+           (mk false false (.rat 2) true true (.rat 0) j1)).2.2
+#guard (pickInComplement gapset).1.any fun w =>
   match w with
   | .rat q => 1 < q && q < 2
   | _ => false
 
 -- irrational shared endpoint: (-∞, √2) ∪ (√2, ∞) ⇒ witness is √2 itself
+-- (nla-28: isRational refines the stored cell before the witness is taken,
+-- so the witness is a REFINED cell — compare values, not representations)
 private def sqrt2punct : IntervalSet :=
-  mkUnion (mk true true (.rat 0) true false sqrt2 j0)
-          (mk true false sqrt2 true true (.rat 0) j1)
+  (mkUnion (mk true true (.rat 0) true false sqrt2 j0)
+           (mk true false sqrt2 true true (.rat 0) j1)).2.2
 #guard !isFull sqrt2punct
-#guard pickInComplement sqrt2punct == some sqrt2
+#guard match (pickInComplement sqrt2punct).1 with
+  | some w => (RAlg.compare w sqrt2).1 == .eq
+  | none => false
 
 -- shared endpoint but rational: prefer the rational witness
 private def ratpunct : IntervalSet :=
-  mkUnion (mk true true (.rat 0) true false (.rat (1/3)) j0)
-          (mk true false (.rat (1/3)) true true (.rat 0) j1)
-#guard pickInComplement ratpunct == some (.rat (1/3))
+  (mkUnion (mk true true (.rat 0) true false (.rat (1/3)) j0)
+           (mk true false (.rat (1/3)) true true (.rat 0) j1)).2.2
+#guard (pickInComplement ratpunct).1 == some (.rat (1/3))
 
 -- full set has no witness
-#guard pickInComplement (mkUnion below0closed above0closed) == none
+#guard (pickInComplement (mkUnion below0closed above0closed).2.2).1 == none
 
 -- empty set: anything goes, zero preferred
-#guard pickInComplement none == some (.rat 0)
+#guard (pickInComplement none).1 == some (.rat 0)
 
 /-! ## nla-25.5 — mkUnion differential test
 
@@ -149,9 +153,9 @@ private def memb (s : IntervalSet) (q : Rat) : Bool :=
   match s with
   | none => false
   | some d => d.intervals.any fun iv =>
-    (iv.lowerInf || (match RAlg.compare iv.lower (.rat q) with
+    (iv.lowerInf || (match (RAlg.compare iv.lower (.rat q)).1 with
       | .lt => true | .eq => !iv.lowerOpen | .gt => false)) &&
-    (iv.upperInf || (match RAlg.compare (.rat q) iv.upper with
+    (iv.upperInf || (match (RAlg.compare (.rat q) iv.upper).1 with
       | .lt => true | .eq => !iv.upperOpen | .gt => false))
 
 private def probes : List Rat :=
@@ -180,7 +184,8 @@ private def gen1 : List IntervalSet := Id.run do
 
 /-- Generation 2: some unions (multi-interval inputs for the test). -/
 private def gen2 : List IntervalSet :=
-  (gen1.take 12).flatMap fun s1 => (gen1.drop 30).take 6 |>.map (mkUnion s1)
+  (gen1.take 12).flatMap fun s1 => (gen1.drop 30).take 6 |>.map fun s2 =>
+    (mkUnion s1 s2).2.2
 
 /-- Algebraic-endpoint sets (2026-07-26 review: the differential sweep
 previously covered rational endpoints only). Probes stay rational — the
@@ -197,13 +202,53 @@ private def genAlg : List IntervalSet :=
 private def allSets : List IntervalSet := gen1 ++ gen2 ++ genAlg
 
 #guard allSets.all fun s1 => allSets.all fun s2 =>
-  let u := mkUnion s1 s2
+  let u := (mkUnion s1 s2).2.2
   probes.all fun q => memb u q == (memb s1 q || memb s2 q)
 
 #guard allSets.all fun s1 => allSets.all fun s2 =>
-  let (ls, _) := justifications (mkUnion s1 s2)
+  let (ls, _) := justifications (mkUnion s1 s2).2.2
   let (l1, _) := justifications s1
   let (l2, _) := justifications s2
   ls.all fun j => l1.contains j || l2.contains j
+
+/-! ## nla-28 — statefulness threading pins -/
+
+-- Acceptance pin 1 (refinement persists): pickInComplement's intGt refines
+-- the stored upper endpoint to width < 1/2 (z3 const_cast, :2830) — the
+-- returned SET carries the refined cell, not the input-width one
+private def uptoSqrt2 : IntervalSet := mk true true (.rat 0) true false sqrt2 j0
+#guard (pickInComplement uptoSqrt2).1 == some (.rat 2)
+#guard match (pickInComplement uptoSqrt2).2 with
+  | some d => match d.intervals[d.intervals.size - 1]!.upper with
+    | .root _ a b => b.toRat - a.toRat < 1/2
+    | .rat _ => false
+  | none => false
+
+-- Acceptance pin 2 (is_rational discovery at a shared endpoint): the root
+-- of x²−4 in (1,3) IS 2 — z3's is_rational discovers this (rational-root
+-- theorem) and the preference ladder returns the BASIC rational; pre-nla-28
+-- this returned the root-represented cell as an "irrational" witness
+private def rootRep2 : RAlg := .root #[-4, 0, 1] 1 3
+private def ratpunctRoot : IntervalSet :=
+  (mkUnion (mk true true (.rat 0) true false rootRep2 j0)
+           (mk true false rootRep2 true true (.rat 0) j1)).2.2
+#guard (pickInComplement ratpunctRoot).1 == some (.rat 2)
+-- …and the discovery persists in the returned set (endpoint became basic)
+#guard match (pickInComplement ratpunctRoot).2 with
+  | some d => d.intervals[0]!.upper == .rat 2
+  | none => false
+
+-- Acceptance pin 3 (mkUnion threads refined inputs): comparing the
+-- overlapping √3/√2 cells during the sweep refines BOTH stored endpoints
+-- (here exactly one bisection each: (3/2, 2) and (1, 3/2)); the returned
+-- input sets carry the refined cells
+#guard
+  let (s1', s2', _) := mkUnion (mk false false (.rat 0) false false sqrt3 j0)
+                               (mk false false (.rat 1) false false sqrt2 j1)
+  match s1', s2' with
+  | some d1, some d2 =>
+    d1.intervals[0]!.upper == .root #[-3, 0, 1] (Mpbq.mk 3 1) 2 &&
+    d2.intervals[0]!.upper == .root #[-2, 0, 1] 1 (Mpbq.mk 3 1)
+  | _, _ => false
 
 end LeanNonlinearArith.Nlsat.Tests

@@ -32,6 +32,19 @@ Sturm–Tarski always decides). This retires the previous gcd
 common-root fast test and with it the nla-25.1 endpoint-root risk —
 different-polynomial equality is decided by `V == 0`, not gcd root
 counting.
+
+**Statefulness (nla-28):** Z3's anum ops MUTATE their operands and the
+refinement persists in solver state — `compare_core` takes `numeral &`
+and refines both sides; `int_lt`/`int_gt` `const_cast` through const
+pointers (`algebraic_numbers.cpp:2830/2843`); `is_rational` refines and
+can `set(a, candidate)` the value to a discovered rational
+(`algebraic_numbers.cpp:285`); `select`/`separate` take `numeral &`.
+The faithful functional image (DESIGN-endgame §2.1, Q2): every refining
+op returns its (possibly refined) argument(s) alongside the result, and
+callers that store cells (interval sets now, the solver assignment at
+12c) thread the updated cells back into their store. Ops that never
+refine (`sign`, `signOfPolyAt`, `magnitude`, root-vs-rational compare)
+stay pure.
 -/
 
 namespace LeanNonlinearArith.Kernel
@@ -171,18 +184,54 @@ def magnitude : RAlg → Int
 
 /-- z3 `am::int_lt` (`algebraic_numbers.cpp:2827`): an integer strictly
 below the value — refined to width < 1/2 first, so the answer stays
-near the value (`⌊lower⌋` for cells, `⌊v⌋ − 1` for basic values). -/
-def intLt (x : RAlg) : Int :=
+near the value (`⌊lower⌋` for cells, `⌊v⌋ − 1` for basic values).
+nla-28: z3 `const_cast`s the refinement into the stored numeral; we
+return the refined cell alongside. -/
+def intLt (x : RAlg) : Int × RAlg :=
   match refineUntilPrec x 1 with
-  | .rat q => Mpbq.ratFloorInt q - 1
-  | .root _ a _ => Mpbq.floorInt a
+  | .rat q => (Mpbq.ratFloorInt q - 1, .rat q)
+  | y@(.root _ a _) => (Mpbq.floorInt a, y)
 
 /-- z3 `am::int_gt` (`algebraic_numbers.cpp:2840`): an integer strictly
-above the value. -/
-def intGt (x : RAlg) : Int :=
+above the value. Same nla-28 threading as `intLt`. -/
+def intGt (x : RAlg) : Int × RAlg :=
   match refineUntilPrec x 1 with
-  | .rat q => Mpbq.ratCeilInt q + 1
-  | .root _ _ b => Mpbq.ceilInt b
+  | .rat q => (Mpbq.ratCeilInt q + 1, .rat q)
+  | y@(.root _ _ b) => (Mpbq.ceilInt b, y)
+
+/-- z3 `imp::is_rational` (`algebraic_numbers.cpp:285`): rational-root-theorem
+discovery. Refine to width `< 1/2^(log2|aₙ|+1)` so that `|aₙ|·(l,u)` contains
+at most one integer, then the unique candidate `⌊u·|aₙ|⌋/|aₙ|` is the value
+iff it lies above `l` and is a root; a hit **becomes basic**
+(`set(a, candidate)`). z3's polynomials are ℤ-coefficient; ours are ℚ
+(declared QPoly divergence, bridged at `ofQPoly`), so `aₙ` is the leading
+coefficient after positive denominator-clearing (roots/signs unchanged — the
+CertGen scaling pattern). `save_intervals::restore_if_too_small` is ported: on
+a miss, an interval refined below `minMagnitude` magnitude is restored to its
+input width (a became-basic conversion always sticks). The `m_not_rational`
+cache flag is not ported: pure recomputation reaches the same answers, and
+factorization (nla-27) is its only other setter. nla-28: returns the refined
+(or converted) cell alongside the verdict. -/
+def isRational : RAlg → Bool × RAlg
+  | .rat q => (true, .rat q)
+  | x@(.root p _ _) =>
+    -- positive denominator-clearing scale ⇒ ℤ leading coefficient `aₙ`
+    let d : Nat := p.foldl (fun acc c => Nat.lcm acc c.den) 1
+    let aN : Int := (lc p).num * ((d / (lc p).den : Nat) : Int)
+    let absAN : Nat := aN.natAbs
+    let k := Nat.log2 absAN + 1
+    match refineUntilPrec x k with
+    | .rat q => (true, .rat q)      -- became basic during refinement
+    | x'@(.root _ a' b') =>
+      -- ⌊b'·|aₙ|⌋ : floor of num·2^{−k'}·|aₙ|
+      let zcand := ((absAN : Int) * b'.num).fdiv ((1 <<< b'.k : Nat) : Int)
+      let cand := mkRat zcand absAN
+      if a'.ltRat cand && eval p cand == 0 then
+        (true, .rat cand)           -- set(a, candidate): becomes basic
+      else
+        -- restore_if_too_small: keep the input interval if over-refined
+        if intervalMagnitude a' b' < minMagnitude then (false, x)
+        else (false, x')
 
 /-- z3 `am::separate` (`algebraic_numbers.cpp:2794`): given `x < y`,
 refine until the isolating brackets clear each other.
@@ -230,8 +279,9 @@ partial def separate (x y : RAlg) : RAlg × RAlg :=
 then `select_small_core` on the four basic/algebraic shapes: open
 rational bounds on basic sides, the (cleared) bracket endpoints on
 algebraic sides. This is the witness picker's gap selection, replacing
-`ratBetween`. -/
-def select (x y : RAlg) : Rat :=
+`ratBetween`. nla-28: z3's `select(numeral &, numeral &)` mutates both
+sides via `separate`; we return the separated cells alongside. -/
+def select (x y : RAlg) : Rat × RAlg × RAlg :=
   let (x, y) := separate x y
   let w : Mpbq :=
     match x, y with
@@ -239,7 +289,7 @@ def select (x y : RAlg) : Rat :=
     | .rat p, .root _ cl _ => Mpbq.selectSmallCoreQD p cl
     | .root _ _ pu, .rat c => Mpbq.selectSmallCoreDQ pu c
     | .root _ _ pu, .root _ cl _ => Mpbq.selectSmallCoreDD pu cl
-  w.toRat
+  (w.toRat, x, y)
 
 /-- z3 `compare_core` (`algebraic_numbers.cpp:1929`) — both arguments
 algebraic. Stages, each ending in the `COMPARE_INTERVAL` disjointness
@@ -264,14 +314,19 @@ check:
    compare; skipped if either copy discovers its root exactly;
 6. Sturm–Tarski: `V = TaQ(p₂, p₁; a₁, b₁)` = sign of `p₂` at `α₁`;
    `V = 0` ⇒ equal, else the sign of `p₂` at `b₂`'s lower endpoint
-   orients the answer. -/
+   orients the answer.
+
+nla-28: z3's `compare_core(numeral & a, numeral & b)` refines both cells
+in place (stages 3–4) and the mutation persists; we return the refined
+cells alongside the verdict, including on the became-basic re-dispatch
+paths (z3 `return compare(a, b)` with `a`/`b` already mutated). -/
 def compareCore (p1 : QPoly) (a1 b1 : Mpbq) (p2 : QPoly) (a2 b2 : Mpbq) :
-    Ordering := Id.run do
+    Ordering × RAlg × RAlg := Id.run do
   -- COMPARE_INTERVAL
-  if Mpbq.le b1 a2 then return .lt
-  if Mpbq.ge a1 b2 then return .gt
+  if Mpbq.le b1 a2 then return (.lt, .root p1 a1 b1, .root p2 a2 b2)
+  if Mpbq.ge a1 b2 then return (.gt, .root p1 a1 b1, .root p2 a2 b2)
   -- compare_p: same polynomial + overlap ⇒ same root
-  if p1 == p2 then return .eq
+  if p1 == p2 then return (.eq, .root p1 a1 b1, .root p2 a2 b2)
   let s1 := evalSignAtD p1 a1
   let s2 := evalSignAtD p2 a2
   let mut x1 := a1; let mut y1 := b1
@@ -282,53 +337,61 @@ def compareCore (p1 : QPoly) (a1 b1 : Mpbq) (p2 : QPoly) (a2 b2 : Mpbq) :
   let targetM := max minMagnitude (min aM bM)
   if bM > targetM then
     match refineStepsD p2 s2 x2 y2 (bM - targetM).toNat with
-    | .inr r => return compareRootRat p1 x1 y1 r.toRat
+    | .inr r => return (compareRootRat p1 x1 y1 r.toRat, .root p1 x1 y1, .rat r.toRat)
     | .inl (x2', y2') =>
       x2 := x2'; y2 := y2'
-      if Mpbq.le y1 x2 then return .lt
-      if Mpbq.ge x1 y2 then return .gt
+      if Mpbq.le y1 x2 then return (.lt, .root p1 x1 y1, .root p2 x2 y2)
+      if Mpbq.ge x1 y2 then return (.gt, .root p1 x1 y1, .root p2 x2 y2)
   if aM > targetM then
     match refineStepsD p1 s1 x1 y1 (aM - targetM).toNat with
-    | .inr r => return (compareRootRat p2 x2 y2 r.toRat).swap
+    | .inr r => return ((compareRootRat p2 x2 y2 r.toRat).swap, .rat r.toRat, .root p2 x2 y2)
     | .inl (x1', y1') =>
       x1 := x1'; y1 := y1'
-      if Mpbq.le y1 x2 then return .lt
-      if Mpbq.ge x1 y2 then return .gt
+      if Mpbq.le y1 x2 then return (.lt, .root p1 x1 y1, .root p2 x2 y2)
+      if Mpbq.ge x1 y2 then return (.gt, .root p1 x1 y1, .root p2 x2 y2)
   if targetM > minMagnitude then
     for _ in [0:(targetM - minMagnitude).toNat] do
       match refineCoreStepD p1 s1 x1 y1 with
-      | .inr r => return (compareRootRat p2 x2 y2 r.toRat).swap
+      | .inr r => return ((compareRootRat p2 x2 y2 r.toRat).swap, .rat r.toRat, .root p2 x2 y2)
       | .inl (x1', y1') =>
         x1 := x1'; y1 := y1'
         match refineCoreStepD p2 s2 x2 y2 with
-        | .inr r => return compareRootRat p1 x1 y1 r.toRat
+        | .inr r => return (compareRootRat p1 x1 y1 r.toRat, .root p1 x1 y1, .rat r.toRat)
         | .inl (x2', y2') =>
           x2 := x2'; y2 := y2'
-          if Mpbq.le y1 x2 then return .lt
-          if Mpbq.ge x1 y2 then return .gt
+          if Mpbq.le y1 x2 then return (.lt, .root p1 x1 y1, .root p2 x2 y2)
+          if Mpbq.ge x1 y2 then return (.gt, .root p1 x1 y1, .root p2 x2 y2)
   -- Sturm workaround: separate refined copies (precision 10 ⇒ 40 bits)
   match refineToPrecD p1 s1 x1 y1 40, refineToPrecD p2 s2 x2 y2 40 with
   | .inl (la, ua), .inl (lb, ub) =>
-    if Mpbq.gt la ub then return .gt
-    if Mpbq.lt ua lb then return .lt
+    if Mpbq.gt la ub then return (.gt, .root p1 x1 y1, .root p2 x2 y2)
+    if Mpbq.lt ua lb then return (.lt, .root p1 x1 y1, .root p2 x2 y2)
   | _, _ => pure ()
   -- expensive case: Sturm–Tarski
   let V : Int := tarskiQuery p2 p1 x1.toRat y1.toRat
-  if V == 0 then return .eq
-  if (V < 0) == (s2 < 0) then return .lt
-  return .gt
+  if V == 0 then return (.eq, .root p1 x1 y1, .root p2 x2 y2)
+  if (V < 0) == (s2 < 0) then return (.lt, .root p1 x1 y1, .root p2 x2 y2)
+  return (.gt, .root p1 x1 y1, .root p2 x2 y2)
 
 /-- Total comparison — z3 `am::compare` dispatch
-(`algebraic_numbers.cpp:2108`). Unfueled: see `compareCore`. -/
-def compare (x y : RAlg) : Ordering :=
+(`algebraic_numbers.cpp:2108`). Unfueled: see `compareCore`. nla-28:
+returns the refined cells; the root-vs-rational dispatches never refine
+(z3 `compare(algebraic_cell, mpq)` is mutation-free), so they return
+their inputs unchanged. -/
+def compare (x y : RAlg) : Ordering × RAlg × RAlg :=
   match x, y with
-  | .rat p, .rat q => if p < q then .lt else if p == q then .eq else .gt
-  | .root p a b, .rat q => compareRootRat p a b q
-  | .rat q, .root p a b => (compareRootRat p a b q).swap
+  | .rat p, .rat q => (if p < q then .lt else if p == q then .eq else .gt, .rat p, .rat q)
+  | .root p a b, .rat q => (compareRootRat p a b q, .root p a b, .rat q)
+  | .rat q, .root p a b => ((compareRootRat p a b q).swap, .rat q, .root p a b)
   | .root p1 a1 b1, .root p2 a2 b2 => compareCore p1 a1 b1 p2 a2 b2
 
-def lt (x y : RAlg) : Bool := compare x y == .lt
-def le (x y : RAlg) : Bool := compare x y != .gt
+def lt (x y : RAlg) : Bool × RAlg × RAlg :=
+  let (o, x', y') := compare x y
+  (o == .lt, x', y')
+
+def le (x y : RAlg) : Bool × RAlg × RAlg :=
+  let (o, x', y') := compare x y
+  (o != .gt, x', y')
 
 end RAlg
 

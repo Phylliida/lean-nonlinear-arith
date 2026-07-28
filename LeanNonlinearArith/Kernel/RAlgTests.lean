@@ -26,22 +26,22 @@ def negSqrt2 : RAlg := .root #[-2, 0, 1] (-2) (-1)
 
 /-! ## Comparisons -/
 
-#guard RAlg.compare sqrt2 sqrt3 == .lt
-#guard RAlg.compare sqrt3 sqrt2 == .gt
-#guard RAlg.compare sqrt2 phi == .lt      -- √2 ≈ 1.414 < φ ≈ 1.618
-#guard RAlg.compare phi sqrt3 == .lt      -- φ ≈ 1.618 < √3 ≈ 1.732
-#guard RAlg.compare negSqrt2 sqrt2 == .lt
-#guard RAlg.compare sqrt2 sqrt2 == .eq
-#guard RAlg.compare sqrt2 sqrt2' == .eq   -- cross-representation, gcd fast path
-#guard RAlg.compare sqrt2' sqrt3 == .lt
+#guard (RAlg.compare sqrt2 sqrt3).1 == .lt
+#guard (RAlg.compare sqrt3 sqrt2).1 == .gt
+#guard (RAlg.compare sqrt2 phi).1 == .lt      -- √2 ≈ 1.414 < φ ≈ 1.618
+#guard (RAlg.compare phi sqrt3).1 == .lt      -- φ ≈ 1.618 < √3 ≈ 1.732
+#guard (RAlg.compare negSqrt2 sqrt2).1 == .lt
+#guard (RAlg.compare sqrt2 sqrt2).1 == .eq
+#guard (RAlg.compare sqrt2 sqrt2').1 == .eq   -- cross-representation, gcd fast path
+#guard (RAlg.compare sqrt2' sqrt3).1 == .lt
 
 /-! ## Rational endpoints of the lattice -/
 
-#guard RAlg.compare sqrt2 (.rat (3/2)) == .lt
-#guard RAlg.compare sqrt2 (.rat (7/5)) == .gt
-#guard RAlg.compare (.rat (3/2)) sqrt2 == .gt
-#guard RAlg.compare (.root #[-4, 0, 1] 1 3) (.rat 2) == .eq  -- x² − 4 isolates 2
-#guard RAlg.compare (.rat 2) (.root #[-4, 0, 1] 1 3) == .eq
+#guard (RAlg.compare sqrt2 (.rat (3/2))).1 == .lt
+#guard (RAlg.compare sqrt2 (.rat (7/5))).1 == .gt
+#guard (RAlg.compare (.rat (3/2)) sqrt2).1 == .gt
+#guard (RAlg.compare (.root #[-4, 0, 1] 1 3) (.rat 2)).1 == .eq  -- x² − 4 isolates 2
+#guard (RAlg.compare (.rat 2) (.root #[-4, 0, 1] 1 3)).1 == .eq
 
 /-! ## mkRoot normalization (linear ⇒ rational) -/
 
@@ -67,31 +67,31 @@ def negSqrt2 : RAlg := .root #[-2, 0, 1] (-2) (-1)
 -- nla-26.4: `select` = z3 am::select (separate + select_small_core).
 -- Strict betweenness on every shape:
 #guard
-  let r := RAlg.select sqrt2 sqrt3
-  RAlg.compare sqrt2 (.rat r) == .lt && RAlg.compare (.rat r) sqrt3 == .lt
+  let r := (RAlg.select sqrt2 sqrt3).1
+  (RAlg.compare sqrt2 (.rat r)).1 == .lt && (RAlg.compare (.rat r) sqrt3).1 == .lt
 #guard
-  let r := RAlg.select (.rat 1) sqrt2
-  (1 : Rat) < r && RAlg.compare (.rat r) sqrt2 == .lt
+  let r := (RAlg.select (.rat 1) sqrt2).1
+  (1 : Rat) < r && (RAlg.compare (.rat r) sqrt2).1 == .lt
 #guard
-  let r := RAlg.select sqrt2 (.rat (3/2))
-  r < 3/2 && RAlg.compare sqrt2 (.rat r) == .lt
+  let r := (RAlg.select sqrt2 (.rat (3/2))).1
+  r < 3/2 && (RAlg.compare sqrt2 (.rat r)).1 == .lt
 #guard
-  let r := RAlg.select sqrt2 phi
-  RAlg.compare sqrt2 (.rat r) == .lt && RAlg.compare (.rat r) phi == .lt
+  let r := (RAlg.select sqrt2 phi).1
+  (RAlg.compare sqrt2 (.rat r)).1 == .lt && (RAlg.compare (.rat r) phi).1 == .lt
 -- …and the dyadic-niceness pins (smallest-denominator preference):
-#guard RAlg.select (.rat (-1)) (.rat 1) == 0        -- an integer if possible
-#guard RAlg.select (.rat 0) (.rat 1) == 1/2
-#guard RAlg.select sqrt2 sqrt3 == 3/2               -- few-bit gap witness
-#guard RAlg.select (.rat 0) sqrt2 == 1              -- integer bracket endpoint
+#guard (RAlg.select (.rat (-1)) (.rat 1)).1 == 0        -- an integer if possible
+#guard (RAlg.select (.rat 0) (.rat 1)).1 == 1/2
+#guard (RAlg.select sqrt2 sqrt3).1 == 3/2               -- few-bit gap witness
+#guard (RAlg.select (.rat 0) sqrt2).1 == 1              -- integer bracket endpoint
 -- F1 regression (2026-07-26 review): a cell that becomes basic mid-
 -- separate must not leave the other bracket uncleared — this exact pair
 -- returned the non-strict witness 2 before the separate re-dispatch fix
 #guard
-  let r := RAlg.select (.root #[-4, 0, 1] 1 3) (.root #[-9, 0, 1] 0 4)
+  let r := (RAlg.select (.root #[-4, 0, 1] 1 3) (.root #[-9, 0, 1] 0 4)).1
   (2 : Rat) < r && r < 3
 -- mirrored shape (curr becomes basic, prev bracket uncleared)
 #guard
-  let r := RAlg.select (.root #[-4, 0, 1] 0 4) (.root #[-9, 0, 1] 1 5)
+  let r := (RAlg.select (.root #[-4, 0, 1] 0 4) (.root #[-9, 0, 1] 1 5)).1
   (2 : Rat) < r && r < 3
 
 /-! ## isolateRoots (F5: cells always carry the square-free part) -/
@@ -100,8 +100,8 @@ def negSqrt2 : RAlg := .root #[-2, 0, 1] (-2) (-1)
 #guard
   let rs := RAlg.isolateRoots #[-4, 0, 1]
   rs.size == 2 &&
-  RAlg.compare rs[0]! (.rat (-2)) == .eq &&
-  RAlg.compare rs[1]! (.rat 2) == .eq
+  (RAlg.compare rs[0]! (.rat (-2))).1 == .eq &&
+  (RAlg.compare rs[1]! (.rat 2)).1 == .eq
 -- x(x−2)(x+2): the middle root surfaces as .rat 0 via zero-straddle
 #guard
   let rs := RAlg.isolateRoots #[0, -4, 0, 1]
@@ -111,31 +111,31 @@ def negSqrt2 : RAlg := .root #[-2, 0, 1] (-2) (-1)
 -- refinable-interval invariant would break with the original poly)
 #guard
   let rs := RAlg.isolateRoots (QPoly.mul #[-2, 0, 1] #[-2, 0, 1])
-  rs.size == 2 && RAlg.compare rs[1]! sqrt2 == .eq &&
+  rs.size == 2 && (RAlg.compare rs[1]! sqrt2).1 == .eq &&
   (match rs[1]! with | .root p _ _ => p.size == 3 | _ => false)
 
 -- intGt/intLt (z3 refine-then-ceil/floor — note ceil(upper), not ⌊·⌋+1)
-#guard RAlg.intGt sqrt2 == 2
-#guard RAlg.intLt sqrt2 == 1
-#guard RAlg.intGt (.rat 2) == 3
-#guard RAlg.intLt (.rat 2) == 1
-#guard RAlg.intGt negSqrt2 == -1
-#guard RAlg.intLt negSqrt2 == -2
+#guard (RAlg.intGt sqrt2).1 == 2
+#guard (RAlg.intLt sqrt2).1 == 1
+#guard (RAlg.intGt (.rat 2)).1 == 3
+#guard (RAlg.intLt (.rat 2)).1 == 1
+#guard (RAlg.intGt negSqrt2).1 == -1
+#guard (RAlg.intLt negSqrt2).1 == -2
 
 /-! ## Unfueled compare mechanism (nla-26.3, z3 `compare_core` ladder) -/
 
 -- heavily overlapping intervals, different polynomials — forced through
 -- magnitude equalization + workaround/Sturm–Tarski
-#guard RAlg.compare (.root #[-3, 0, 1] 1 2) sqrt2' == .gt   -- √3 > √2
-#guard RAlg.compare sqrt2' (.root #[-3, 0, 1] 1 2) == .lt
+#guard (RAlg.compare (.root #[-3, 0, 1] 1 2) sqrt2').1 == .gt   -- √3 > √2
+#guard (RAlg.compare sqrt2' (.root #[-3, 0, 1] 1 2)).1 == .lt
 -- same value through a THIRD polynomial: (x²−2)(x−3), √2 in (1, 3/2)
-#guard RAlg.compare sqrt2 (.root #[6, -2, -3, 1] 1 (Mpbq.mk 3 1)) == .eq
+#guard (RAlg.compare sqrt2 (.root #[6, -2, -3, 1] 1 (Mpbq.mk 3 1))).1 == .eq
 -- rationality discovery inside the compare ladder: x²−4 in (1,3) hits 2
 -- on its first refinement and re-dispatches through the rational case
-#guard RAlg.compare (.root #[-4, 0, 1] 1 3) sqrt2 == .gt    -- 2 > √2
-#guard RAlg.compare sqrt2 (.root #[-4, 0, 1] 1 3) == .lt
+#guard (RAlg.compare (.root #[-4, 0, 1] 1 3) sqrt2).1 == .gt    -- 2 > √2
+#guard (RAlg.compare sqrt2 (.root #[-4, 0, 1] 1 3)).1 == .lt
 -- same-polynomial fast path (identical cells)
-#guard RAlg.compare sqrt2 sqrt2 == .eq
+#guard (RAlg.compare sqrt2 sqrt2).1 == .eq
 
 /-! ## mkRoot normalization (nla-26.3, z3 `am::normalize`):
 zero never strictly inside an isolating interval -/
@@ -170,5 +170,40 @@ zero never strictly inside an isolating interval -/
   match refine1 (refine1 sqrt2) with
   | .root p a b => QPoly.evalSignAtD p a * QPoly.evalSignAtD p b == -1
   | .rat _ => false
+
+/-! ## nla-28 — is_rational port + statefulness threading -/
+
+-- discovery, became-basic path: midpoint 2 IS the root during refinement
+#guard RAlg.isRational (.root #[-4, 0, 1] 1 3) == (true, RAlg.rat 2)
+-- discovery, candidate path: 1/3 is never a dyadic midpoint — found by the
+-- rational-root-theorem candidate ⌊u·|aₙ|⌋/|aₙ| = ⌊(3/8)·3⌋/3
+#guard RAlg.isRational (.root #[-1, 3] 0 1) == (true, RAlg.rat (1/3))
+-- irrational miss: verdict false, refined cell still the same VALUE, and the
+-- refinement persisted (width < 1/2 = the k = log2|aₙ|+1 = 1 precision gate)
+#guard
+  let (b, x') := RAlg.isRational sqrt2
+  b == false && (RAlg.compare x' sqrt2).1 == .eq
+#guard match (RAlg.isRational sqrt2).2 with
+  | .root _ a b => b.toRat - a.toRat < 1/2
+  | .rat _ => false
+-- restore_if_too_small: |aₙ| = 65536 forces refinement to width < 2⁻¹⁷
+-- (magnitude below minMagnitude = −16); on the miss the ORIGINAL interval
+-- is restored — the returned cell is the input, not the over-refined one
+#guard RAlg.isRational (.root #[-2, 0, 65536] 0 1)
+  == (false, .root #[-2, 0, 65536] 0 1)
+-- threading: intGt's refine-to-width-<1/2 persists in the returned cell
+#guard match (RAlg.intGt sqrt2).2 with
+  | .root _ a b => b.toRat - a.toRat < 1/2
+  | .rat _ => false
+-- threading: select's separate refines both sides; returned cells are the
+-- same values (compare eq against the originals)
+#guard
+  let (_, x', y') := RAlg.select sqrt2 sqrt3
+  (RAlg.compare x' sqrt2).1 == .eq && (RAlg.compare y' sqrt3).1 == .eq
+-- threading: compare through the equalization ladder returns refined cells
+-- of the same values
+#guard
+  let (o, x', y') := RAlg.compare sqrt2' sqrt3
+  o == .lt && (RAlg.compare x' sqrt2').1 == .eq && (RAlg.compare y' sqrt3).1 == .eq
 
 end LeanNonlinearArith.Kernel.RAlgTests

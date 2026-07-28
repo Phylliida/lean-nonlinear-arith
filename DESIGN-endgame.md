@@ -48,10 +48,10 @@ Done and green (all sorry-free, full build 7575 jobs):
 |---|---|---|
 | L1 saturation | nla-01..05, 07, 20, 24-partial, 26 | **complete** — 112+ tests, RULES.md 27/27 rows, parity audited row-by-row |
 | Kernel | nla-08 (QPoly), nla-09 (roots + trusted certs), Mpbq, RAlg mini-anum | **complete**, perf derisked |
-| nlsat lane | 12a (Types/IntervalSet), 12b-i (AnumEval), S3 Thom kit, nla-26 fidelity arc, F1–F7 review, 25.4 order theorems | **complete** |
-| Remaining declared divergences | Sturm-vs-Descartes isolation; QPoly ℚ[x] kernel (bridged at `ofQPoly`); root-represented rationals at shared endpoints; no factorization (= `factor=false` parity → nla-27) | tracked |
+| nlsat lane | 12a (Types/IntervalSet), 12b-i (AnumEval), S3 Thom kit, nla-26 fidelity arc, F1–F7 review, 25.4 order theorems, nla-28 statefulness threading | **complete** |
+| Remaining declared divergences | Sturm-vs-Descartes isolation; QPoly ℚ[x] kernel (bridged at `ofQPoly`); no factorization (= `factor=false` parity → nla-27) | tracked |
 
-Open: nla-28, 12b-ii, 12c, 12d, 19a, 19b, 12e, 13, 14, 15, 16 (critical
+Open: 12b-ii, 12c, 12d, 19a, 19b, 12e, 13, 14, 15, 16 (critical
 path); 27 (fidelity); 21, 22, 07b, 06 (L1 hardening); 23, 24-residual,
 25-residual, 10, 11 (proof layer / S1).
 
@@ -60,14 +60,27 @@ path); 27 (fidelity); 21, 22, 07b, 06 (L1 hardening); 23, 24-residual,
 ## 2. Critical path to Tier A
 
 Ordering (revised 2026-07-26 under Danielle's guiding rule, see §6):
-**28 → 27 → 12b-ii → 12c → 12d+19a (same arc) → 19b → 12e → 14 → 15 →
+**~~28~~ → 27 → 12b-ii → 12c → 12d+19a (same arc) → 19b → 12e → 14 → 15 →
 16.** nla-27 moved ahead of the evaluator/solver builds: `factor=false`
 is a live divergence from default z3, and the evaluator/solver behavior
 (became-basic paths, compareCore common path, witness shapes) depends
 on it — build the pipeline once, against default parity, rather than
 retrofit. Rationale per item below.
 
-### 2.1 nla-28 — anum statefulness threading *(next up; ~1 session: ½ design + ½ signatures/implementation)*
+### 2.1 nla-28 — anum statefulness threading *(DONE 2026-07-28)*
+
+Landed as designed below, plus one addition the source reading
+surfaced: `is_rational` (`algebraic_numbers.cpp:285`) is itself a
+mutating op (refines; converts to basic on discovery; restores
+over-refined intervals via `save_intervals`), so it was ported with the
+threading (`RAlg.isRational : RAlg → Bool × RAlg`) and wired into
+`pickInComplement`'s shared-endpoint scan exactly where z3 calls it —
+which dissolved the root-represented-rational divergence there.
+`mkUnion` returns `(s1', s2', union)`; `pickInComplement` returns
+`(witness, s')`; acceptance pins per below all green (exact refined
+forms pinned, `restore_if_too_small` pinned at |aₙ| = 65536). Remaining
+for 12c: the assignment-store threading (mutation site 1) lands with
+the solver state. Original text kept:
 
 **Problem (F3, probe-confirmed reading):** Z3's anum ops mutate their
 operands and the refinement persists — `compare`/`select`/`separate`
@@ -393,10 +406,11 @@ possible; 3. follow z3 as closely as possible — any divergence is bad
 eager-canonical polynomial representation (vs z3's lazy `lex_sort`;
 Danielle 2026-07-26 — "the sorting thingy seems fine"; the 25.4
 `cmp_mul_left` theorem is what it costs us and it is paid);
-Sturm-vs-Descartes isolation; ℚ[x] QPoly kernel bridged at `ofQPoly`;
-root-represented rationals at shared endpoints. `factor=false` leaves
-this list when nla-27 lands. Anything else appearing here needs
-Danielle's sign-off.
+Sturm-vs-Descartes isolation; ℚ[x] QPoly kernel bridged at `ofQPoly`.
+~~root-represented rationals at shared endpoints~~ — dissolved by
+nla-28 (the `is_rational` port discovers them, exactly as z3).
+`factor=false` leaves this list when nla-27 lands. Anything else
+appearing here needs Danielle's sign-off.
 
 ## 7. Estimates and shape of the remainder
 
