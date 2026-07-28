@@ -33,3 +33,5 @@ import LeanNonlinearArith.Nlsat.AnumEvalTests
 import LeanNonlinearArith.Kernel.Zp
 import LeanNonlinearArith.Kernel.ZPoly
 import LeanNonlinearArith.Kernel.ZPolyTests
+import LeanNonlinearArith.Kernel.Factor
+import LeanNonlinearArith.Kernel.FactorTests
