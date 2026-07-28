@@ -1,12 +1,19 @@
 import LeanNonlinearArith.Nlsat.IntervalSet
 
 /-!
-# nla-12a tests — MPoly core + interval sets
+# nla-12a tests — MPoly core + interval sets (cell-store model)
 
 Behavior pins for the untrusted search-side data structures: MPoly
 canonical arithmetic, the `mkUnion` case machine (justification-aware
 splits, same-justification compression, fullness), and
 `pickInComplement`'s deterministic preference order.
+
+**Store discipline (learned 2026-07-28):** `CellId`s only mean something
+inside the store that allocated them — building sets in separate
+`CellStore.run'` calls and then mixing them reads out-of-bounds cells
+(Lean's panic-returns-default, the F7 lesson). So every pin that mixes
+sets runs its whole scenario inside ONE `CellM` computation; the shared
+sets live in `buildShared`.
 -/
 
 namespace LeanNonlinearArith.Nlsat.Tests
@@ -55,89 +62,155 @@ private def j0 : Literal := ⟨0, false⟩
 private def j1 : Literal := ⟨1, false⟩
 
 private def sqrt2 : RAlg := .root #[-2, 0, 1] 1 2
+private def sqrt3 : RAlg := .root #[-3, 0, 1] 1 2
 
-private def below0closed : IntervalSet :=  -- (-∞, 0]
-  mk true true (.rat 0) false false (.rat 0) j0
-private def above0closed : IntervalSet :=  -- [0, ∞)
-  mk false false (.rat 0) true true (.rat 0) j1
-private def below0open : IntervalSet :=    -- (-∞, 0)
-  mk true true (.rat 0) true false (.rat 0) j0
-private def above0open : IntervalSet :=    -- (0, ∞)
-  mk true false (.rat 0) true true (.rat 0) j1
+/-- The shared test sets, built in ONE store. -/
+private structure Shared where
+  below0closed : IntervalSet
+  above0closed : IntervalSet
+  below0open : IntervalSet
+  above0open : IntervalSet
+  i02 : IntervalSet
+  i13 : IntervalSet
+  i01 : IntervalSet
+  i12 : IntervalSet
+  i12' : IntervalSet
+  single1 : IntervalSet
+  uptoSqrt2 : IntervalSet
+  ratpunctRoot : IntervalSet
+
+private def buildShared : CellM Shared := do
+  let below0closed ← mk true true (.rat 0) false false (.rat 0) j0
+  let above0closed ← mk false false (.rat 0) true true (.rat 0) j1
+  let below0open ← mk true true (.rat 0) true false (.rat 0) j0
+  let above0open ← mk true false (.rat 0) true true (.rat 0) j1
+  let i02 ← mk false false (.rat 0) false false (.rat 2) j0
+  let i13 ← mk false false (.rat 1) false false (.rat 3) j1
+  let i01 ← mk false false (.rat 0) true false (.rat 1) j0
+  let i12 ← mk false false (.rat 1) false false (.rat 2) j0
+  let i12' ← mk false false (.rat 1) false false (.rat 2) j1
+  let single1 ← mk false false (.rat 1) false false (.rat 1) j0
+  let uptoSqrt2 ← mk true true (.rat 0) true false sqrt2 j0
+  let ratpunctRoot ← do
+    let lo ← mk true true (.rat 0) true false (.root #[-4, 0, 1] 1 3) j0
+    let hi ← mk true false (.root #[-4, 0, 1] 1 3) true true (.rat 0) j1
+    mkUnion lo hi
+  return { below0closed, above0closed, below0open, above0open,
+           i02, i13, i01, i12, i12', single1, uptoSqrt2, ratpunctRoot }
+
+private def withShared (f : Shared → CellM α) : α :=
+  CellStore.run' (do let s ← buildShared; f s)
 
 -- (-∞, 0] ∪ [0, ∞) covers ℝ
-#guard isFull (mkUnion below0closed above0closed).2.2
+#guard withShared fun s => do
+  return isFull (← mkUnion s.below0closed s.above0closed)
 -- (-∞, 0) ∪ (0, ∞) misses {0}: not full, and zero is the witness
-#guard !isFull (mkUnion below0open above0open).2.2
-#guard (pickInComplement (mkUnion below0open above0open).2.2).1 == some (.rat 0)
+#guard withShared fun s => do
+  let u ← mkUnion s.below0open s.above0open
+  if isFull u then return false
+  match (← pickInComplement u) with
+  | some c => match (← CellStore.read c) with
+    | .rat q => return q == 0
+    | _ => return false
+  | none => return false
 
 -- overlap splits keep the earlier interval's justification: [0,2]j0 ∪ [1,3]j1
-private def i02 : IntervalSet := mk false false (.rat 0) false false (.rat 2) j0
-private def i13 : IntervalSet := mk false false (.rat 1) false false (.rat 3) j1
-#guard numIntervals (mkUnion i02 i13).2.2 == 2
-#guard (justifications (mkUnion i02 i13).2.2).1 == #[j0, j1]
+#guard withShared fun s => do
+  let u ← mkUnion s.i02 s.i13
+  return numIntervals u == 2 && (justifications u).1 == #[j0, j1]
 -- the split point: first interval becomes [0, 1) — its upper is now open
-#guard (mkUnion i02 i13).2.2.any fun d =>
-  d.intervals[0]!.upperOpen && d.intervals[0]!.upper == .rat 1
-    && !d.intervals[1]!.lowerOpen
+#guard withShared fun s => do
+  let u ← mkUnion s.i02 s.i13
+  match u with
+  | some d =>
+    return d.intervals[0]!.upperOpen
+      && (match (← CellStore.read d.intervals[0]!.upper) with
+        | .rat q => q == 1 | _ => false)
+      && !d.intervals[1]!.lowerOpen
+  | none => return false
 
 -- same-justification adjacency merges: [0,1)j0 ∪ [1,2]j0 ⇒ one interval
-private def i01 : IntervalSet := mk false false (.rat 0) true false (.rat 1) j0
-private def i12 : IntervalSet := mk false false (.rat 1) false false (.rat 2) j0
-#guard numIntervals (mkUnion i01 i12).2.2 == 1
+#guard withShared fun s => do
+  return numIntervals (← mkUnion s.i01 s.i12) == 1
 -- different justifications stay separate even when adjacent
-private def i12' : IntervalSet := mk false false (.rat 1) false false (.rat 2) j1
-#guard numIntervals (mkUnion i01 i12').2.2 == 2
+#guard withShared fun s => do
+  return numIntervals (← mkUnion s.i01 s.i12') == 2
 
 -- singleton at a covered left endpoint is consumed: [1,1] ∪ [1,2] ⇒ [1,2]
-private def single1 : IntervalSet := mk false false (.rat 1) false false (.rat 1) j0
-#guard numIntervals (mkUnion single1 i12).2.2 == 1
-#guard (justifications (mkUnion single1 i12).2.2).1 == #[j0]
+#guard withShared fun s => do
+  let u ← mkUnion s.single1 s.i12
+  return numIntervals u == 1 && (justifications u).1 == #[j0]
 
 -- witness preferences: integer above everything
-private def uptofive : IntervalSet :=  -- (-∞, 0) ∪ [0, 5/2] under two justs
-  (mkUnion below0open (mk false false (.rat 0) false false (.rat (5/2)) j1)).2.2
+-- (-∞, 0) ∪ [0, 5/2] under two justifications
 -- z3 int_gt on a basic value is ⌈v⌉ + 1 (strict even when v is an
 -- integer), hence 4 rather than 3 (nla-26.4 faithful pin)
-#guard (pickInComplement uptofive).1 == some (.rat 4)
+#guard withShared fun s => do
+  let hi ← mk false false (.rat 0) false false (.rat (5/2)) j1
+  let u ← mkUnion s.below0open hi
+  match (← pickInComplement u) with
+  | some c => match (← CellStore.read c) with
+    | .rat q => return q == 4
+    | _ => return false
+  | none => return false
 
 -- integer below everything: [-7/2, ∞) shape
-private def fromneg : IntervalSet :=
-  (mkUnion (mk false false (.rat (-7/2)) true true (.rat 0) j0) above0open).2.2
 -- z3 int_lt on a basic value is ⌊v⌋ − 1: ⌊−7/2⌋ − 1 = −5
-#guard (pickInComplement fromneg).1 == some (.rat (-5))
+#guard withShared fun s => do
+  let lo ← mk false false (.rat (-7/2)) true true (.rat 0) j0
+  let u ← mkUnion lo s.above0open
+  match (← pickInComplement u) with
+  | some c => match (← CellStore.read c) with
+    | .rat q => return q == -5
+    | _ => return false
+  | none => return false
 
 -- rational in a gap (zero excluded by coverage)
-private def gapset : IntervalSet :=
-  (mkUnion (mk true true (.rat 0) false false (.rat 1) j0)
-           (mk false false (.rat 2) true true (.rat 0) j1)).2.2
-#guard (pickInComplement gapset).1.any fun w =>
-  match w with
-  | .rat q => 1 < q && q < 2
-  | _ => false
+#guard withShared fun s => do
+  let lo ← mk true true (.rat 0) false false (.rat 1) j0
+  let hi ← mk false false (.rat 2) true true (.rat 0) j1
+  let u ← mkUnion lo hi
+  match (← pickInComplement u) with
+  | some c => match (← CellStore.read c) with
+    | .rat q => return 1 < q && q < 2
+    | _ => return false
+  | none => return false
 
 -- irrational shared endpoint: (-∞, √2) ∪ (√2, ∞) ⇒ witness is √2 itself
--- (nla-28: isRational refines the stored cell before the witness is taken,
--- so the witness is a REFINED cell — compare values, not representations)
-private def sqrt2punct : IntervalSet :=
-  (mkUnion (mk true true (.rat 0) true false sqrt2 j0)
-           (mk true false sqrt2 true true (.rat 0) j1)).2.2
-#guard !isFull sqrt2punct
-#guard match (pickInComplement sqrt2punct).1 with
-  | some w => (RAlg.compare w sqrt2).1 == .eq
-  | none => false
+-- (isRational refines the stored cell before the witness is taken, so
+-- the witness cell is REFINED — compare values, not representations)
+#guard withShared fun s => do
+  let lo ← mk true true (.rat 0) true false sqrt2 j0
+  let hi ← mk true false sqrt2 true true (.rat 0) j1
+  let u ← mkUnion lo hi
+  if isFull u then return false
+  match (← pickInComplement u) with
+  | some c => return (RAlg.compare (← CellStore.read c) sqrt2).1 == .eq
+  | none => return false
 
 -- shared endpoint but rational: prefer the rational witness
-private def ratpunct : IntervalSet :=
-  (mkUnion (mk true true (.rat 0) true false (.rat (1/3)) j0)
-           (mk true false (.rat (1/3)) true true (.rat 0) j1)).2.2
-#guard (pickInComplement ratpunct).1 == some (.rat (1/3))
+#guard withShared fun s => do
+  let lo ← mk true true (.rat 0) true false (.rat (1/3)) j0
+  let hi ← mk true false (.rat (1/3)) true true (.rat 0) j1
+  let u ← mkUnion lo hi
+  match (← pickInComplement u) with
+  | some c => match (← CellStore.read c) with
+    | .rat q => return q == 1/3
+    | _ => return false
+  | none => return false
 
 -- full set has no witness
-#guard (pickInComplement (mkUnion below0closed above0closed).2.2).1 == none
+#guard withShared fun s => do
+  let u ← mkUnion s.below0closed s.above0closed
+  return (← pickInComplement u) == none
 
 -- empty set: anything goes, zero preferred
-#guard (pickInComplement none).1 == some (.rat 0)
+#guard CellStore.run' (do
+  match (← pickInComplement none) with
+  | some c => match (← CellStore.read c) with
+    | .rat q => return q == 0
+    | _ => return false
+  | none => return false)
 
 /-! ## nla-25.5 — mkUnion differential test
 
@@ -148,107 +221,142 @@ rays, singletons, plus second-generation unions as multi-interval
 inputs) against half-integer rational probes that fall on, between, and
 outside every endpoint. -/
 
-/-- Rational membership oracle, straight from the interval semantics. -/
-private def memb (s : IntervalSet) (q : Rat) : Bool :=
+/-- Rational membership oracle, straight from the interval semantics.
+Compares against rationals — mutation-free, so no store writes and no
+probe allocations (root-vs-rat compare never refines). -/
+private def memb (s : IntervalSet) (q : Rat) : CellM Bool := do
   match s with
-  | none => false
-  | some d => d.intervals.any fun iv =>
-    (iv.lowerInf || (match (RAlg.compare iv.lower (.rat q)).1 with
-      | .lt => true | .eq => !iv.lowerOpen | .gt => false)) &&
-    (iv.upperInf || (match (RAlg.compare (.rat q) iv.upper).1 with
-      | .lt => true | .eq => !iv.upperOpen | .gt => false))
+  | none => return false
+  | some d =>
+    for iv in d.intervals do
+      let lowerOk ←
+        if iv.lowerInf then pure true
+        else
+          match (RAlg.compare (← CellStore.read iv.lower) (.rat q)).1 with
+          | .lt => pure true
+          | .eq => pure !iv.lowerOpen
+          | .gt => pure false
+      let upperOk ←
+        if iv.upperInf then pure true
+        else
+          match (RAlg.compare (.rat q) (← CellStore.read iv.upper)).1 with
+          | .lt => pure true
+          | .eq => pure !iv.upperOpen
+          | .gt => pure false
+      if lowerOk && upperOk then
+        return true
+    return false
 
 private def probes : List Rat :=
   [-3, -5/2, -2, -3/2, -1, -1/2, 0, 1/3, 1/2, 1, 3/2, 2, 5/2, 3]
 
 private def gridEnds : List Rat := [-2, -1, 0, 1, 2]
 
-/-- Generation 1: every valid single-interval set over the grid. -/
-private def gen1 : List IntervalSet := Id.run do
-  let mut out : List IntervalSet := []
+/-- All differential-test sets, built in ONE store. Generation 1: every
+valid single-interval set over the grid; generation 2: some unions;
+plus algebraic-endpoint sets (2026-07-26 review). -/
+private def buildAllSets : CellM (List IntervalSet) := do
+  let mut gen1 : List IntervalSet := []
   let bools := [false, true]
   for a in gridEnds do
-    -- singleton [a, a]
-    out := mk false false (.rat a) false false (.rat a) j0 :: out
-    -- rays
+    gen1 := (← mk false false (.rat a) false false (.rat a) j0) :: gen1
     for o in bools do
-      out := mk true true (.rat 0) o false (.rat a) j0 :: out    -- (−∞, a⟩
-      out := mk o false (.rat a) true true (.rat 0) j1 :: out    -- ⟨a, ∞)
-    -- bounded intervals a < b, all four openness shapes
+      gen1 := (← mk true true (.rat 0) o false (.rat a) j0) :: gen1
+      gen1 := (← mk o false (.rat a) true true (.rat 0) j1) :: gen1
     for b in gridEnds do
       if a < b then
         for lo in bools do
           for hi in bools do
-            out := mk lo false (.rat a) hi false (.rat b) j1 :: out
-  return out
+            gen1 := (← mk lo false (.rat a) hi false (.rat b) j1) :: gen1
+  let mut gen2 : List IntervalSet := []
+  for s1 in gen1.take 12 do
+    for s2 in (gen1.drop 30).take 6 do
+      gen2 := (← mkUnion s1 s2) :: gen2
+  let alg : List IntervalSet := [
+    (← mk true false (.rat 0) true false sqrt2 j0),
+    (← mk false false (.rat 1) true false sqrt3 j1),
+    (← mk true false sqrt2 true false sqrt3 j0),
+    (← mk true true (.rat 0) true false sqrt2 j1),
+    (← mk false false sqrt3 true true (.rat 0) j0),
+    (← mk true false (.root #[-2, 0, 1] (-2) (-1)) false false sqrt2 j1)]
+  return gen1 ++ gen2 ++ alg
 
-/-- Generation 2: some unions (multi-interval inputs for the test). -/
-private def gen2 : List IntervalSet :=
-  (gen1.take 12).flatMap fun s1 => (gen1.drop 30).take 6 |>.map fun s2 =>
-    (mkUnion s1 s2).2.2
+#guard CellStore.run' (do
+  let allSets ← buildAllSets
+  for s1 in allSets do
+    for s2 in allSets do
+      let u ← mkUnion s1 s2
+      for q in probes do
+        let inU ← memb u q
+        let in1 ← memb s1 q
+        let in2 ← memb s2 q
+        if inU != (in1 || in2) then
+          return false
+  return true)
 
-/-- Algebraic-endpoint sets (2026-07-26 review: the differential sweep
-previously covered rational endpoints only). Probes stay rational — the
-oracle exercises the root-vs-rat compare path. -/
-private def sqrt3 : RAlg := .root #[-3, 0, 1] 1 2
-private def genAlg : List IntervalSet :=
-  [mk true false (.rat 0) true false sqrt2 j0,          -- (0, √2)
-   mk false false (.rat 1) true false sqrt3 j1,         -- [1, √3)
-   mk true false sqrt2 true false sqrt3 j0,             -- (√2, √3)
-   mk true true (.rat 0) true false sqrt2 j1,           -- (−∞, √2)
-   mk false false sqrt3 true true (.rat 0) j0,          -- [√3, ∞)
-   mk true false (.root #[-2, 0, 1] (-2) (-1)) false false sqrt2 j1]  -- (−√2, √2]
+#guard CellStore.run' (do
+  let allSets ← buildAllSets
+  for s1 in allSets do
+    for s2 in allSets do
+      let u ← mkUnion s1 s2
+      let (ls, _) := justifications u
+      let (l1, _) := justifications s1
+      let (l2, _) := justifications s2
+      if !ls.all fun j => l1.contains j || l2.contains j then
+        return false
+  return true)
 
-private def allSets : List IntervalSet := gen1 ++ gen2 ++ genAlg
-
-#guard allSets.all fun s1 => allSets.all fun s2 =>
-  let u := (mkUnion s1 s2).2.2
-  probes.all fun q => memb u q == (memb s1 q || memb s2 q)
-
-#guard allSets.all fun s1 => allSets.all fun s2 =>
-  let (ls, _) := justifications (mkUnion s1 s2).2.2
-  let (l1, _) := justifications s1
-  let (l2, _) := justifications s2
-  ls.all fun j => l1.contains j || l2.contains j
-
-/-! ## nla-28 — statefulness threading pins -/
+/-! ## nla-28 — statefulness pins (cell-store model) -/
 
 -- Acceptance pin 1 (refinement persists): pickInComplement's intGt refines
--- the stored upper endpoint to width < 1/2 (z3 const_cast, :2830) — the
--- returned SET carries the refined cell, not the input-width one
-private def uptoSqrt2 : IntervalSet := mk true true (.rat 0) true false sqrt2 j0
-#guard (pickInComplement uptoSqrt2).1 == some (.rat 2)
-#guard match (pickInComplement uptoSqrt2).2 with
-  | some d => match d.intervals[d.intervals.size - 1]!.upper with
-    | .root _ a b _ => b.toRat - a.toRat < 1/2
-    | .rat _ => false
-  | none => false
+-- the STORED upper endpoint to width < 1/2 (z3 const_cast, :2830) — visible
+-- through the set's endpoint id
+#guard withShared fun s => do
+  match (← pickInComplement s.uptoSqrt2) with
+  | some c =>
+    match (← CellStore.read c) with
+    | .rat q =>
+      if q != 2 then return false
+      match s.uptoSqrt2 with
+      | some d =>
+        match (← CellStore.read d.intervals[d.intervals.size - 1]!.upper) with
+        | .root _ a b _ => return b.toRat - a.toRat < 1/2
+        | _ => return false
+      | none => return false
+    | _ => return false
+  | none => return false
 
 -- Acceptance pin 2 (is_rational discovery at a shared endpoint): the root
 -- of x²−4 in (1,3) IS 2 — z3's is_rational discovers this (rational-root
--- theorem) and the preference ladder returns the BASIC rational; pre-nla-28
--- this returned the root-represented cell as an "irrational" witness
-private def rootRep2 : RAlg := .root #[-4, 0, 1] 1 3
-private def ratpunctRoot : IntervalSet :=
-  (mkUnion (mk true true (.rat 0) true false rootRep2 j0)
-           (mk true false rootRep2 true true (.rat 0) j1)).2.2
-#guard (pickInComplement ratpunctRoot).1 == some (.rat 2)
--- …and the discovery persists in the returned set (endpoint became basic)
-#guard match (pickInComplement ratpunctRoot).2 with
-  | some d => d.intervals[0]!.upper == .rat 2
-  | none => false
+-- theorem) and the preference ladder returns the (now-basic) endpoint cell
+#guard withShared fun s => do
+  match (← pickInComplement s.ratpunctRoot) with
+  | some c => match (← CellStore.read c) with
+    | .rat q => return q == 2
+    | _ => return false
+  | none => return false
+-- …and the discovery persists in the shared cell (endpoint became basic)
+#guard withShared fun s => do
+  let _ ← pickInComplement s.ratpunctRoot
+  match s.ratpunctRoot with
+  | some d => match (← CellStore.read d.intervals[0]!.upper) with
+    | .rat q => return q == 2
+    | _ => return false
+  | none => return false
 
--- Acceptance pin 3 (mkUnion threads refined inputs): comparing the
--- overlapping √3/√2 cells during the sweep refines BOTH stored endpoints
--- (here exactly one bisection each: (3/2, 2) and (1, 3/2)); the returned
--- input sets carry the refined cells
-#guard
-  let (s1', s2', _) := mkUnion (mk false false (.rat 0) false false sqrt3 j0)
-                               (mk false false (.rat 1) false false sqrt2 j1)
-  match s1', s2' with
+-- Acceptance pin 3 (mkUnion refines shared endpoints): comparing the
+-- overlapping √3/√2 cells during the sweep refines BOTH stored endpoint
+-- cells (here exactly one bisection each: (3/2, 2) and (1, 3/2))
+#guard CellStore.run' (do
+  let s1 ← mk false false (.rat 0) false false sqrt3 j0
+  let s2 ← mk false false (.rat 1) false false sqrt2 j1
+  let _ ← mkUnion s1 s2
+  match s1, s2 with
   | some d1, some d2 =>
-    d1.intervals[0]!.upper == .root #[-3, 0, 1] (Mpbq.mk 3 1) 2 &&
-    d2.intervals[0]!.upper == .root #[-2, 0, 1] 1 (Mpbq.mk 3 1)
-  | _, _ => false
+    let u1 ← CellStore.read d1.intervals[0]!.upper
+    let u2 ← CellStore.read d2.intervals[0]!.upper
+    return u1 == .root #[-3, 0, 1] (Mpbq.mk 3 1) 2
+      && u2 == .root #[-2, 0, 1] 1 (Mpbq.mk 3 1)
+  | _, _ => return false)
 
 end LeanNonlinearArith.Nlsat.Tests

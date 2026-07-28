@@ -69,20 +69,22 @@ is a live divergence from default z3, and the evaluator/solver behavior
 on it — build the pipeline once, against default parity, rather than
 retrofit. Rationale per item below.
 
-### 2.1 nla-28 — anum statefulness threading *(DONE 2026-07-28)*
+### 2.1 nla-28 — anum statefulness threading *(DONE 2026-07-28; evolved to the cell-store model same day)*
 
-Landed as designed below, plus one addition the source reading
-surfaced: `is_rational` (`algebraic_numbers.cpp:285`) is itself a
-mutating op (refines; converts to basic on discovery; restores
-over-refined intervals via `save_intervals`), so it was ported with the
-threading (`RAlg.isRational : RAlg → Bool × RAlg`) and wired into
+Landed as designed below, then **re-factored to the cell-store model**
+after the design review: op level keeps the tuple ops below, owner
+level (x2v, interval endpoints, undef/ext sharing) moved to
+`Kernel/CellStore.lean` (`CellStore = Array RAlg`,
+`CellM = StateM CellStore`, in-place updates). `IntervalSet` endpoints
+and `Assignment` bindings are `CellId`s; `mkUnion` returns just the
+union again and the `evalRoot` re-attachment bug class is structurally
+impossible. One addition the source reading surfaced: `is_rational`
+(`algebraic_numbers.cpp:285`) is itself a mutating op (refines;
+converts to basic on discovery; restores over-refined intervals via
+`save_intervals`), so it was ported (`RAlg.isRational`) and wired into
 `pickInComplement`'s shared-endpoint scan exactly where z3 calls it —
 which dissolved the root-represented-rational divergence there.
-`mkUnion` returns `(s1', s2', union)`; `pickInComplement` returns
-`(witness, s')`; acceptance pins per below all green (exact refined
-forms pinned, `restore_if_too_small` pinned at |aₙ| = 65536). Remaining
-for 12c: the assignment-store threading (mutation site 1) lands with
-the solver state. Original text kept:
+Acceptance pins per below all green under both models. Original text kept:
 
 **Problem (F3, probe-confirmed reading):** Z3's anum ops mutate their
 operands and the refinement persists — `compare`/`select`/`separate`

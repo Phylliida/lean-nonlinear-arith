@@ -698,6 +698,28 @@ disappears. Sequence: before 12c's conflict path (the solver's
   anum VALUES). 26 pins green incl. resultant zero test, ±2^{1/4}
   through eliminate→isolate→filter, q≡0 → none, sign-table sweeps
   both variants, eval predicates.
+  **CELL-STORE REFACTOR (2026-07-28, post-12b-ii design review,
+  Danielle-approved):** z3's two statefulness mechanisms mapped to two
+  layers — op level stays the nla-28 tuple ops in RAlg (untouched),
+  owner level (x2v, interval endpoints, undef/ext sharing, trail)
+  becomes `Kernel/CellStore.lean`: `CellStore = Array RAlg` +
+  `CellM = StateM CellStore`, in-place updates so became-basic and
+  refinement are visible to every holder (versioned ids would have
+  reintroduced the threading bug). `IntervalSet` endpoints and
+  `Assignment` bindings are `CellId`s; the nla-28 write-back machinery
+  collapsed into store semantics (mkUnion returns just the union again;
+  `evalRoot`'s re-attachment hack deleted — that bug class is
+  structurally impossible). All pins re-derived and green. TWO STORE-ERA
+  LESSONS: (a) `CellId`s dangle outside the store that allocated them —
+  test helpers that build sets in separate `run'` calls then mix them
+  read out-of-bounds (panic-returns-default, F7 again); every mixed-set
+  scenario runs in ONE `CellM` computation. (b) `fresh` written as
+  `let s ← get; set (s.push c); return s.size` keeps `s` borrowed
+  across the push → RC>1 → full array copy per allocation → quadratic
+  blowup in allocation-heavy loops (the mkUnion differential went 7s →
+  >300s); write it `let n := (← get).size; modify (·.push c); return n`
+  and avoid per-probe allocations (root-vs-rat compares are
+  mutation-free → pure reads).
 - **nla-13** `todo` Trace checker: discharge shapes 4/5 by per-instance ring,
   shape 2 by degree dispatch (ineq / Thom / nla-09), shapes 1/3 by S1 + S2.
 - **nla-14** `todo` Front-end tactic `nonlinear_arith`: Int -> Real relaxation,
