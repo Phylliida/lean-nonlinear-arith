@@ -59,4 +59,47 @@ open LeanNonlinearArith.Kernel
   let (_, fs) := zpFactor (⟨7⟩ : ZpCtx) f
   fs.reconstruct (⟨7⟩ : ZpCtx) == (⟨7⟩ : ZpCtx).pnorm f
 
+
+/-! ## nla-27 slice-3 tests — ℤ[x] factorization (Hensel + recombination) -/
+
+/-- Reconstruct `constant · ∏ pᵢ^kᵢ` over ℤ (test oracle). -/
+def reconstructZ (fs : ZFactors) : ZPoly :=
+  fs.factors.foldl (fun acc (p, k) =>
+    (List.replicate k p).foldl ZPoly.mul acc) #[fs.constant]
+
+-- quadratic shortcut: x²−4 = (x−2)(x+2) (disc perfect square)
+#guard factor #[-4, 0, 1] == (true, ⟨1, #[(#[-2, 1], 1), (#[2, 1], 1)]⟩)
+-- irreducible quadratic: x²−2 (disc 8 not a square)
+#guard factor #[-2, 0, 1] == (true, ⟨1, #[(#[-2, 0, 1], 1)]⟩)
+-- content extraction: 2x²−4 = 2·(x²−2)
+#guard factor #[-4, 0, 2] == (true, ⟨2, #[(#[-2, 0, 1], 1)]⟩)
+-- Yun over ℤ: (x+1)²(x−2)³ = x⁵−4x⁴+x³+10x²−4x−8 → (x+1,2), (x−2,3)
+#guard
+  let (ok, fs) := factor #[-8, -4, 10, 1, -4, 1]
+  ok && fs.factors == #[(#[1, 1], 2), (#[-2, 1], 3)] && fs.constant == 1
+    && reconstructZ fs == #[-8, -4, 10, 1, -4, 1]
+-- full Hensel path (deg ≥ 4, reducible): (x²+x+1)(x²−2) = x⁴+x³−x²−2x−2
+#guard
+  let (ok, fs) := factor #[-2, -2, -1, 1, 1]
+  ok && fs.constant == 1 && fs.factors.size == 2
+    && fs.factors.any (· == (#[1, 1, 1], 1))
+    && fs.factors.any (· == (#[-2, 0, 1], 1))
+    && reconstructZ fs == #[-2, -2, -1, 1, 1]
+-- full Hensel path, irreducible: x⁴−10x²+1 (√2+√3 minimal poly) survives
+-- the lifted-trial-division search intact
+#guard
+  let (ok, fs) := factor #[1, 0, -10, 0, 1]
+  ok && fs.factors == #[(#[1, 0, -10, 0, 1], 1)]
+-- linear polynomial
+#guard factor #[-3, 2] == (true, ⟨1, #[(#[-3, 2], 1)]⟩)
+-- negative leading coefficient flipped: −x²+4 = (x−2)(x+2) with constant −1
+#guard factor #[4, 0, -1] == (true, ⟨-1, #[(#[-2, 1], 1), (#[2, 1], 1)]⟩)
+-- search-budget exhaustion reports result = false (the not-minimal flag)
+#guard
+  let (ok, _) := factorSquareFree #[1, 0, -10, 0, 1] 1 ZFactors.empty { maxSearchSize := 0 }
+  !ok
+-- x⁶−1 = (x−1)(x+1)(x²−x+1)(x²+x+1): six cyclotomic factors via hensel
+#guard
+  let (ok, fs) := factor #[-1, 0, 0, 0, 0, 0, 1]
+  ok && fs.factors.size == 4 && reconstructZ fs == #[-1, 0, 0, 0, 0, 0, 1]
 end LeanNonlinearArith.Kernel.FactorTests
