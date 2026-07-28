@@ -30,3 +30,6 @@ import LeanNonlinearArith.Nlsat.IntervalSet
 import LeanNonlinearArith.Nlsat.IntervalSetTests
 import LeanNonlinearArith.Nlsat.AnumEval
 import LeanNonlinearArith.Nlsat.AnumEvalTests
+import LeanNonlinearArith.Kernel.Zp
+import LeanNonlinearArith.Kernel.ZPoly
+import LeanNonlinearArith.Kernel.ZPolyTests
