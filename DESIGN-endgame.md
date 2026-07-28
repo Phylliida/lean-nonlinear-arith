@@ -48,11 +48,11 @@ Done and green (all sorry-free, full build 7575 jobs):
 |---|---|---|
 | L1 saturation | nla-01..05, 07, 20, 24-partial, 26 | **complete** — 112+ tests, RULES.md 27/27 rows, parity audited row-by-row |
 | Kernel | nla-08 (QPoly), nla-09 (roots + trusted certs), Mpbq, RAlg mini-anum | **complete**, perf derisked |
-| nlsat lane | 12a (Types/IntervalSet), 12b-i (AnumEval), S3 Thom kit, nla-26 fidelity arc, F1–F7 review, 25.4 order theorems, nla-28 statefulness threading | **complete** |
-| Remaining declared divergences | Sturm-vs-Descartes isolation; QPoly ℚ[x] kernel (bridged at `ofQPoly`); no factorization (= `factor=false` parity → nla-27) | tracked |
+| nlsat lane | 12a (Types/IntervalSet), 12b-i (AnumEval), S3 Thom kit, nla-26 fidelity arc, F1–F7 review, 25.4 order theorems, nla-28 statefulness threading, nla-27 ℤ factorization (default `factor=true` parity) | **complete** |
+| Remaining declared divergences | Sturm-vs-Descartes isolation; QPoly ℚ[x] kernel (bridged at `ofQPoly`/`toZPoly`) | tracked |
 
 Open: 12b-ii, 12c, 12d, 19a, 19b, 12e, 13, 14, 15, 16 (critical
-path); 27 (fidelity); 21, 22, 07b, 06 (L1 hardening); 23, 24-residual,
+path); 21, 22, 07b, 06 (L1 hardening); 23, 24-residual,
 25-residual, 10, 11 (proof layer / S1).
 
 ---
@@ -60,8 +60,8 @@ path); 27 (fidelity); 21, 22, 07b, 06 (L1 hardening); 23, 24-residual,
 ## 2. Critical path to Tier A
 
 Ordering (revised 2026-07-26 under Danielle's guiding rule, see §6):
-**~~28~~ → 27 → 12b-ii → 12c → 12d+19a (same arc) → 19b → 12e → 14 → 15 →
-16.** nla-27 moved ahead of the evaluator/solver builds: `factor=false`
+**~~28~~ → ~~27~~ → 12b-ii → 12c → 12d+19a (same arc) → 19b → 12e → 14 →
+15 → 16.** nla-27 moved ahead of the evaluator/solver builds: `factor=false`
 is a live divergence from default z3, and the evaluator/solver behavior
 (became-basic paths, compareCore common path, witness shapes) depends
 on it — build the pipeline once, against default parity, rather than
@@ -244,7 +244,20 @@ Lean backend. Toolchain already aligned (identical lean+mathlib v4.25.0
 pins); integration is a `require` line + closer-string emission +
 crate-local check.sh gate. No design content remaining.
 
-### 2.9 nla-27 — univariate ℤ factorization *(3–5 sessions, own arc; SECOND — right after nla-28's signatures, before 12b-ii)*
+### 2.9 nla-27 — univariate ℤ factorization *(DONE 2026-07-28, 4 slices)*
+
+Landed per the board spec (commits e7b4e41..9a0c69a): Zp/ZPoly layers
+(balanced mpzzp representatives — fidelity catch; `mod_gcd` with the
+231-prime CRA table — second fidelity catch), GF(p) square-free +
+Berlekamp (deterministic, `randomized=false` as `zp_factor_square_free`
+selects), Hensel + Mignotte + degree-set + combination iterator +
+`factorSquareFree`/`factorCore`/`factor`, and the RAlg wiring
+(`minimal` cell flag, `isolateRoots` = `am::isolate_roots`, compareCore
+minimal branch as the common path, `isRational` short-circuit, eager
+rational discovery). Mathlib was reverted out of the kernel after its
+`!![` notation broke `x[i]![j]!` downstream — kernel stays
+mathlib-free with local `bezoutCoeffs`/`isqrt`. `factor=false` leaves
+the divergence register. Original text kept:
 
 Board entry is the spec (port `upolynomial_factorization.cpp` ~1300
 lines: square-free factorization, Berlekamp over Z_p with prime trials
@@ -409,8 +422,8 @@ Danielle 2026-07-26 — "the sorting thingy seems fine"; the 25.4
 Sturm-vs-Descartes isolation; ℚ[x] QPoly kernel bridged at `ofQPoly`.
 ~~root-represented rationals at shared endpoints~~ — dissolved by
 nla-28 (the `is_rational` port discovers them, exactly as z3).
-`factor=false` leaves this list when nla-27 lands. Anything else
-appearing here needs Danielle's sign-off.
+~~`factor=false`~~ — eliminated by nla-27 (full
+`upolynomial_factorization` port; default `factor=true` parity).
 
 ## 7. Estimates and shape of the remainder
 
