@@ -220,7 +220,7 @@ private def uptoSqrt2 : IntervalSet := mk true true (.rat 0) true false sqrt2 j0
 #guard (pickInComplement uptoSqrt2).1 == some (.rat 2)
 #guard match (pickInComplement uptoSqrt2).2 with
   | some d => match d.intervals[d.intervals.size - 1]!.upper with
-    | .root _ a b => b.toRat - a.toRat < 1/2
+    | .root _ a b _ => b.toRat - a.toRat < 1/2
     | .rat _ => false
   | none => false
 

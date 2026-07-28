@@ -1,5 +1,3 @@
-import Mathlib
-
 /-!
 # nla-27 (slice 1a) — modular arithmetic context (z3 `zp_numeral_manager` / `zp_manager`)
 
@@ -40,15 +38,32 @@ def sub (c : ZpCtx) (a b : Int) : Int := c.norm (a - b)
 def mul (c : ZpCtx) (a b : Int) : Int := c.norm (a * b)
 def neg (c : ZpCtx) (a : Int) : Int := c.norm (-a)
 
+/-- Bézout coefficients for `a, b > 0`: `(s, t)` with
+`s·a + t·b = gcd(a, b)` (extended Euclid, fueled by `b`). Local helper —
+the kernel is deliberately mathlib-free (mathlib's `!![` matrix-literal
+notation poisons the `x[i]![j]!` token chain in every downstream file). -/
+def bezoutCoeffs (a b : Int) : Int × Int :=
+  if a ≤ 0 || b ≤ 0 then (0, 0)
+  else
+    let rec go (fuel : Nat) (r0 r1 s0 s1 t0 t1 : Int) : Int × Int :=
+      match fuel with
+      | 0 => (s0, t0)   -- unreachable: Euclid needs ≪ b steps
+      | fuel + 1 =>
+        if r1 == 0 then (s0, t0)
+        else
+          let q := r0 / r1
+          go fuel r1 (r0 - q * r1) s1 (s0 - q * s1) t1 (t0 - q * t1)
+    go b.natAbs a (b % a) 1 (0 - b / a) 0 1
+
 /-- Multiplicative inverse mod `m` (z3 `zp_numeral_manager::inv`).
 Precondition (z3 SASSERT): `gcd(a, m) = 1` — over prime fields every
 nonzero element, over prime powers every non-multiple of `p` (the
 lifted factors are monic, so their leading coefficients are units).
-Via Bézout (mathlib `Nat.gcdA`): `gcdA·a' + gcdB·m = gcd(a', m) = 1`. -/
+Via Bézout (`bezoutCoeffs`): `s·a' + t·m = gcd(a', m) = 1`. -/
 def inv (c : ZpCtx) (a : Int) : Int :=
   let a' := c.norm a
-  let i := Nat.gcdA a'.natAbs c.m.natAbs
-  c.norm (if a' < 0 then -i else i)
+  let (s, _) := bezoutCoeffs a'.natAbs c.m.natAbs
+  c.norm (if a' < 0 then -s else s)
 
 /-- `a·b + out` mod m (z3 `addmul`). -/
 def addmul (c : ZpCtx) (a b out : Int) : Int := c.norm (a * b + out)

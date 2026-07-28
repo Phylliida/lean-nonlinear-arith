@@ -143,6 +143,19 @@ def dvd (p1 p2 : ZPoly) : Bool := Id.run do
     cur := trim (cur.extract 0 (cur.size - 1))
   return true -- unreachable
 
+/-- Floor square root (binary search, fueled). Local helper — the
+kernel is deliberately mathlib-free. -/
+def isqrt (n : Nat) : Nat :=
+  let rec go (fuel : Nat) (lo hi : Nat) : Nat :=
+    match fuel with
+    | 0 => lo
+    | fuel + 1 =>
+      if hi ≤ lo + 1 then lo
+      else
+        let mid := (lo + hi) / 2
+        if mid * mid ≤ n then go fuel mid hi else go fuel lo mid
+  go (Nat.log2 n + 2) 0 (n + 1)
+
 /-- Signed pseudo-remainder (the non-field branch of z3
 `core_manager::rem`): `lc(p2)^d · p1 = Q·p2 + R` for some `d`, `R`
 returned, `deg R < deg p2`. -/
@@ -207,8 +220,9 @@ def bigPrimes : Array Int := #[
 (`(-b1·b2/2, b1·b2/2]`). Returns `(R, b1·b2)`. -/
 def craCombineImages (C1 : ZPoly) (b1 : Int) (C2 : ZPoly) (b2 : Int) : ZPoly × Int := Id.run do
   -- b1·inv1 + b2·inv2 = 1 (Bézout, inputs coprime by construction)
-  let inv1 := (Nat.gcdA b1.natAbs b2.natAbs) % b2
-  let inv2 := (Nat.gcdB b1.natAbs b2.natAbs) % b1
+  let (inv1', inv2') := ZpCtx.bezoutCoeffs b1 b2
+  let inv1 := inv1' % b2
+  let inv2 := inv2' % b1
   let a1 := b2 * inv2   -- multiplier for C1 coefficients
   let a2 := b1 * inv1   -- multiplier for C2 coefficients
   let newBound := b1 * b2

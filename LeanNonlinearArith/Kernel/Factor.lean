@@ -1,4 +1,5 @@
 import LeanNonlinearArith.Kernel.ZPoly
+import LeanNonlinearArith.Kernel.QPoly
 
 /-!
 # nla-27 (slice 2) — factorization over GF(p): square-free decomposition + Berlekamp
@@ -344,7 +345,7 @@ binomial coefficients are approximated by `2^(n−1)`, hence `2B` uses
 def mignotteBound (f : ZPoly) (p : Int) : Nat := Id.run do
   let n := (f.size - 1) / 2
   let sumSq : Int := f.foldl (fun acc c => acc + c * c) 0
-  let fNorm : Int := (Nat.sqrt sumSq.natAbs : Int)
+  let fNorm : Int := (ZPoly.isqrt sumSq.natAbs : Int)
   let bound := (2 ^ n : Int) * (fNorm + (ZPoly.lc f).natAbs)
   let mut tmp := p
   let mut e := 1
@@ -696,7 +697,7 @@ def factor2SqfPp (p : ZPoly) (fs : ZFactors) (k : Nat) : ZFactors :=
   if disc ≤ 0 then
     fs.push p k   -- irreducible (disc ≠ 0 by square-freeness)
   else
-    let s := (Nat.sqrt disc.natAbs : Int)
+    let s := (ZPoly.isqrt disc.natAbs : Int)
     if s * s != disc then
       fs.push p k
     else
@@ -775,5 +776,20 @@ return value: `false` means INCOMPLETE (search budget), which the
 algebraic-numbers layer consumes as "not minimal". -/
 def factor (f : ZPoly) (params : FactorParams := {}) : Bool × ZFactors :=
   factorCore f ZFactors.empty params
+
+/-! ## ℚ[x] ↔ ℤ[x] bridge (for the kernel's QPoly cells) -/
+
+/-- Scale a ℚ-polynomial to integer coefficients (positive lcm of
+denominators — roots/signs unchanged; the CertGen scaling pattern).
+z3's pipeline is ℤ-native; this is the entry point for our QPoly
+cells (the declared QPoly divergence is unchanged — the bridge is where
+the two coefficient worlds meet). -/
+def QPoly.toZPoly (p : QPoly) : ZPoly :=
+  let d : Nat := p.foldl (fun acc c => Nat.lcm acc c.den) 1
+  ZPoly.trim (p.map fun c => c.num * ((d / c.den : Nat) : Int))
+
+/-- Integer polynomial back to ℚ coefficients. -/
+def ZPoly.toQPoly (p : ZPoly) : QPoly :=
+  QPoly.trim (p.map (mkRat · 1))
 
 end LeanNonlinearArith.Kernel

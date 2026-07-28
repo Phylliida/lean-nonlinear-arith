@@ -112,7 +112,7 @@ def negSqrt2 : RAlg := .root #[-2, 0, 1] (-2) (-1)
 #guard
   let rs := RAlg.isolateRoots (QPoly.mul #[-2, 0, 1] #[-2, 0, 1])
   rs.size == 2 && (RAlg.compare rs[1]! sqrt2).1 == .eq &&
-  (match rs[1]! with | .root p _ _ => p.size == 3 | _ => false)
+  (match rs[1]! with | .root p _ _ _ => p.size == 3 | _ => false)
 
 -- intGt/intLt (z3 refine-then-ceil/floor — note ceil(upper), not ⌊·⌋+1)
 #guard (RAlg.intGt sqrt2).1 == 2
@@ -163,12 +163,12 @@ zero never strictly inside an isolating interval -/
 #guard
   let x := refine1 (refine1 (refine1 sqrt2))
   match x with
-  | .root _ a b => a.ltRat (3/2) && b.gtRat (7/5) && Mpbq.lt a b
+  | .root _ a b _ => a.ltRat (3/2) && b.gtRat (7/5) && Mpbq.lt a b
   | .rat _ => false
 -- endpoint signs stay opposite through refinement (the refinable invariant)
 #guard
   match refine1 (refine1 sqrt2) with
-  | .root p a b => QPoly.evalSignAtD p a * QPoly.evalSignAtD p b == -1
+  | .root p a b _ => QPoly.evalSignAtD p a * QPoly.evalSignAtD p b == -1
   | .rat _ => false
 
 /-! ## nla-28 — is_rational port + statefulness threading -/
@@ -184,7 +184,7 @@ zero never strictly inside an isolating interval -/
   let (b, x') := RAlg.isRational sqrt2
   b == false && (RAlg.compare x' sqrt2).1 == .eq
 #guard match (RAlg.isRational sqrt2).2 with
-  | .root _ a b => b.toRat - a.toRat < 1/2
+  | .root _ a b _ => b.toRat - a.toRat < 1/2
   | .rat _ => false
 -- restore_if_too_small: |aₙ| = 65536 forces refinement to width < 2⁻¹⁷
 -- (magnitude below minMagnitude = −16); on the miss the ORIGINAL interval
@@ -193,7 +193,7 @@ zero never strictly inside an isolating interval -/
   == (false, .root #[-2, 0, 65536] 0 1)
 -- threading: intGt's refine-to-width-<1/2 persists in the returned cell
 #guard match (RAlg.intGt sqrt2).2 with
-  | .root _ a b => b.toRat - a.toRat < 1/2
+  | .root _ a b _ => b.toRat - a.toRat < 1/2
   | .rat _ => false
 -- threading: select's separate refines both sides; returned cells are the
 -- same values (compare eq against the originals)
@@ -205,5 +205,36 @@ zero never strictly inside an isolating interval -/
 #guard
   let (o, x', y') := RAlg.compare sqrt2' sqrt3
   o == .lt && (RAlg.compare x' sqrt2').1 == .eq && (RAlg.compare y' sqrt3).1 == .eq
+
+/-! ## nla-27 — factorization parity (default z3 `factor=true`) -/
+
+-- eager rational discovery: x²−4 factors into linear factors over ℤ,
+-- so BOTH roots are basic at construction (z3 `factor=true` behavior;
+-- pre-nla-27 they were root-cells discovered lazily)
+#guard RAlg.isolateRoots #[-4, 0, 1] == #[RAlg.rat (-2), RAlg.rat 2]
+-- zero-strip + full factorization: x³−4x = x(x−2)(x+2) — all basic
+#guard RAlg.isolateRoots #[0, -4, 0, 1] == #[RAlg.rat (-2), RAlg.rat 0, RAlg.rat 2]
+-- irreducible factors carry minimal = true (z3 `m_minimal` from
+-- `full_fact`); cells carry the irreducible factor itself
+#guard
+  let rs := RAlg.isolateRoots #[-2, 0, 1]
+  rs.size == 2 && (match rs[0]!, rs[1]! with
+    | .root p _ _ true, .root q _ _ true => p == #[-2, 0, 1] && q == #[-2, 0, 1]
+    | _, _ => false)
+-- compareCore minimal branch: distinct minimal polys with overlapping
+-- intervals refine-until-disjoint (the COMMON path in default z3) —
+-- √2 vs φ in (1,2): exactly one bisection each, then brackets clear
+#guard (RAlg.compare (.root #[-2, 0, 1] 1 2 true) (.root #[-1, -1, 1] 1 2 true))
+  == (.lt, .root #[-2, 0, 1] 1 (Mpbq.mk 3 1) true,
+            .root #[-1, -1, 1] (Mpbq.mk 3 1) 2 true)
+-- mirrored verdict through the same branch
+#guard (RAlg.compare (.root #[-1, -1, 1] 1 2 true) (.root #[-2, 0, 1] 1 2 true)).1 == .gt
+-- isRational short-circuits on minimal cells (z3 `m_not_rational` set
+-- at construction): NO refinement is performed
+#guard RAlg.isRational (.root #[-2, 0, 1] 1 2 true)
+  == (false, .root #[-2, 0, 1] 1 2 true)
+-- non-minimal cells of the same values skip the minimal branch but
+-- agree on the verdict (behavioral consistency across paths)
+#guard (RAlg.compare sqrt2 phi).1 == .lt
 
 end LeanNonlinearArith.Kernel.RAlgTests

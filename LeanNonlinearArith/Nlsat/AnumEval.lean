@@ -270,11 +270,11 @@ defined for non-basic values: rationals are substituted away before the
 interval phase, `eval_sign_at`'s `SASSERT(!v.is_basic())`). -/
 def intervalD : RAlg → Option MpbqI
   | .rat _ => none
-  | .root _ a b => some ⟨a, b⟩
+  | .root _ a b _ => some ⟨a, b⟩
 
 def width : RAlg → Rat
   | .rat _ => 0
-  | .root _ a b => (Mpbq.sub b a).toRat
+  | .root _ a b _ => (Mpbq.sub b a).toRat
 
 end RAlg
 

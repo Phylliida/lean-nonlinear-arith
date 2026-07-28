@@ -1,5 +1,6 @@
 import LeanNonlinearArith.Kernel.QPoly
 import LeanNonlinearArith.Kernel.Roots
+import LeanNonlinearArith.Kernel.Factor
 
 /-!
 # nla-12a (first brick) — real algebraic numbers (mini-`anum`)
@@ -55,10 +56,14 @@ open QPoly
 `root p a b` (maintained by constructors, relied on by everything):
 `p` square-free with exactly one real root in `(a, b)`, `a < b`,
 `eval p a ≠ 0 ≠ eval p b`, and `0 ∉ (a, b)` (z3 `am::normalize` — build
-through `mkRoot`). Endpoints are dyadic (z3 `mpbq`). -/
+through `mkRoot`). Endpoints are dyadic (z3 `mpbq`). `minimal` is z3's
+`m_minimal` cell flag (nla-27): true when the defining polynomial is
+known irreducible — set by `isolateRoots` from the factorization's
+completeness flag, and implies `m_not_rational` (a non-linear minimal
+polynomial has no rational root). -/
 inductive RAlg
   | rat (q : Rat)
-  | root (p : QPoly) (a b : Mpbq)
+  | root (p : QPoly) (a b : Mpbq) (minimal : Bool := false)
 deriving Repr, Inhabited, BEq
 
 namespace RAlg
@@ -84,14 +89,15 @@ def intervalMagnitude (l u : Mpbq) : Int :=
       - u.k + l.k - u.k
 
 /-- Smart constructor (z3 cell construction + `am::normalize`):
-degree-1 polynomials collapse to their rational root (eager rational
-discovery beyond degree 1 happens only through factorization in Z3,
-which we don't port — declared; higher-degree rational roots are instead
-discovered lazily by `refine1`'s midpoint-zero test, exactly as in
-`am::refine`). A zero-straddling interval is normalized per
-`upolynomial::normalize_interval_core`: if 0 is the root the value
-becomes basic, otherwise the endpoint on 0's sign side snaps to 0. -/
-def mkRoot (p : QPoly) (a b : Mpbq) : RAlg :=
+degree-1 polynomials collapse to their rational root (with
+factorization — nla-27 — rational roots surface eagerly as linear
+factors, so this and the zero-straddle snap are safety nets, as are
+default-Z3's radical-only became-basic paths). A zero-straddling
+interval is normalized per `upolynomial::normalize_interval_core`: if
+0 is the root the value becomes basic, otherwise the endpoint on 0's
+sign side snaps to 0. `minimal` is z3's `m_minimal` (the factorization
+completeness flag at cell construction). -/
+def mkRoot (p : QPoly) (a b : Mpbq) (minimal : Bool := false) : RAlg :=
   if p.size == 2 then
     -- c₀ + c₁·x ⇒ root = −c₀/c₁
     .rat (-(p.coeff 0) / p.coeff 1)
@@ -100,22 +106,11 @@ def mkRoot (p : QPoly) (a b : Mpbq) : RAlg :=
     else
       let signA := evalSignAtD p a
       let signZ : Int := if eval p 0 < 0 then -1 else 1
-      if signA == signZ then .root p (Mpbq.ofInt 0) b
-      else .root p a (Mpbq.ofInt 0)
+      if signA == signZ then .root p (Mpbq.ofInt 0) b minimal
+      else .root p a (Mpbq.ofInt 0) minimal
   else
-    .root p a b
+    .root p a b minimal
 
-/-- Isolate all real roots of `p0` as `RAlg` values, sorted ascending —
-the `am::isolate_roots` shape (F5 review fix: the isolation engine works
-on `squarefreePart p0`, and cells must carry THAT polynomial; this
-constructor is the one place the pairing happens, so callers can't get
-it wrong). Rational roots surface as `.rat` via `mkRoot`'s linear and
-zero-straddle normalizations, or lazily through refinement; with
-factorization (nla-27) more of them will surface eagerly, as in default
-Z3. -/
-def isolateRoots (p0 : QPoly) : Array RAlg :=
-  let sp := squarefreePart p0
-  (isolateRootsD p0).map fun (a, b) => mkRoot sp a b
 
 /-- Position of an isolated root relative to a rational `q` — z3
 `compare(algebraic_cell, mpq)` (`algebraic_numbers.cpp:1910`): endpoint
@@ -135,7 +130,7 @@ def compareRootRat (p : QPoly) (a b : Mpbq) (q : Rat) : Ordering :=
 /-- Sign of the algebraic number itself (−1 / 0 / 1). -/
 def sign : RAlg → Int
   | .rat q => if q < 0 then -1 else if q == 0 then 0 else 1
-  | .root p a b =>
+  | .root p a b _ =>
     match compareRootRat p a b 0 with
     | .lt => -1
     | .eq => 0
@@ -147,7 +142,7 @@ def signOfPolyAt (g : QPoly) : RAlg → Int
   | .rat q =>
     let v := eval g q
     if v < 0 then -1 else if v == 0 then 0 else 1
-  | .root p a b => signAtRootD g p a b
+  | .root p a b _ => signAtRootD g p a b
 
 /-- One refinement step (z3 `am::refine`, nla-26.5): identity on
 rationals; on a `root`, one `refineCoreStepD` bisection — and when the
@@ -158,9 +153,9 @@ since we may find the actual rational root. This can only happen when
 non minimal polynomials are used to encode root objects."). -/
 def refine1 : RAlg → RAlg
   | .rat q => .rat q
-  | .root p a b =>
+  | .root p a b m =>
     match refineCoreStepD p (evalSignAtD p a) a b with
-    | .inl (a', b') => .root p a' b'
+    | .inl (a', b') => .root p a' b' m
     | .inr r => .rat r.toRat
 
 /-- z3 `am::refine_until_prec`: refine a root cell until its width is
@@ -169,9 +164,9 @@ def refine1 : RAlg → RAlg
 def refineUntilPrec (x : RAlg) (prec : Nat) : RAlg :=
   match x with
   | .rat q => .rat q
-  | .root p a b =>
+  | .root p a b m =>
     match refineToPrecD p (evalSignAtD p a) a b prec with
-    | .inl (a', b') => .root p a' b'
+    | .inl (a', b') => .root p a' b' m
     | .inr r => .rat r.toRat
 
 /-- z3 `imp::magnitude(cell)`: binary magnitude of the isolating
@@ -180,7 +175,7 @@ are exact; Z3 only ever queries cells, so `minMagnitude` ("already
 precise") is the natural reading for `.rat`. -/
 def magnitude : RAlg → Int
   | .rat _ => minMagnitude
-  | .root _ a b => intervalMagnitude a b
+  | .root _ a b _ => intervalMagnitude a b
 
 /-- z3 `am::int_lt` (`algebraic_numbers.cpp:2827`): an integer strictly
 below the value — refined to width < 1/2 first, so the answer stays
@@ -190,14 +185,14 @@ return the refined cell alongside. -/
 def intLt (x : RAlg) : Int × RAlg :=
   match refineUntilPrec x 1 with
   | .rat q => (Mpbq.ratFloorInt q - 1, .rat q)
-  | y@(.root _ a _) => (Mpbq.floorInt a, y)
+  | y@(.root _ a _ _) => (Mpbq.floorInt a, y)
 
 /-- z3 `am::int_gt` (`algebraic_numbers.cpp:2840`): an integer strictly
 above the value. Same nla-28 threading as `intLt`. -/
 def intGt (x : RAlg) : Int × RAlg :=
   match refineUntilPrec x 1 with
   | .rat q => (Mpbq.ratCeilInt q + 1, .rat q)
-  | y@(.root _ _ b) => (Mpbq.ceilInt b, y)
+  | y@(.root _ _ b _) => (Mpbq.ceilInt b, y)
 
 /-- z3 `imp::is_rational` (`algebraic_numbers.cpp:285`): rational-root-theorem
 discovery. Refine to width `< 1/2^(log2|aₙ|+1)` so that `|aₙ|·(l,u)` contains
@@ -209,12 +204,16 @@ coefficient after positive denominator-clearing (roots/signs unchanged — the
 CertGen scaling pattern). `save_intervals::restore_if_too_small` is ported: on
 a miss, an interval refined below `minMagnitude` magnitude is restored to its
 input width (a became-basic conversion always sticks). The `m_not_rational`
-cache flag is not ported: pure recomputation reaches the same answers, and
-factorization (nla-27) is its only other setter. nla-28: returns the refined
-(or converted) cell alongside the verdict. -/
+cache flag is not stored: instead, with nla-27 the `minimal` field plays
+its role — cells built by `isolateRoots` from a complete factorization
+are irreducible, hence irrational, and short-circuit here exactly like
+z3's `m_not_rational` check (`mk_algebraic_cell` sets the flag whenever
+`m_minimal` holds). nla-28: returns the refined (or converted) cell
+alongside the verdict. -/
 def isRational : RAlg → Bool × RAlg
   | .rat q => (true, .rat q)
-  | x@(.root p _ _) =>
+  | x@(.root _ _ _ true) => (false, x)   -- m_not_rational: minimal ⇒ irrational
+  | x@(.root p _ _ false) =>
     -- positive denominator-clearing scale ⇒ ℤ leading coefficient `aₙ`
     let d : Nat := p.foldl (fun acc c => Nat.lcm acc c.den) 1
     let aN : Int := (lc p).num * ((d / (lc p).den : Nat) : Int)
@@ -222,7 +221,7 @@ def isRational : RAlg → Bool × RAlg
     let k := Nat.log2 absAN + 1
     match refineUntilPrec x k with
     | .rat q => (true, .rat q)      -- became basic during refinement
-    | x'@(.root _ a' b') =>
+    | x'@(.root _ a' b' _) =>
       -- ⌊b'·|aₙ|⌋ : floor of num·2^{−k'}·|aₙ|
       let zcand := ((absAN : Int) * b'.num).fdiv ((1 <<< b'.k : Nat) : Int)
       let cand := mkRat zcand absAN
@@ -258,18 +257,18 @@ partial def separate (x y : RAlg) : RAlg × RAlg :=
       | y'@(.root _ _ _) => separate x y'
       | y' => (x, y')          -- curr became basic: rat/rat needs nothing
     else (x, y)
-  | .root _ _ pu, .rat c =>
+  | .root _ _ pu _, .rat c =>
     if pu.geRat c then
       match refine1 x with
       | x'@(.root _ _ _) => separate x' y
       | x' => (x', y)          -- prev became basic: rat/rat needs nothing
     else (x, y)
-  | .root _ _ pu, .root _ cl _ =>
+  | .root _ _ pu _, .root _ cl _ _ =>
     if Mpbq.ge pu cl then
       let x' := refine1 x
       let y' := refine1 y
       match x', y' with
-      | .root _ _ _, .root _ _ _ => separate x' y'
+      | .root _ _ _ _, .root _ _ _ _ => separate x' y'
       | _, _ => separate x' y' -- shape changed: re-dispatch (see above)
     else (x, y)
   | _, _ => (x, y)             -- basic/basic: do nothing
@@ -286,9 +285,9 @@ def select (x y : RAlg) : Rat × RAlg × RAlg :=
   let w : Mpbq :=
     match x, y with
     | .rat p, .rat c => Mpbq.selectSmallCoreQQ p c
-    | .rat p, .root _ cl _ => Mpbq.selectSmallCoreQD p cl
-    | .root _ _ pu, .rat c => Mpbq.selectSmallCoreDQ pu c
-    | .root _ _ pu, .root _ cl _ => Mpbq.selectSmallCoreDD pu cl
+    | .rat p, .root _ cl _ _ => Mpbq.selectSmallCoreQD p cl
+    | .root _ _ pu _, .rat c => Mpbq.selectSmallCoreDQ pu c
+    | .root _ _ pu _, .root _ cl _ _ => Mpbq.selectSmallCoreDD pu cl
   (w.toRat, x, y)
 
 /-- z3 `compare_core` (`algebraic_numbers.cpp:1929`) — both arguments
@@ -298,11 +297,11 @@ check:
 1. interval disjointness (cheap path);
 2. same defining polynomial + overlapping intervals ⇒ same root
    (`compare_p`; sound by the same-isolation-run invariant);
-3. *(z3's minimal-polynomial refine-until-disjoint branch is
-   unreachable for us today: it requires factorization, which sets
-   `m_minimal`. NOTE: in DEFAULT z3 (`factor=true`) this is the COMMON
-   path — it must be implemented when nla-27 lands, at which point our
-   current state is `factor=false` parity only)*;
+3. **minimal-polynomial branch** (nla-27): both cells minimal ⇒
+   distinct polynomials ⇒ DISTINCT roots ⇒ refine-until-disjoint
+   terminates. In default z3 (`factor=true`) this is the COMMON path;
+   became-basic is impossible here (minimal non-linear ⇒ irrational,
+   z3 SASSERT) — our `.inr` fallbacks are pure safety nets;
 4. magnitude equalization: refine the coarser cell down to
    `target = max(minMagnitude, min aM bM)`, then both to
    `minMagnitude`, one step at a time — any exact-root discovery
@@ -320,58 +319,77 @@ nla-28: z3's `compare_core(numeral & a, numeral & b)` refines both cells
 in place (stages 3–4) and the mutation persists; we return the refined
 cells alongside the verdict, including on the became-basic re-dispatch
 paths (z3 `return compare(a, b)` with `a`/`b` already mutated). -/
-def compareCore (p1 : QPoly) (a1 b1 : Mpbq) (p2 : QPoly) (a2 b2 : Mpbq) :
+def compareCore (p1 : QPoly) (a1 b1 : Mpbq) (m1 : Bool)
+    (p2 : QPoly) (a2 b2 : Mpbq) (m2 : Bool) :
     Ordering × RAlg × RAlg := Id.run do
   -- COMPARE_INTERVAL
-  if Mpbq.le b1 a2 then return (.lt, .root p1 a1 b1, .root p2 a2 b2)
-  if Mpbq.ge a1 b2 then return (.gt, .root p1 a1 b1, .root p2 a2 b2)
+  if Mpbq.le b1 a2 then return (.lt, .root p1 a1 b1 m1, .root p2 a2 b2 m2)
+  if Mpbq.ge a1 b2 then return (.gt, .root p1 a1 b1 m1, .root p2 a2 b2 m2)
   -- compare_p: same polynomial + overlap ⇒ same root
-  if p1 == p2 then return (.eq, .root p1 a1 b1, .root p2 a2 b2)
+  if p1 == p2 then return (.eq, .root p1 a1 b1 m1, .root p2 a2 b2 m2)
   let s1 := evalSignAtD p1 a1
   let s2 := evalSignAtD p2 a2
   let mut x1 := a1; let mut y1 := b1
   let mut x2 := a2; let mut y2 := b2
+  -- minimal polynomials: distinct polys ⇒ distinct roots ⇒ separate
+  if m1 && m2 then
+    let mut go := true
+    while go do
+      match refineCoreStepD p1 (evalSignAtD p1 x1) x1 y1 with
+      | .inr r =>  -- safety net (z3 SASSERTs unreachable: minimal ⇒ irrational)
+        return ((compareRootRat p2 x2 y2 r.toRat).swap, .rat r.toRat, .root p2 x2 y2 m2)
+      | .inl (x1', y1') =>
+        x1 := x1'; y1 := y1'
+        match refineCoreStepD p2 (evalSignAtD p2 x2) x2 y2 with
+        | .inr r =>
+          return (compareRootRat p1 x1 y1 r.toRat, .root p1 x1 y1 m1, .rat r.toRat)
+        | .inl (x2', y2') =>
+          x2 := x2'; y2 := y2'
+          if Mpbq.le y1 x2 then
+            return (.lt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
+          if Mpbq.ge x1 y2 then
+            return (.gt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
   -- magnitude equalization
   let aM := intervalMagnitude x1 y1
   let bM := intervalMagnitude x2 y2
   let targetM := max minMagnitude (min aM bM)
   if bM > targetM then
     match refineStepsD p2 s2 x2 y2 (bM - targetM).toNat with
-    | .inr r => return (compareRootRat p1 x1 y1 r.toRat, .root p1 x1 y1, .rat r.toRat)
+    | .inr r => return (compareRootRat p1 x1 y1 r.toRat, .root p1 x1 y1 m1, .rat r.toRat)
     | .inl (x2', y2') =>
       x2 := x2'; y2 := y2'
-      if Mpbq.le y1 x2 then return (.lt, .root p1 x1 y1, .root p2 x2 y2)
-      if Mpbq.ge x1 y2 then return (.gt, .root p1 x1 y1, .root p2 x2 y2)
+      if Mpbq.le y1 x2 then return (.lt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
+      if Mpbq.ge x1 y2 then return (.gt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
   if aM > targetM then
     match refineStepsD p1 s1 x1 y1 (aM - targetM).toNat with
-    | .inr r => return ((compareRootRat p2 x2 y2 r.toRat).swap, .rat r.toRat, .root p2 x2 y2)
+    | .inr r => return ((compareRootRat p2 x2 y2 r.toRat).swap, .rat r.toRat, .root p2 x2 y2 m2)
     | .inl (x1', y1') =>
       x1 := x1'; y1 := y1'
-      if Mpbq.le y1 x2 then return (.lt, .root p1 x1 y1, .root p2 x2 y2)
-      if Mpbq.ge x1 y2 then return (.gt, .root p1 x1 y1, .root p2 x2 y2)
+      if Mpbq.le y1 x2 then return (.lt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
+      if Mpbq.ge x1 y2 then return (.gt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
   if targetM > minMagnitude then
     for _ in [0:(targetM - minMagnitude).toNat] do
       match refineCoreStepD p1 s1 x1 y1 with
-      | .inr r => return ((compareRootRat p2 x2 y2 r.toRat).swap, .rat r.toRat, .root p2 x2 y2)
+      | .inr r => return ((compareRootRat p2 x2 y2 r.toRat).swap, .rat r.toRat, .root p2 x2 y2 m2)
       | .inl (x1', y1') =>
         x1 := x1'; y1 := y1'
         match refineCoreStepD p2 s2 x2 y2 with
-        | .inr r => return (compareRootRat p1 x1 y1 r.toRat, .root p1 x1 y1, .rat r.toRat)
+        | .inr r => return (compareRootRat p1 x1 y1 r.toRat, .root p1 x1 y1 m1, .rat r.toRat)
         | .inl (x2', y2') =>
           x2 := x2'; y2 := y2'
-          if Mpbq.le y1 x2 then return (.lt, .root p1 x1 y1, .root p2 x2 y2)
-          if Mpbq.ge x1 y2 then return (.gt, .root p1 x1 y1, .root p2 x2 y2)
+          if Mpbq.le y1 x2 then return (.lt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
+          if Mpbq.ge x1 y2 then return (.gt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
   -- Sturm workaround: separate refined copies (precision 10 ⇒ 40 bits)
   match refineToPrecD p1 s1 x1 y1 40, refineToPrecD p2 s2 x2 y2 40 with
   | .inl (la, ua), .inl (lb, ub) =>
-    if Mpbq.gt la ub then return (.gt, .root p1 x1 y1, .root p2 x2 y2)
-    if Mpbq.lt ua lb then return (.lt, .root p1 x1 y1, .root p2 x2 y2)
+    if Mpbq.gt la ub then return (.gt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
+    if Mpbq.lt ua lb then return (.lt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
   | _, _ => pure ()
   -- expensive case: Sturm–Tarski
   let V : Int := tarskiQuery p2 p1 x1.toRat y1.toRat
-  if V == 0 then return (.eq, .root p1 x1 y1, .root p2 x2 y2)
-  if (V < 0) == (s2 < 0) then return (.lt, .root p1 x1 y1, .root p2 x2 y2)
-  return (.gt, .root p1 x1 y1, .root p2 x2 y2)
+  if V == 0 then return (.eq, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
+  if (V < 0) == (s2 < 0) then return (.lt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
+  return (.gt, .root p1 x1 y1 m1, .root p2 x2 y2 m2)
 
 /-- Total comparison — z3 `am::compare` dispatch
 (`algebraic_numbers.cpp:2108`). Unfueled: see `compareCore`. nla-28:
@@ -381,9 +399,9 @@ their inputs unchanged. -/
 def compare (x y : RAlg) : Ordering × RAlg × RAlg :=
   match x, y with
   | .rat p, .rat q => (if p < q then .lt else if p == q then .eq else .gt, .rat p, .rat q)
-  | .root p a b, .rat q => (compareRootRat p a b q, .root p a b, .rat q)
-  | .rat q, .root p a b => ((compareRootRat p a b q).swap, .rat q, .root p a b)
-  | .root p1 a1 b1, .root p2 a2 b2 => compareCore p1 a1 b1 p2 a2 b2
+  | .root p a b m, .rat q => (compareRootRat p a b q, .root p a b m, .rat q)
+  | .rat q, .root p a b m => ((compareRootRat p a b q).swap, .rat q, .root p a b m)
+  | .root p1 a1 b1 m1, .root p2 a2 b2 m2 => compareCore p1 a1 b1 m1 p2 a2 b2 m2
 
 def lt (x y : RAlg) : Bool × RAlg × RAlg :=
   let (o, x', y') := compare x y
@@ -392,6 +410,44 @@ def lt (x y : RAlg) : Bool × RAlg × RAlg :=
 def le (x y : RAlg) : Bool × RAlg × RAlg :=
   let (o, x', y') := compare x y
   (o != .gt, x', y')
+
+/-- Isolate all real roots of `p0` as `RAlg` values, sorted ascending —
+the `am::isolate_roots` pipeline (nla-27, default `factor=true` parity):
+strip zero roots (`has_zero_roots`/`remove_zero_roots`, 0 becomes a
+basic root), factor the rest over ℤ (`upolynomial::factor`), linear
+factors become basic rationals `−c₀/c₁` directly, and each higher-degree
+factor's roots are isolated per-factor carrying THAT irreducible factor
+with `minimal = full_fact` (z3 `mk_algebraic_cell(f, …, full_fact)`).
+Isolation itself stays our Sturm engine (declared Sturm-vs-Descartes
+divergence); the ℚ↔ℤ bridge is `QPoly.toZPoly`/`ZPoly.toQPoly`.
+`full_fact = false` (search budget) ⇒ cells are built with
+`minimal = false`, exactly z3's consequence. -/
+def isolateRoots (p0 : QPoly) : Array RAlg := Id.run do
+  if QPoly.isZero p0 then return #[]   -- ignore the zero polynomial
+  let mut roots : Array RAlg := #[]
+  -- strip zero roots
+  let zp0 := QPoly.toZPoly p0
+  let mut nz := zp0
+  if ZPoly.coeff zp0 0 == 0 then
+    roots := roots.push (.rat 0)
+    let mut k := 0
+    while k < zp0.size && ZPoly.coeff zp0 k == 0 do
+      k := k + 1
+    nz := ZPoly.trim (zp0.extract k zp0.size)
+  -- factor over ℤ
+  let (fullFact, fs) := factor nz
+  for (fp, _) in fs.factors do
+    if fp.size == 1 then
+      pure ()   -- d == 0: constant, all roots found
+    else if fp.size == 2 then
+      -- linear ax + b ⇒ basic −b/a
+      roots := roots.push (.rat (-(mkRat fp[0]! 1) / (mkRat fp[1]! 1)))
+    else
+      let fq := ZPoly.toQPoly fp
+      for (a, b) in isolateRootsD fq do
+        roots := roots.push (mkRoot fq a b fullFact)
+  -- z3 `sort_roots` (total order on distinct values)
+  return roots.qsort fun x y => ((RAlg.compare x y).1 == .lt)
 
 end RAlg
 
