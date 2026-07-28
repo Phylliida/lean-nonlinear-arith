@@ -48,20 +48,22 @@ Done and green (all sorry-free, full build 7575 jobs):
 |---|---|---|
 | L1 saturation | nla-01..05, 07, 20, 24-partial, 26 | **complete** — 112+ tests, RULES.md 27/27 rows, parity audited row-by-row |
 | Kernel | nla-08 (QPoly), nla-09 (roots + trusted certs), Mpbq, RAlg mini-anum | **complete**, perf derisked |
-| nlsat lane | 12a (Types/IntervalSet), 12b-i (AnumEval), S3 Thom kit, nla-26 fidelity arc, F1–F7 review, 25.4 order theorems, nla-28 statefulness threading, nla-27 ℤ factorization (default `factor=true` parity) | **complete** |
+| nlsat lane | 12a (Types/IntervalSet), 12b-i (AnumEval), 12b-ii (Evaluator + Table), S3 Thom kit, nla-26 fidelity arc, F1–F7 review, 25.4 order theorems, nla-28 statefulness threading, nla-27 ℤ factorization (default `factor=true` parity) | **complete** |
 | Remaining declared divergences | Sturm-vs-Descartes isolation; QPoly ℚ[x] kernel (bridged at `ofQPoly`/`toZPoly`) | tracked |
 
-Open: 12b-ii, 12c, 12d, 19a, 19b, 12e, 13, 14, 15, 16 (critical
-path); 21, 22, 07b, 06 (L1 hardening); 23, 24-residual,
-25-residual, 10, 11 (proof layer / S1).
+Open: 29 (anum arithmetic → q≡0 fallbacks), 12c, 12d, 19a, 19b, 12e,
+13, 14, 15, 16 (critical path); 21, 22, 07b, 06 (L1 hardening);
+23, 24-residual, 25-residual, 10, 11 (proof layer / S1).
 
 ---
 
 ## 2. Critical path to Tier A
 
-Ordering (revised 2026-07-26 under Danielle's guiding rule, see §6):
-**~~28~~ → ~~27~~ → 12b-ii → 12c → 12d+19a (same arc) → 19b → 12e → 14 →
-15 → 16.** nla-27 moved ahead of the evaluator/solver builds: `factor=false`
+Ordering (revised 2026-07-26 under Danielle's guiding rule, see §6;
+updated 2026-07-28 with nla-29):
+**~~28~~ → ~~27~~ → ~~12b-ii~~ → 29 → 12c → 12d+19a (same arc) → 19b →
+12e → 14 → 15 → 16.** nla-27 moved ahead of the evaluator/solver
+builds: `factor=false`
 is a live divergence from default z3, and the evaluator/solver behavior
 (became-basic paths, compareCore common path, witness shapes) depends
 on it — build the pipeline once, against default parity, rather than
@@ -116,7 +118,17 @@ dyadic-nicer witness than the unrefined intervals would; assert the
 z3-shaped (threaded) result. Existing RAlg/IntervalSet suites re-green
 under new signatures.
 
-### 2.2 nla-12b-ii — evalSignAt + isolateRootsAt assembly *(1–2 sessions)*
+### 2.2 nla-12b-ii — evalSignAt + isolateRootsAt assembly *(DONE 2026-07-28)*
+
+Landed per spec (`Nlsat/Evaluator.lean`, `Nlsat/EvaluatorTable.lean`).
+One scope change (Danielle 2026-07-28): the `q ≡ 0` fallbacks need anum
+VALUES (z3's op-by-op arithmetic), so they were split into **nla-29**
+(full anum-arithmetic arc: `mk_binary` add/mul, `neg`, `inv`, `div`,
+then the fallbacks with z3's exact mechanism); `isolateRootsAt` returns
+`none` there until then. Catches recorded on the board:
+`var_degree_lt`'s UINT_MAX-for-unassigned; `neg` feeding `satisfied`
+in the infeasible sweep; undef-assignment sharing semantics at
+`eval_root`. Original text kept:
 
 Spec is fully written: DESIGN-nlsat-quadratic §4b (three entry points,
 from `algebraic_numbers.cpp:2246/2547/2902`). Build on nla-28

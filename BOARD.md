@@ -621,6 +621,23 @@ This is the next item; complete mutation-site list in DESIGN-endgame
   first; full S1 (nla-11) only unlocks the deep tail. Converts the capstone
   from a cliff into a ramp.
 
+## nla-29 `todo` — anum arithmetic (eval/mul/inv/div) for the q≡0 fallbacks (Danielle, 2026-07-28)
+
+The `q ≡ 0` degenerate fallbacks inside `isolateRootsAt`
+(`algebraic_numbers.cpp:2622-2678`: linear-coefficient solve with anum
+division, and the auxiliary-z nested path with anum coefficient
+evaluation) need anum VALUES — z3's op-by-op algebraic-number
+arithmetic: `imp::eval` over `add`/`mul` (both `mk_binary` —
+resultant-composed defining polynomial + interval disambiguation),
+`neg` (`p_minus_x` + interval negation), `inv` (`p_1_div_x` + rational
+interval inversion + `convert_q2bq_interval`), `div` = inv+mul. Port
+faithfully (Danielle's call over a resultant-chain shortcut: full
+mechanism, no case harder for us than for z3). Then land the two
+fallbacks with z3's exact shape, and `isolateRootsAt`'s `none` case
+disappears. Sequence: before 12c's conflict path (the solver's
+`eval_root`/`infeasible_intervals` hit degenerate traces there).
+[medium-large: own arc]
+
 ## L2/L3 — nlsat
 
 - **nla-12** `active` (lane opened 2026-07-26; slice plan + module map +
@@ -659,11 +676,28 @@ This is the next item; complete mutation-site list in DESIGN-endgame
   monic q̂, faithful lc/sign scalars); `nonzeroRootLowerBound`
   (reverse-Cauchy 2^−k); RAlg interval accessors + width-gated
   refinement. Tests pin the classic eliminations (√2 minimal poly, √6,
-  √2+√3 → x⁴−10x²+1, non-monic scaling). Next: **nla-12b-ii** —
-  evalSignAt (optimistic→substitute→interval-refine→exact (−L,L) test)
-  + isolateRootsAt (eliminate→isolate→filter + q≡0 fallbacks incl. the
-  auxiliary-z nested path) + evaluator sign_table +
-  infeasible_intervals.
+  √2+√3 → x⁴−10x²+1, non-monic scaling). **nla-12b-ii DONE
+  (2026-07-28):** `Nlsat/Evaluator.lean` — `evalSignAt` (:2246:
+  optimistic → rational-fragment substitution → magnitude-gated
+  interval refinement → exact resultant zero test with `L = 2^{−k}`,
+  nla-28 threaded incl. `save_intervals` restore semantics);
+  `isolateRootsAt` (:2547: shortcuts → substitute → stable degree-sorted
+  resultant elimination → kernel isolation → `filter_roots`;
+  `var_degree_lt`'s UINT_MAX-for-unassigned caught and ported — the
+  target sorts last); `isolateRootsSigns` (:2902: refine to
+  DEFAULT_PRECISION=2, `intLt`/`select`/`intGt` samples as rational
+  defaults). `Nlsat/EvaluatorTable.lean` — `SignTable` (merge with
+  nla-28 compare threading, add/addConst/signAt linear branch — binary
+  branch is value-identical, declared non-divergence), `satisfied`*,
+  `evalIneq`/`evalRoot` (undef-share threading caught: the target's
+  value is re-attached after isolation), `infeasibleIntervalsIneq`
+  (cell sweep; **review catch: `neg` must feed `satisfied` in the
+  sweep**, first pass dropped it) + `infeasibleIntervalsRoot` (the
+  ROOT_EQ/LT/GT/LE/GE case table). **q ≡ 0 fallbacks → nla-29**
+  (Danielle 2026-07-28: full anum-arithmetic arc first — they need
+  anum VALUES). 26 pins green incl. resultant zero test, ±2^{1/4}
+  through eliminate→isolate→filter, q≡0 → none, sign-table sweeps
+  both variants, eval predicates.
 - **nla-13** `todo` Trace checker: discharge shapes 4/5 by per-instance ring,
   shape 2 by degree dispatch (ineq / Thom / nla-09), shapes 1/3 by S1 + S2.
 - **nla-14** `todo` Front-end tactic `nonlinear_arith`: Int -> Real relaxation,
