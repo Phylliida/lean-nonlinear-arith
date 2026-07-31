@@ -150,13 +150,24 @@ partial def mkBinary (ops : MkBinaryOps) (a b : RAlg) : RAlg × RAlg × RAlg :=
         else
           match refine1 x with
           | x₁@(.rat _) =>
-            -- a became basic: restore both, re-dispatch the full op
-            -- (z3 does NOT refine b this round — short-circuit ||)
-            ops.mkBasic (restoreIfTooSmall a x₁) (restoreIfTooSmall b y)
+            -- a became basic (z3's || short-circuit: b NOT refined this
+            -- round). Restore order matters (review 2026-07-31): z3's
+            -- explicit saved_a restores are no-ops on the basic a, and
+            -- saved_b's restore fires only in the destructor AFTER
+            -- mk_basic returns — so mk_basic sees the OVER-REFINED b,
+            -- and the restore applies to whatever mk_basic leaves.
+            let (c, a'', y'') := ops.mkBasic x₁ y
+            (c, a'', restoreIfTooSmall b y'')
           | x₁ =>
             match refine1 y with
             | y₁@(.rat _) =>
-              ops.mkBasic (restoreIfTooSmall a x₁) (restoreIfTooSmall b y₁)
+              -- b became basic: z3's explicit saved_a.restore_if_too_small
+              -- fires BEFORE mk_basic (a is still algebraic), and its
+              -- destructor is then disarmed — the post-mk_basic a is
+              -- returned WITHOUT a final restore. b's restore is a no-op
+              -- on the basic b.
+              let (c, a'', y'') := ops.mkBasic (restoreIfTooSmall a x₁) y₁
+              (c, a'', y'')
             | y₁ => loop x₁ y₁ seqs'
       | _, _ => ops.mkBasic x y
     loop a b seqs0

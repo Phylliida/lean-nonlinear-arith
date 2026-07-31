@@ -623,6 +623,25 @@ This is the next item; complete mutation-site list in DESIGN-endgame
 
 ## nla-29 `done` — anum arithmetic (eval/mul/inv/div) for the q≡0 fallbacks (Danielle, 2026-07-28; closed 2026-07-31)
 
+**Design review (2026-07-31, post-close):** one F3-class fix landed
+(mkBinary became-basic restore ordering — z3's destructor semantics mean
+`mk_basic` sees the OVER-REFINED b on the a-path, and the b-path returns
+the post-`mk_basic` a WITHOUT a final restore; first cut restored both
+before re-dispatch. Judged nearly-unreachable in practice — getting a
+cell below minMagnitude inside a mk_binary loop needs ~17 failed scans —
+so no distinguishing pin; argued from source; suite re-green). Verified
+clean against source: sign-variation zero-skip conventions identical
+(:1895); deg-1 collapse is exact parity with z3's `set` (:481-487), not
+a divergence; target-factor V ≥ 1 always (non-root-endpoint invariant
+makes r_i's bracket strict) so the discard loop can never drop the
+target — no infinite-loop corner; aux-z z-shadowing ≡ z3's ext_var2num
+within the nested call; convert(x, i−1) truncation exact (:7718).
+Open items carried to the review log in the session summary: evalCore
+`.get!` on unassigned vars (panic-returns-default ⇒ silently reads cell
+0 — F7 class), silent wrong values on violated preconditions where z3
+THROWS (inv/div by zero, power 0^0), detBiv Laplace (nla-30), the new
+partial-def termination trust list, CellStore-lift file split.
+
 The `q ≡ 0` degenerate fallbacks inside `isolateRootsAt`
 (`algebraic_numbers.cpp:2622-2678`: linear-coefficient solve with anum
 division, and the auxiliary-z nested path with anum coefficient
