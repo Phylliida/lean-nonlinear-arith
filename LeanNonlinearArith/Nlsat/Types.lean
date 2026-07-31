@@ -218,7 +218,7 @@ Z3: `ineq_atom`. -/
 structure IneqAtom where
   kind : IneqKind
   factors : List (MPoly × Bool)  -- (factor, isEven)
-deriving Repr, Inhabited
+deriving Repr, DecidableEq, Inhabited
 
 /-- `x ⋈ rootᵢ(p)` with 1-based root index `i` (roots of `p` as a
 univariate in `x` under the values of lower variables). Z3: `root_atom`. -/
@@ -227,12 +227,12 @@ structure RootAtom where
   x : Var
   i : Nat
   p : MPoly
-deriving Repr, Inhabited
+deriving Repr, DecidableEq, Inhabited
 
 inductive Atom
   | ineq (a : IneqAtom)
   | root (a : RootAtom)
-deriving Repr, Inhabited
+deriving Repr, DecidableEq, Inhabited
 
 namespace Atom
 
