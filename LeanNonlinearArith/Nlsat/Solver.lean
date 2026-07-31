@@ -1,5 +1,6 @@
 import LeanNonlinearArith.Nlsat.IntervalSet
 import LeanNonlinearArith.Nlsat.Evaluator
+import LeanNonlinearArith.Nlsat.EvaluatorTable
 
 /-!
 # nla-12c — the solver loop (z3 `nlsat_solver.cpp` @ **4.12.5**)
@@ -65,7 +66,7 @@ inductive Justification
   | decision
   | clause (cid : Nat)
   | lazy (lits : Array Literal) (clauseIds : Array Nat)
-deriving Repr, Inhabited
+deriving Repr, BEq, Inhabited
 
 /-! ## Trail (`imp::trail` @ 4.12.5) -/
 
@@ -78,12 +79,12 @@ inductive TrailEntry
   | newLevel
   | newStage
   | updtEq (x : Var) (oldEq : Option Nat)
-deriving Repr, Inhabited
+deriving Repr, BEq, Inhabited
 
 /-! ## The solver state (`imp` @ 4.12.5) -/
 
 structure Solver where
-  store : CellStore
+  store : CellStore := #[]
   assignment : Assignment := #[]
   atoms : Array (Option Atom) := #[]
   bvalues : Array LBool := #[]
@@ -119,9 +120,14 @@ def liftC (f : CellM α) : SolverM α := fun s =>
   let (a, store') := f.run s.store
   (a, { s with store := store' })
 
+/-- The empty solver state (declared field defaults honored). -/
+def Solver.empty : Solver := {}
+
 /-- Run a solver computation from the empty state (test ergonomics,
-`CellStore.run'` analogue). -/
-def Solver.run' (f : SolverM α) : α := (f.run default).1
+`CellStore.run'` analogue). Uses `Solver.empty` (NOT `default` — the
+derived `Inhabited` ignores declared field defaults like
+`simplifyCores := true`). -/
+def Solver.run' (f : SolverM α) : α := (f.run Solver.empty).1
 
 namespace Solver
 
@@ -317,6 +323,214 @@ def mkTrueBvar : SolverM Unit := do
 
 /-- z3's imp-ctor initialization (post `updt_params`). -/
 def init : SolverM Unit := mkTrueBvar
+
+/-! ## nla-12c.2 — assignment, stages/levels, trail + undo, value -/
+
+/-- z3 `assigned_value`: the search-engine value (sign-flipped). -/
+def assignedValue (s : Solver) (l : Literal) : LBool :=
+  let bv := s.bvalues[l.bvar]!
+  if l.neg then bv.neg else bv
+
+/-- z3 `updt_eq` (`:1280`): maintain `m_var2eq[x]` = smallest-degree
+asserted single-factor odd equality on x (z3 stores the atom; the bvar
+is stored here — atoms are stable). Assumption gates are always-null
+under the nra entry (declared non-port). -/
+def updtEq (b : Nat) (j : Justification) : SolverM Unit := do
+  let s ← get
+  if !s.simplifyCores then return
+  if s.bvalues[b]! != .true then return
+  match s.atoms[b]? with
+  | some (some (.ineq a)) =>
+    if a.kind != .eq || a.factors.length > 1
+        || (a.factors.head?.map (·.2)).getD false then return
+    match j with
+    | .lazy lits cids => if !lits.isEmpty || !cids.isEmpty then return
+    | _ => pure ()
+    match s.xk with
+    | none => pure () -- z3 SASSERT(x != null_var): unreachable by construction
+    | some x =>
+      match s.var2eq[x]! with
+      | some oldB =>
+        let oldDeg :=
+          match s.atoms[oldB]! with
+          | some oldA => degreeAtom oldA
+          | none => 0 -- unreachable: var2eq only holds eq-atom bvars
+        if oldDeg ≤ degreeAtom (.ineq a) then return
+      | none => pure ()
+      modify fun s => { s with
+        trail := s.trail.push (.updtEq x s.var2eq[x]!)
+        var2eq := s.var2eq.set! x (some b) }
+  | _ => return
+
+/-- z3 `assign` (`:1136`): set value/level/justification, trail, count,
+then `updt_eq`. SASSERTs (undef target, non-null justification) are
+construction preconditions of the call sites. -/
+def assign (l : Literal) (j : Justification) : SolverM Unit := do
+  match j with
+  | .decision => modify fun s => { s with decisions := s.decisions + 1 }
+  | _ => modify fun s => { s with propagations := s.propagations + 1 }
+  let b := l.bvar
+  modify fun s => { s with
+    bvalues := s.bvalues.set! b (LBool.ofBool !l.neg)
+    levels := s.levels.set! b s.scopeLvl
+    justifications := s.justifications.set! b j
+    trail := s.trail.push (.bvarAssignment b) }
+  updtEq b j
+
+/-- z3 `new_level` (`:1115`). `m_evaluator.push()` is a no-op at
+4.12.5 (verified) — nothing to port there. -/
+def newLevel : SolverM Unit := do
+  modify fun s => { s with
+    scopeLvl := s.scopeLvl + 1
+    trail := s.trail.push .newLevel }
+
+/-- z3 `decide` (`:1160`). -/
+def decide (l : Literal) : SolverM Unit := do
+  newLevel
+  assign l .decision
+
+/-- z3 `new_stage` (`:1442`). -/
+def newStage : SolverM Unit := do
+  modify fun s => { s with
+    stages := s.stages + 1
+    trail := s.trail.push .newStage
+    xk := match s.xk with
+      | none => some 0
+      | some x => some (x + 1) }
+
+/-! ### trail save helpers (12c.3 saves from `updt_infeasible`/`updt_eq`;
+exposed for tests) -/
+
+def saveSetUpdtTrail (x : Var) (oldSet : IntervalSet) : SolverM Unit :=
+  modify fun s => { s with trail := s.trail.push (.infeasibleUpdt x oldSet) }
+
+/-! ### undo (`:986`–`:1108` @ 4.12.5) -/
+
+/-- z3 `undo_bvar_assignment`: undef the var and REWIND `m_bk` for pure
+booleans (`b < m_bk ⇒ m_bk = b`; z3's null bk is UINT_MAX ⇒ always
+rewinds, matched by the `none` branch). -/
+def undoBvarAssignment (b : Nat) : SolverM Unit := do
+  modify fun s => { s with
+    bvalues := s.bvalues.set! b .undef
+    levels := s.levels.set! b 0
+    justifications := s.justifications.set! b .null
+    bk := if !isArithAtom s b
+        then match s.bk with
+          | none => some b
+          | some cur => if b < cur then some b else s.bk
+        else s.bk }
+
+/-- z3 `undo_set_updt`: restore the infeasible set. z3 restores into
+the undo-TIME `m_xk`; infeasible updates always pop inside their own
+stage's trail segment (they are saved only by `updt_infeasible`, which
+requires `m_xk != null`, and their stage marker pops after them), so
+the saved var and the undo-time var coincide — the saved var is used
+directly. z3's null/size guards are construction-excluded. -/
+def undoSetUpdt (x : Var) (oldSet : IntervalSet) : SolverM Unit := do
+  modify fun s => { s with infeasible := s.infeasible.set! x oldSet }
+
+/-- z3 `undo_new_stage` — VERBATIM, including the quirk: after
+decrementing, z3 resets the assignment of the var it RETURNS to
+(`m_assignment.reset(m_xk)` post-decrement), leaving the stage being
+exited assigned; the `m_xk == 0` case assigns null with no reset. -/
+def undoNewStage : SolverM Unit := do
+  match (← get).xk with
+  | some 0 => modify fun s => { s with xk := none }
+  | some x =>
+    let x' := x - 1
+    modify fun s => { s with
+      xk := some x'
+      assignment := s.assignment.erase x' }
+  | none => pure ()
+
+/-- z3 `undo_new_level` (the `m_evaluator.pop(1)` is a no-op at
+4.12.5). -/
+def undoNewLevel : SolverM Unit := do
+  modify fun s => { s with scopeLvl := s.scopeLvl - 1 }
+
+/-- z3 `undo_updt_eq`: restore the old eq. Same saved-var vs
+undo-time-var argument as `undoSetUpdt`. -/
+def undoUpdtEq (x : Var) (oldEq : Option Nat) : SolverM Unit := do
+  modify fun s => { s with var2eq := s.var2eq.set! x oldEq }
+
+/-- z3 `undo_until`: pop and dispatch while `pred` and the trail is
+nonempty. -/
+def undoUntil (pred : SolverM Bool) : SolverM Unit := do
+  while (← pred) && !(← get).trail.isEmpty do
+    let t := (← get).trail.back! -- nonempty by the loop guard
+    match t with
+    | .bvarAssignment b => undoBvarAssignment b
+    | .infeasibleUpdt x old => undoSetUpdt x old
+    | .newStage => undoNewStage
+    | .newLevel => undoNewLevel
+    | .updtEq x old => undoUpdtEq x old
+    modify fun s => { s with trail := s.trail.pop }
+
+/-- z3 `undo_until_size`. -/
+def undoUntilSize (oldSize : Nat) : SolverM Unit :=
+  undoUntil (do return (← get).trail.size > oldSize)
+
+/-- z3 `undo_until_stage`. -/
+def undoUntilStage (newXk : Option Var) : SolverM Unit :=
+  undoUntil (do return (← get).xk != newXk)
+
+/-- z3 `undo_until_level`. -/
+def undoUntilLevel (newLvl : Nat) : SolverM Unit :=
+  undoUntil (do return (← get).scopeLvl > newLvl)
+
+/-- z3 `undo_until_unassigned`. -/
+def undoUntilUnassigned (b : Nat) : SolverM Unit :=
+  undoUntil (do return (← get).bvalues[b]! != .undef)
+
+/-- z3 `undo_until_empty`. -/
+def undoUntilEmpty : SolverM Unit :=
+  undoUntil (do return true)
+
+/-! ### value (`:1125`–`:1219` @ 4.12.5)
+
+`Option` threading per the 29.5 ruling: evaluator root paths can
+return `none` (the z3 SASSERT-violation image), which propagates;
+`value` itself only runs with the atom's max_var assigned (z3
+SASSERT) and returns `some .undef` otherwise. -/
+
+/-- z3 `value` (`:1168`): assigned value first, then the evaluator
+when the atom's max_var is assigned. -/
+def value (l : Literal) : SolverM (Option LBool) := do
+  let s ← get
+  let val := assignedValue s l
+  if val != .undef then return some val
+  match s.atoms[l.bvar]? with
+  | some (some a) =>
+    match a.maxVar with
+    | none => return some .undef -- z3: is_assigned(null_var) = false
+    | some v =>
+      if !(s.assignment.contains v) then return some .undef
+      match a with
+      | .ineq ia =>
+        return some (LBool.ofBool (← liftC (evalIneq ia l.neg s.assignment)))
+      | .root ra =>
+        match (← liftC (evalRoot ra l.neg s.assignment)) with
+        | some b => return some (LBool.ofBool b)
+        | none => return none
+  | _ => return some .undef
+
+/-- z3 `is_satisfied(clause)` (`:1196`). -/
+def isSatisfiedClause (c : Clause) : SolverM (Option Bool) := do
+  for l in c.lits do
+    match (← value l) with
+    | none => return none
+    | some .true => return some true
+    | _ => pure ()
+  return some false
+
+/-- z3 `is_inconsistent` (`:1209`). -/
+def isInconsistent (lits : Array Literal) : SolverM (Option Bool) := do
+  for l in lits do
+    match (← value l) with
+    | none => return none
+    | some .false => pure ()
+    | _ => return some false
+  return some true
 
 end Solver
 

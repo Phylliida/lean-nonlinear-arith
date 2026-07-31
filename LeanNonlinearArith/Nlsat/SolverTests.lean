@@ -145,4 +145,217 @@ private def x2 : MPoly := MPoly.ofVar 2
   let s ← get
   return s.clauses[cid]!.learned && s.clauses.size == 2)
 
+/-- Test helper: bind x to a rational value in the assignment store. -/
+private def assignVal (x : Var) (q : Rat) : SolverM Unit := do
+  let c ← liftC (CellStore.fresh (.rat q))
+  modify fun s => { s with assignment := s.assignment.set x c }
+
+/-! ## assign / decide / stages / levels -/
+
+#guard Solver.run' (do
+  Solver.init
+  let pb ← mkBoolVar
+  let sz0 := (← get).trail.size
+  decide ⟨pb, false⟩
+  let s ← get
+  return s.scopeLvl == 1 && s.decisions == 1 && s.propagations == 0
+    && s.bvalues[pb]! == .true && s.levels[pb]! == 1
+    && s.justifications[pb]! == .decision
+    && s.trail.size == sz0 + 2
+    && s.trail[sz0]! == .newLevel
+    && s.trail[sz0 + 1]! == .bvarAssignment pb)
+
+-- assign with a clause justification: propagation counter, sign flip
+#guard Solver.run' (do
+  Solver.init
+  let pb ← mkBoolVar
+  assign ⟨pb, true⟩ (.clause 0)
+  let s ← get
+  return s.bvalues[pb]! == .false && s.propagations == 1
+    && assignedValue s ⟨pb, true⟩ == .true
+    && assignedValue s ⟨pb, false⟩ == .false)
+
+-- new_stage: first from null, then increment (init's mk_clause pushes
+-- no trail entry, so the trail is exactly the two stage markers)
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let _ ← mkVar false
+  newStage
+  newStage
+  let s ← get
+  return s.xk == some 1 && s.stages == 2
+    && s.trail == #[.newStage, .newStage])
+
+/-! ## value -/
+
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let gt ← mkIneqLiteral (IneqAtom.mk .gt [(x0, false)])
+  let lt ← mkIneqLiteral (IneqAtom.mk .lt [(x0, false)])
+  -- unassigned + max_var unassigned ⇒ undef
+  let v0 ← value gt
+  -- assigned literal short-circuits
+  assign gt (.clause 0)
+  let v1 ← value gt
+  let v1n ← value ⟨gt.bvar, true⟩
+  -- evaluator path: x0 ↦ 1 makes x0 > 0 true and x0 < 0 false
+  assignVal 0 1
+  undoUntilUnassigned gt.bvar
+  let v2 ← value gt
+  let v3 ← value lt
+  return v0 == some .undef
+    && v1 == some .true && v1n == some .false
+    && v2 == some .true && v3 == some .false)
+
+-- is_satisfied / is_inconsistent on clauses
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let gt ← mkIneqLiteral (IneqAtom.mk .gt [(x0, false)])
+  let lt ← mkIneqLiteral (IneqAtom.mk .lt [(x0, false)])
+  let cid ← mkClause #[gt, lt] false
+  let c := (← get).clauses[cid]!
+  let s0 ← isSatisfiedClause c   -- both undef ⇒ not satisfied
+  assignVal 0 1
+  let s1 ← isSatisfiedClause c   -- gt true
+  let i1 ← isInconsistent c.lits -- lt false but gt true ⇒ no
+  assignVal 0 0
+  -- x0 ↦ 0: gt false, lt false ⇒ inconsistent
+  return s0 == some false && s1 == some true && i1 == some false
+    && (← isInconsistent c.lits) == some true)
+
+/-! ## undo -/
+
+-- undo_bvar_assignment: undef + bk rewind for pure booleans only
+#guard Solver.run' (do
+  Solver.init
+  let pb1 ← mkBoolVar
+  let pb2 ← mkBoolVar
+  modify fun s => { s with bk := some pb2 }
+  assign ⟨pb1, false⟩ .decision
+  let sz := (← get).trail.size
+  undoUntilSize (sz - 1)
+  let s ← get
+  return s.bvalues[pb1]! == .undef && s.bk == some pb1)
+
+-- arith literal: no bk rewind
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let arith ← mkIneqLiteral (IneqAtom.mk .gt [(x0, false)])
+  modify fun s => { s with bk := some 0 }
+  assign arith .decision
+  let sz := (← get).trail.size
+  undoUntilSize (sz - 1)
+  return (← get).bk == some 0)
+
+-- undo_new_stage quirk: decrements, then resets the var it RETURNS
+-- to; the exited stage keeps its assignment; x0 case nulls out
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let _ ← mkVar false
+  assignVal 0 10
+  assignVal 1 11
+  assignVal 2 12
+  newStage
+  newStage
+  newStage
+  undoUntilStage (some 1)
+  let s ← get
+  return s.xk == some 1
+    && s.assignment.contains 0    -- untouched
+    && !s.assignment.contains 1   -- reset (the var returned to)
+    && s.assignment.contains 2)   -- z3 quirk: exited stage stays!
+
+-- full unwind to the boolean phase
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  newStage
+  undoUntilStage none
+  return (← get).xk == none)
+
+-- undo_until_level: pops assignments and levels back to the target
+#guard Solver.run' (do
+  Solver.init
+  let pb1 ← mkBoolVar
+  let pb2 ← mkBoolVar
+  newLevel
+  assign ⟨pb1, false⟩ .decision
+  newLevel
+  assign ⟨pb2, false⟩ .decision
+  undoUntilLevel 1
+  let s ← get
+  return s.scopeLvl == 1 && s.bvalues[pb2]! == .undef
+    && s.bvalues[pb1]! == .true)
+
+/-! ## updt_eq -/
+
+private def eqAtom (p : MPoly) : IneqAtom := IneqAtom.mk .eq [(p, false)]
+
+-- var2eq tracks the smallest-degree asserted equality; trail restores
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  newStage
+  let sq ← mkIneqLiteral (eqAtom (MPoly.mul x0 x0))   -- deg 2
+  let lin ← mkIneqLiteral (eqAtom x0)                 -- deg 1
+  let cb ← mkIneqLiteral (eqAtom (MPoly.mul (MPoly.mul x0 x0) x0)) -- deg 3
+  assign sq .decision
+  let v1 := (← get).var2eq[0]!
+  assign lin (.clause 0)
+  let v2 := (← get).var2eq[0]!
+  assign cb (.clause 0)
+  let v3 := (← get).var2eq[0]!
+  -- undo the lin update: restores sq
+  let sz := (← get).trail.size
+  undoUntilSize (sz - 2)
+  let v4 := (← get).var2eq[0]!
+  return v1 == some sq.bvar && v2 == some lin.bvar && v3 == some lin.bvar
+    && v4 == some sq.bvar)
+
+-- gates: simplify_cores off / non-true value / non-EQ / multi-factor /
+-- even factor / lazy with literals
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  newStage
+  -- simplifyCores off
+  modify fun s => { s with simplifyCores := false }
+  let a ← mkIneqLiteral (eqAtom x0)
+  assign a .decision
+  let r1 := (← get).var2eq[0]!
+  modify fun s => { s with simplifyCores := true }
+  -- non-EQ atom
+  let gt ← mkIneqLiteral (IneqAtom.mk .gt [(x0, false)])
+  assign gt .decision
+  let r2 := (← get).var2eq[0]!
+  -- multi-factor EQ
+  let mf ← mkIneqLiteral (IneqAtom.mk .eq [(x0, false), (x0, false)])
+  assign mf .decision
+  let r3 := (← get).var2eq[0]!
+  -- even factor
+  let ev ← mkIneqLiteral (IneqAtom.mk .eq [(x0, true)])
+  assign ev .decision
+  let r4 := (← get).var2eq[0]!
+  -- lazy justification carrying literals
+  let b ← mkIneqLiteral (eqAtom x0)
+  assign b (.lazy #[⟨0, false⟩] #[])
+  let r5 := (← get).var2eq[0]!
+  return r1 == none && r2 == none && r3 == none && r4 == none
+    && r5 == none)
+
+-- lazy with EMPTY payloads proceeds (z3 gate: only nonempty skips)
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  newStage
+  let a ← mkIneqLiteral (eqAtom x0)
+  assign a (.lazy #[] #[])
+  return (← get).var2eq[0]! == some a.bvar)
+
 end LeanNonlinearArith.Nlsat.Tests
