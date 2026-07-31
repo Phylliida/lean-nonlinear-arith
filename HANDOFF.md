@@ -1,12 +1,13 @@
-# HANDOFF — 2026-07-31 (post nla-29 close + design review)
+# HANDOFF — 2026-07-31 (12c planning sweep; post nla-29 close + design review)
 
 Read first: `DESIGN-endgame.md` (the master plan — §0 finish line, §2
 critical path, §6 decisions + divergence register, §8 standing
-directives), then `BOARD.md` (execution units; the nla-29 entry has the
-full design-review log). Memory file
+directives), then `BOARD.md` (execution units; **nla-32** has the
+4.12.5 re-anchoring audit, **nla-12c** has the full solver-loop spec +
+slice plan). Memory file
 `verus-cad/memory/project_tactus_nonlinear_port.md` has the session
-history. Build: Nix `lake` on PATH (not elan); `lake build` green at
-commit `b7379cc`.
+history. Build: Nix `lake` on PATH (not elan); `lake build` green
+(7588 jobs) at commit `b7379cc`.
 
 ## Where we are
 
@@ -17,30 +18,39 @@ Evaluator + q≡0 fallbacks, EvaluatorTable) are all landed and pinned.
 Everything is sorry-free; trusted layer unchanged this arc (all new
 code is untrusted search-side).
 
-**Next: nla-12c — the solver loop** (2–4 sessions, the big port).
-Spec: DESIGN-endgame §2.3. Port `nlsat_solver.cpp` (4.12.5 classic
-search, no levelwise, `randomize=false`): stage/level structure keyed
-on max_var, boolean + arithmetic decisions, propagation via
-infeasible-interval sets with justification literals,
-`select_witness = pickInComplement`, conflict resolution calling
-explain (12d), backjumping, learned clauses. **SAT mode first** —
-models are verified by evaluation (the evaluator is its own checker
-for sat answers). Clause-learning minimization and restart policy are
-SEMANTIC per Q3: port verbatim; any heuristic simplification needs a
-written parity argument in the commit. Solver state owns the cell
-store (one store for the solver's lifetime; trail pops remove
-bindings, refinements persist — see CellStore.lean header). Trace
-emission hooks land here but payloads stay unpinned until 12d/19a
-(standing rule 3).
+**12c planning sweep DONE (2026-07-31):** the full nla-12c spec is now
+on the board (slice plan 12c.1–12c.6, state shape, explain boundary,
+dead-code register). The sweep surfaced a **version finding**: the
+workspace z3 checkout is 4.16-nightly, not 4.12.5 — prior arcs ported
+from the working-tree text, and the texts differ materially
+(nlsat_solver.cpp 2464 diff lines; algebraic_numbers.cpp 528;
+interval_set 170; …). New board item **nla-32 (4.12.5 re-anchoring
+audit) is sequenced BEFORE 12c**; seed finding confirmed:
+`IntervalSet.pickInComplement` follows HEAD's `pick_in_complement`
+ladder (zero-first scan, int_gt before int_lt) — 4.12.5's
+`peek_in_complement` has neither. Witness-level only, but rule 3.
+Source-of-truth rule going forward: **all nlsat ports cite
+`git show z3-4.12.5:<path>`, never the working tree.**
 
-After 12c: 12d+19a (same arc — Explain + Check.lean v0, Q1
+**Next: nla-32 (1–2 sessions), then nla-12c — the solver loop**
+(4–6 sessions, spec on the board). Two decisions pending Danielle
+(registered in DESIGN-endgame §6, recommendations recorded): (1)
+re-anchor pickInComplement to the 4.12.5 ladder; (2) port variable
+reorder verbatim in 12c.6 (it IS live in the nra_solver path —
+default true, incremental=false — DESIGN-nlsat-quadratic's "no
+reorder in v0" predates that finding). 12c.6's integer B&B loop stays
+the 12e seam.
+
+After 32 → 12c: 12d+19a (same arc — Explain + Check.lean v0, Q1
 grammar-first S3 coverage proof derived from nlsat_explain.cpp
-source), 19b (M3), 12e, 14, 15, 16. Parallel lanes: S1 (11a ∥ 11c,
-Q7 open — 11a doubles as resultantElim's semantic proof), L1
-hardening (21/22/07b/06), nla-30 (deferred multivariate-resultant
-generality), **nla-31 (termination proofs — `refineNzBound` is
-elementary, do it first; the engine loops + isolating2Refinable compose
-with nla-10/Sturm)**.
+source **at 4.12.5** — DESIGN-nlsat-quadratic's line anchors came
+from HEAD, re-anchor when 12d opens; levelwise is absent at 4.12.5 so
+the classic path is the whole file), 19b (M3), 12e, 14, 15, 16.
+Parallel lanes: S1 (11a ∥ 11c, Q7 open — 11a doubles as
+resultantElim's semantic proof), L1 hardening (21/22/07b/06), nla-30
+(deferred multivariate-resultant generality), **nla-31 (termination
+proofs — `refineNzBound` is elementary, do it first; the engine loops
++ isolating2Refinable compose with nla-10/Sturm)**.
 
 ## Key architecture (don't re-derive)
 

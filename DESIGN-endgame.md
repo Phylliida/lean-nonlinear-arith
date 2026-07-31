@@ -52,7 +52,7 @@ Done and green (all sorry-free, full build 7575 jobs):
 | anum arithmetic | nla-29 (29.1 gadgets + BivPoly resultant route, 29.2 mkBinary/mkUnary engines, 29.3 field ops, 29.4 eval walker, 29.5 q≡0 fallbacks) | **complete** (2026-07-31) |
 | Remaining declared divergences | Sturm-vs-Descartes isolation; QPoly ℚ[x] kernel (bridged at `ofQPoly`/`toZPoly`) | tracked |
 
-Open: 12c, 12d, 19a, 19b, 12e,
+Open: 32, 12c, 12d, 19a, 19b, 12e,
 13, 14, 15, 16 (critical path); 21, 22, 07b, 06 (L1 hardening);
 23, 24-residual, 25-residual, 10, 11, 30 (proof layer / S1 / deferred
 generality).
@@ -62,8 +62,11 @@ generality).
 ## 2. Critical path to Tier A
 
 Ordering (revised 2026-07-26 under Danielle's guiding rule, see §6;
-updated 2026-07-28 with nla-29; 29 closed 2026-07-31):
-**~~28~~ → ~~27~~ → ~~12b-ii~~ → ~~29~~ → 12c → 12d+19a (same arc) → 19b →
+updated 2026-07-28 with nla-29; 29 closed 2026-07-31; 32 inserted
+2026-07-31 after the version finding — the workspace z3 checkout is
+4.16-nightly but the parity target is 4.12.5, so every ported file
+needs a re-anchor audit before the solver builds on it):
+**~~28~~ → ~~27~~ → ~~12b-ii~~ → ~~29~~ → 32 → 12c → 12d+19a (same arc) → 19b →
 12e → 14 → 15 → 16.** nla-27 moved ahead of the evaluator/solver
 builds: `factor=false`
 is a live divergence from default z3, and the evaluator/solver behavior
@@ -158,6 +161,24 @@ under assignment vs direct QPoly isolation on rational cells
 vs brute-force sampling differential on a probe grid.
 
 ### 2.3 nla-12c — Solver loop *(2–4 sessions; the big port)*
+
+**Planning addendum (2026-07-31):** full spec now lives in BOARD.md's
+nla-12c entry; estimate revised to **4–6 sessions** (reorder promoted
+from "v0 skip" to port — it is live in the nra_solver path — plus the
+4.12.5 anchoring seam and resolve explicitly in-scope). Three pinning
+facts the addendum established: (1) the source text is
+`git show z3-4.12.5:src/nlsat/nlsat_solver.cpp` — the working-tree
+checkout is 4.16-nightly and differs materially (2464 diff lines);
+all future nlsat ports cite the 4.12.5 text. (2) At 4.12.5 there is no
+gc and no restart policy in the solver — Q3's verbatim clause is
+vacuous there; "minimization" = `remove_literals_from_lvl` inside
+resolve. (3) The nra entry is `check()` with no assumptions and
+incremental=false, so the assumption manager, simplify/inline_vars,
+shuffle, and debug-only layers are declared non-ports (list on the
+board). Preceded by **nla-32** (4.12.5 re-anchoring audit; seed
+finding: `pickInComplement` follows HEAD's zero-first/int_gt-first
+ladder, 4.12.5's `peek_in_complement` has neither — re-anchor before
+the solver's witness pins are derived). Original text kept:
 
 Faithful classic search of `nlsat_solver.cpp` (4.12.5, no levelwise, no
 MBQI, `randomize=false` pinned): stage/level structure keyed on max_var,
@@ -441,12 +462,22 @@ nla-28 (the `is_rational` port discovers them, exactly as z3).
 ~~`factor=false`~~ — eliminated by nla-27 (full
 `upolynomial_factorization` port; default `factor=true` parity).
 
+**Pending Danielle's call (2026-07-31, from the 12c planning sweep;
+neither enters the register until decided):** (1) `pickInComplement`
+currently follows HEAD's `pick_in_complement` (zero-first scan,
+int_gt-before-int_lt); 4.12.5's `peek_in_complement` has neither —
+recommendation: re-anchor under nla-32, small edit. (2) variable
+reorder (`heuristic_reorder`/`restore_order`) is live in the
+nra_solver path (default true, incremental=false) — recommendation:
+port verbatim in 12c.6 rather than register "no reorder".
+
 ## 7. Estimates and shape of the remainder
 
-Critical path to Tier A: **~12–18 sessions**
-(28: 1 · 27: 3–5 · 12b-ii: 1–2 · 12c: 2–4 · 12d+19a: 3–4 · 19b: 1–2 ·
-12e: 1–2 · 14: 1–2 · 15: ½ · 16: 1–2, some overlap). The 27-early
-resequencing front-loads cost but removes a re-validation pass.
+Critical path to Tier A: **~13–19 sessions remaining** (as of
+2026-07-31; 32: 1–2 · 12c: 4–6 · 12d+19a: 3–4 · 19b: 1–2 · 12e: 1–2 ·
+14: 1–2 · 15: ½ · 16: 1–2, some overlap). The 12c revision (from 2–4)
+reflects the reorder promotion, the 4.12.5 re-anchor seam, and resolve
+explicitly in-scope.
 L1 hardening: +5–8 parallel-safe. Proof layer cheap tier: folded into
 the arcs (Q5). Tier B (S1 + nla-10 + nla-13 general + M5 update):
 +12–25 with research risk concentrated in 11b; the 11a/11c lane starts
@@ -455,10 +486,11 @@ now (Q7) and runs interleaved.
 Dependency skeleton:
 
 ```
-28 → 27 → 12b-ii → 12c → 12d ⇄ 19a → 19b → 12e → 14 → 15 → 16
+28 → 27 → 12b-ii → 29 → 32 → 12c → 12d ⇄ 19a → 19b → 12e → 14 → 15 → 16
         21,22,07b,06 (parallel lane)
         S1 lane, opens now: 11a ∥ 11c → 11b → 11d → 13 → M5-full
         proof-layer cheap tier: attached per-arc (Q5)
+        nla-31 termination proofs: refineNzBound (elementary) first
 ```
 
 ## 8. Standing directives that govern all remaining work

@@ -882,6 +882,208 @@ decision). Until then the extended route stands on the
 capability-identity argument: both routes are exact on every reachable
 input.
 
+## nla-32 `todo` — 4.12.5 re-anchoring audit (found in the 12c planning sweep, 2026-07-31)
+
+**Finding:** the workspace z3 checkout is 4.16-nightly
+(`z3-4.16.0-1024-gffe29b143`), but the parity target is **4.12.5**
+(verus-dev's shipped z3 — DESIGN-endgame §2.3 pins it). Prior arcs
+read the working-tree text. Diff volume 4.12.5↔HEAD on the ported
+sources: `nlsat_solver.cpp` 2464 lines, `nlsat_explain.cpp` 1338,
+`polynomial.cpp` 1145, `algebraic_numbers.cpp` 528,
+`nra_solver.cpp` 387, `upolynomial.cpp` 347, `nlsat_interval_set.cpp`
+170, `upolynomial_factorization.cpp` 120, `nlsat_evaluator.cpp` 97,
+`nlsat_types.h` 50. Most hunks are mechanical (prefix-increment #8199,
+copy-elision #8589, structured-bindings #8425, lws merge, TRACE
+renames) — but not all.
+
+**Confirmed semantic divergence (seed finding):** our
+`IntervalSet.pickInComplement` follows HEAD's `pick_in_complement`;
+4.12.5's `peek_in_complement` differs twice at `randomize=false`:
+(1) HEAD first scans all intervals for 0-coverage and picks **0**
+whenever no interval covers it; 4.12.5 picks 0 ONLY for the null set.
+(2) HEAD tries `int_gt(last.upper)` BEFORE `int_lt(first.lower)`;
+4.12.5 is the reverse. Both change the selected witness on identical
+states (e.g. set `{(−∞,−2)}`: HEAD → 0, 4.12.5 → −1; set `{(1,3)}`:
+HEAD → 0, 4.12.5 → 0 — same by luck; single bounded interval with
+positive lower: HEAD → above, 4.12.5 → below). Witness-level only —
+any complement member is a valid witness — but rule 3 applies. Fix =
+re-anchor to the 4.12.5 ladder (drop the zero-scan, swap the int
+order) and re-derive the affected 12a/28 pins.
+
+**Scope** (per cluster: classify each 4.12.5↔HEAD hunk mechanical vs
+semantic; check which text the port follows; re-anchor to 4.12.5 or
+register a divergence with sign-off):
+- `nlsat_interval_set.{h,cpp}` — pick (above), the mk_union sweep,
+  get_justifications, get_interval.
+- `nlsat_evaluator.cpp` — infeasible_intervals / eval / sign table.
+- `nlsat_types.h` / `nlsat_assignment.h` / `nlsat_justification.h` —
+  likely mechanical.
+- `algebraic_numbers.cpp` — the anum layer (the nla-26/28/29 surface:
+  compare_core ladder, refine_core, is_rational, select, int_gt/lt,
+  mk_binary/mk_unary, imp::eval, isolate_roots, eval_sign_at).
+- `polynomial.cpp` — t_eval walker, substitute, max_smaller_than,
+  `rename` (12c's reorder consumes it), monomial orders.
+- `upolynomial.cpp` + `upolynomial_factorization.cpp` — isolation
+  anchors, nla-27 factor.
+- `mpbq.h/cpp` (small), `basic_interval.h` (unchanged),
+  `nlsat_params.pyg` (unchanged), `nlsat_justification.h` (unchanged).
+- `nra_solver.cpp` — the consumer entry (incremental=false, no
+  assumptions, mk_literal shapes, restore_order after) — re-read at
+  4.12.5 to confirm.
+- `nlsat_explain.cpp` — 12d's spec; DESIGN-nlsat-quadratic's line
+  anchors came from HEAD, re-anchor them when 12d opens (levelwise is
+  absent at 4.12.5, so the classic path IS the whole file — that part
+  of the design stands).
+
+Method = the standing review method (re-read z3 against the port),
+now against `git show z3-4.12.5:<path>` as the text. **Source-of-truth
+rule going forward: all nlsat ports cite the 4.12.5 text, never the
+working tree.** Estimate 1–2 sessions. Sequenced BEFORE 12c —
+select_witness sits on pick, and 12c's acceptance pins must be
+derived against the final anchor.
+
+## nla-12c `todo` — the solver loop (spec written 2026-07-31, 12c planning sweep)
+
+Port `nlsat_solver.cpp` classic search at **4.12.5**
+(`git show z3-4.12.5:src/nlsat/nlsat_solver.cpp`, 3743 lines — NOT the
+working tree, which carries #8425/#8498/try_reorder/gc/simplify hooks
+that postdate the parity target). Entry shape from
+`nra_solver.cpp` (the only consumer on the Verus path):
+`nlsat::solver(lim, params, /*incremental=*/false)`, `mk_var(is_int)`,
+`mk_ineq_literal` (single-factor, `is_even=false`), unit `mk_clause`s,
+`check()` (NO assumptions), `restore_order()` after. Everything the
+port builds is reachable from that entry or explicitly listed dead.
+
+**Dead under this entry (declared non-ports, each parity-inert):**
+assumption manager (`m_asm`/`m_lemma_assumptions`/`get_core`/
+`check(assumptions)` — never called; `m_lemma_assumptions` stays null
+in resolve); gc (does not exist at 4.12.5); restart policy (does not
+exist — Q3's "restart policy ported verbatim" is vacuous here;
+"minimization" = `remove_literals_from_lvl` inside resolve, which is
+ported, plus explain's `minimize_cores=false`, 12d scope);
+`simplify()`/`inline_vars` (flag false); `shuffle_vars`
+(random_order=false); `check_lemmas`/`log_lemmas`/`m_valids` (debug);
+`fix_patch` body (`m_patch_var` always empty — keep field + empty
+loop); `checkpoint()` (rlimit cancel — no-op with a note; budgets land
+at nla-14 per the withLayerHeartbeats directive); levelwise
+(post-4.12.5 entirely).
+
+**Reorder is LIVE, decision point:** `check()` calls
+`heuristic_reorder()` (reorder default true, `can_reorder()` true
+pre-search since learned is empty and no root atoms yet) and
+`restore_order()` after; nra_solver reads the model post-restore.
+DESIGN-nlsat-quadratic's "no reorder in v0" note predates this
+finding. Reorder changes stage structure → which projections/lemmas/
+witnesses emerge → trace content and cost (witness-level, never
+verdict-level). Per Q3: port verbatim (recommended — ~150
+self-contained lines: `var_info_collector`/`reorder_lt`/
+`heuristic_reorder`/`can_reorder`/`reorder`/`restore_order`/
+`remove_learned_roots`/`reset_watches`/`reattach_arith_clauses`/
+`sort_watched_clauses`/`sort_clauses_by_degree`, plus
+`m_perm`/`m_inv_perm` and `pm.rename` as an MPoly-rename over the atom
+table) or register an approved divergence with a written parity
+argument. Flagged for Danielle; plan assumes port.
+
+**State shape:** `Nlsat/Solver.lean`, untrusted.
+`SolverM := StateM Solver`; `Solver.store : CellStore` + `liftC`
+lifting CellM ops (store-era lessons apply: `modify`-style updates,
+one SolverM computation per scenario in tests). Fields mirror imp:
+assignment (`Assignment` from Evaluator.lean), atoms
+(`Array (Option Atom)`), bvalues (`LBool` tri-state, new), levels,
+justifications (new inductive: null/decision/clause id/lazy(lits,
+clauseIds)), bwatches/watches (`Array (Array ClauseId)`), dead, isInt,
+infeasible (`Array IntervalSet`), var2eq (bvar refs), clauses/learned
+(append-only id tables; `del_clause` unreachable under the entry —
+reorder fires pre-search when learned is empty), trail (5-constructor
+inductive: bvarAssignment/infeasibleUpdt/newLevel/newStage/updtEq),
+perm/invPerm, scopeLvl/stages/bk/xk, stats counters
+(conflicts/propagations/decisions — `m_conflicts` gates
+`m_max_conflicts=UINT_MAX`). `updt_eq` ported minus the
+assumption-set gates (always-null under the entry; noted).
+`is_full_dimensional` family lands with check() — the flag is stored
+for 12d's `explain.set_full_dimensional`.
+
+**Explain boundary:** `resolve` takes explain as an explicit
+parameter `Array Literal → SolverM (Array Literal)`, pinned to
+`nlsat_explain.h`@4.12.5's `operator()(num, lits, out)` (appends
+projection literals; `resolve_lazy_justification` itself appends the
+negated core). 12d supplies the real projection. Tests use a mock
+(`pure #[]`) — which is also the faithful univariate behavior (no
+lower vars ⇒ nothing to project), so univariate-conflict UNSAT pins
+are real, not mock-dependent. Trace emission hooks land here unpinned
+(standing rule 3).
+
+**Option threading (29.5 ruling):** evaluator root paths return
+`Option`; `value()` only runs with max_var assigned (z3 SASSERT), so
+`none` is the z3-abort image. `value`/`check` thread `Option` —
+`check : SolverM (Option LBool)`, `none` = z3's throw/SASSERT-abort,
+never a silent default (F7 lesson).
+
+**Seam fix in 12c.3:** z3's `infeasible_intervals(a, neg, &cls)`
+stores the clause in each interval's justification
+(`R_propagate`'s `get_justifications` reads `m_clause`); our
+`infeasibleIntervals{Ineq,Root}` don't take it. Add an optional
+`clauseId` parameter threaded to interval construction.
+
+Slice plan (each lands compiling + pinned, small commits):
+
+- **12c.1 scaffold** `todo`: LBool, Justification, TrailEntry, Solver
+  record, SolverM + liftC; mk_bool_var/mk_var/register_var/
+  mk_true_bvar; mk_ineq_literal/mk_root_atom (atom table); max_var /
+  max_bvar / degree family; `lit_lt` (pure-bool-first, then max_var,
+  then degree, then eq-last, then index — semantic: fixes
+  first_undef selection order); mk_clause (sort + attach),
+  attach/deattach watches. Pins: lit_lt order cases, watch attachment
+  by max_var/max_bvar, atom/literal/clause construction.
+- **12c.2 trail + undo + assign + value** `todo`: assign/decide/
+  new_level/new_stage/updt_eq/save_*_trail + the undo_until_* family;
+  assigned_value; value (assigned → bvalues, else evaluator when
+  max_var assigned); is_satisfied(clause)/is_inconsistent. Pins:
+  undo restores bvalues/levels/justifications/infeasible/var2eq/
+  assignment bindings (CellStore refinements persist — store-era
+  semantics); value() three-way; updt_eq degree ordering +
+  justification-kind gates.
+- **12c.3 propagation** `todo`: R_propagate (lazy jst carries core
+  lits + clause ids), updt_infeasible, process_boolean_clause,
+  process_arith_clause (the four infeasible-set cases verbatim:
+  empty ⇒ propagate l; full ⇒ propagate ¬l; subset ⇒ propagate l with
+  xk_set; union-full ⇒ propagate ¬l WITHOUT l in core
+  (include_l=false)), unit ⇒ assign+updt, else decide+updt; m_lazy
+  field ported (default 0). Clause-id seam (above). Pins per case
+  incl. justification capture.
+- **12c.4 search, SAT mode** `todo` (DESIGN's SAT-first): search loop
+  (peek_next_bool_var/new_stage alternation, process_clauses over
+  bwatches/watches, conflict → stub `pure none` until 12c.5),
+  select_witness = pickInComplement (post-nla-32 anchor), is_satisfied
+  (full), init_search. Acceptance: SAT instances (boolean-only,
+  x²−2 > 0 ∧ x < 2, circle ∧ line, the re-anchored pick ladder
+  shapes) with models VERIFIED BY EVALUATION (every input clause has a
+  true literal under the model — z3's `check_satisfied` CASSERT made
+  an external pin).
+- **12c.5 resolve** `todo`: process_antecedent/resolve_clause×2/
+  resolve_lazy_justification (explain param)/only_literals_from_
+  previous_stages/max_scope_lvl/remove_literals_from_lvl/
+  is_bool_lemma/find_new_level_arith_lemma/lemma_is_clause/resolve
+  with the goto-start loop; learned clause creation; the two backjump
+  cases (previous-stage vs decision-UIP); empty lemma ⇒ unsat.
+  Pins: boolean-only conflicts (explain never called), univariate
+  arith conflicts with mock-#[] explain (faithful, above), backjump
+  level/stage targets, learned-clause reprocessing.
+- **12c.6 reorder + check shell** `todo` (pending Danielle's reorder
+  call): reorder block per the decision point above;
+  check()/search_check (real-valued; the integer branch-and-bound
+  loop in search_check is the 12e seam — m_is_int exists but no B&B
+  fires in 12c; declared slice boundary, NOT a divergence: 12e lands
+  before any consumer); sort_watched_clauses;
+  is_full_dimensional flag; stats. Pins: reorder permutes
+  atoms/is_int/watches/assignment and restore_order round-trips
+  (behavioral: same clauses, renamed vars), watch sorting by degree.
+
+Acceptance (arc): 12c.4/12c.5 pins green, reorder round-trip green,
+full build green, HANDOFF/BOARD updated. Estimate **4–6 sessions**
+(board's earlier 2–4 predates the reorder promotion, the 4.12.5
+re-anchor seam, and resolve being explicitly in-scope).
+
 ## L2/L3 — nlsat
 
 - **nla-12** `active` (lane opened 2026-07-26; slice plan + module map +
