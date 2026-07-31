@@ -638,6 +638,104 @@ disappears. Sequence: before 12c's conflict path (the solver's
 `eval_root`/`infeasible_intervals` hit degenerate traces there).
 [medium-large: own arc]
 
+Slice plan (2026-07-31, source-anchored to algebraic_numbers.cpp unless
+noted; 29.1 decision resolved below):
+
+- **29.1 kernel gadgets** `done` (2026-07-31): `QPoly.pMinusX` /
+  `p1DivX` / `composeAnPXDivA` / `translateQ` / `composePQX` in
+  `Kernel/QPoly.lean` (verbatim ports, z3's positive scalar factors
+  preserved); `convertQ2BqInterval` in `Kernel/Roots.lean` (returns
+  `Mpbq ⊕ (Mpbq × Mpbq)` — `.inl` = exact-root discovery during the
+  walk, which z3 reports as `false`+root-in-`c`; 29.3 call sites treat
+  it as became-rational); `Kernel/BivPoly.lean` ((ℚ[x])[y] dense,
+  `composeXMinusY`/`composeXPlusY` Horner, `composeXDivY` direct,
+  `modMonic`/`powModTableB`, `detBiv` Laplace — exact over the ring
+  ℚ[x], exponential in d = deg pb, nla-30 if deep nesting demands
+  Bareiss; `resultantElimY` = lc(pb)^degF·det, NO parity factor per the
+  25.3 lesson). Pins: hand-traced z3 walks (4/3 → c=11/8 d=3/2;
+  7/5..10/7 → 721/512, 91/64; walk root-hit .inl 3/8) + √2+√3 ↦
+  x⁴−10x²+1 (differential vs the AnumEval pin), √2·√3 ↦ (x²−6)²,
+  non-monic 4x⁴−28x²+1, linear, (x²−4)². Original slice text kept:
+
+  Original scope: `pMinusX` (p(−x), odd-coeff sign flip — `p_minus_x`, used by neg
+  :1784); `p1DivX` (x^n·p(1/x) = coefficient reversal — `p_1_div_x`,
+  used by inv :1847); `translateQ` (p(x−q) Taylor shift — `translate_q`
+  :1608, algebraic+basic add); `composePQX` (q^n·p(x/q) —
+  `compose_p_q_x` :1716, algebraic×basic mul); `convertQ2BqInterval`
+  (rational interval → tight dyadic bracket — upolynomial.cpp:2833;
+  inv and both mixed basic/algebraic paths funnel through it).
+  Bivariate resultant shapes for mk_binary: represent (ℚ[x])[y] as
+  `Array QPoly` (poly in y with QPoly coeffs); `composeXMinusY` /
+  `composeXPlusY` (mk_add_polynomial :1000-1019) and `composeXDivY`
+  (y^n·pa(x/y), mk_mul_polynomial :1028-1044), then eliminate y against
+  the univariate pb(y). **Decision (Danielle, 2026-07-31): extension
+  APPROVED** — the capability sets are identical on every reachable
+  input (both routes compute the exact mathematical resultant; the
+  determinant identity `Res(f,g) = lc(g)^{deg f}·det(mult-by-f mod ĝ)`
+  is a theorem, not an approximation, valid for all f and all pb with
+  deg ≥ 1). The only inputs z3's general multivariate resultant handles
+  beyond this are multivariate second arguments, which no reachable
+  call site produces (the second argument is always a univariate
+  defining poly). Deferred-generality work recorded as **nla-30**.
+- **29.2 mk_binary/mk_unary engine** (:1210-1290, :1292+): factor
+  (nla-27) → sturmChain per factor → signVarAt at r_i endpoints →
+  discard/target loop (V≤0 discard, V==1 target, else keep) →
+  refine a/b with became-basic re-dispatch to mk_basic
+  (add_proc/sub_proc/mul_proc :1077-1099) → save_intervals /
+  restore_if_too_small (nla-28 semantics) → set_core (:1150: interval
+  contains 0 ∧ p has zero root ⇒ reset to rational 0; else mkRoot with
+  minimal flag + am::normalize zero-straddle). CellM threading
+  throughout (refine mutates cells); store-era lessons apply: one
+  CellM computation per scenario, `modify`-style fresh, no per-probe
+  allocations on mutation-free paths.
+- **29.3 the ops** (:1584-1883), dispatch tables verbatim: add/sub
+  (zero shortcuts, basic+basic, algebraic+basic via translateQ with
+  to_mpbq fast path + convertQ2BqInterval fallback, algebraic+algebraic
+  via mk_binary IsAdd); mul (zero reset, basic scaling via composePQX
+  with negative-scalar endpoint swap, mk_binary); neg (pMinusX +
+  interval negation + update_sign_lower); inv (refine_nz_bound FIRST
+  :1794-1833 — div2 walk until endpoint sign matches cell sign, root
+  hit ⇒ becomes basic; then p1DivX + rational endpoint inversion + swap
+  + convertQ2BqInterval); div = inv + mul (:1868). Division-by-zero is
+  UNREACHABLE in z3 (throws); our callers pre-discharge ≠0 (the 29.5
+  linear solve checks `!is_zero(a1)` first) — mirror as an explicit
+  precondition, no panic-guard reliance (F7 lesson).
+- **29.4 imp::eval walker**: `ext_pm.eval(c, x2v, a)` — op-by-op anum
+  evaluation of a coefficient polynomial at the assignment, over the
+  29.3 ops. This is the consumer that makes the arc "eval/mul/inv/div"
+  rather than four isolated ops; it is what both 29.5 fallbacks call.
+- **29.5 q≡0 fallbacks in isolateRootsAt** (:2622-2699): n==1 linear
+  solve (eval c0/c1 via 29.4; a1==0 ⇒ no roots; else root = −a0/a1 via
+  div+neg); n>1 auxiliary-z (scan coefficients i=n..1 for the first
+  non-vanishing one; all vanish ⇒ no roots; else build
+  q2 = z·xⁱ + Σ_{j<i} c_j·x^j in the local manager, extend the
+  assignment with z↦a, nested isolateRootsAt — z3's
+  `SASSERT(!nested_call)` caps nesting at one level; port the
+  nested-call flag exactly). Removes the `none` return from 12b-ii.
+
+Acceptance pins: √2+√3 lands on an x⁴−10x²+1 cell (differential vs the
+AnumEval pin), √2·√3 on the √6 cell, −√2 sign+interval flip, 1/√2,
+(a/b)·b ≡ a under compare; mixed basic/algebraic √2 + 1/3 (non-dyadic
+basic ⇒ convertQ2BqInterval fallback path); became-basic mid-mk_binary
+re-dispatch (one argument discovers rationality during refinement);
+q≡0 witnesses: (y²−2)(x+1) at y↦√2 ⇒ no roots (all coefficients
+vanish), (y²−2)·x² + x + c at y↦√2 ⇒ auxiliary-z path fires with z↦1.
+
+## nla-30 `todo` — general multivariate resultant (deferred; Danielle 2026-07-31)
+
+The multiplication-matrix elimination route (resultantElim in 12b-i,
+extended to mk_binary's shapes in nla-29) covers every reachable call
+site: the second argument is always a univariate defining poly. z3's
+general multivariate resultant (`polynomial.cpp` manager::resultant)
+also accepts multivariate second arguments; no reachable call site
+produces those today, but Tier B (full-degree projection, nla-11/nla-13)
+and any future elimination shape may. When the first such call site
+lands, port the general mechanism (or a value-exact equivalent with a
+provably identical capability set — the bar Danielle set for the 29.1
+decision). Until then the extended route stands on the
+capability-identity argument: both routes are exact on every reachable
+input.
+
 ## L2/L3 — nlsat
 
 - **nla-12** `active` (lane opened 2026-07-26; slice plan + module map +

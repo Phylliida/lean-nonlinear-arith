@@ -214,4 +214,67 @@ partial def refineToPrecD (p : QPoly) (signA : Int) (a b : Mpbq)
     | .inl (a', b') => refineToPrecD p signA a' b' precK
     | .inr r => .inr r
 
+/-- z3 `convert_q2bq_interval` (upolynomial.cpp:2833): tighten the
+rational isolating interval `(a, b)` to a dyadic `(c, d)` with
+`a ≤ c`, `d ≤ b`, and `sign p(c) = −sign p(d)` (the caller's contract:
+`sign p(a) = −sign p(b)`, both nonzero). `.inr (c, d)` on success;
+`.inl r` when the bisection walk hits an exact dyadic root (z3's `false`
+return, with `c` set to the root — z3's `add`/`mul` callers log and
+stumble on with a stale upper bound, `inv` throws; our 29.3 call sites
+will treat `.inl` as the became-rational discovery it is). -/
+def convertQ2BqInterval (p : QPoly) (a b : Rat) : Mpbq ⊕ (Mpbq × Mpbq) := Id.run do
+  let signA := sgn (eval p a)
+  let mut c := Mpbq.ofInt 0
+  let mut d := Mpbq.ofInt 0
+  let mut foundD := false
+  -- the `c` side
+  let (lowerA, exactA) := Mpbq.ofRat a
+  if exactA then
+    c := lowerA
+  else
+    -- ofRat failure: lowerA = a.num/2^(⌊log₂den⌋+1), between 0 and a
+    let mut lower := lowerA
+    let mut upper := Mpbq.mul2 lowerA
+    if a < 0 then
+      let t := lower; lower := upper; upper := t
+    while Mpbq.geRat upper b do
+      let (l, u) := Mpbq.refineUpper a lower upper
+      lower := l; upper := u
+    while true do
+      let signUpper := evalSignAtD p upper
+      if signUpper == 0 then
+        return .inl upper          -- found root
+      else if signUpper == signA then
+        c := upper                 -- found c
+        break
+      else
+        if !foundD then
+          foundD := true
+          d := upper               -- found d (first crossing)
+      let (l, u) := Mpbq.refineUpper a lower upper
+      lower := l; upper := u
+  -- the `d` side
+  if !foundD then
+    let (lowerB, exactB) := Mpbq.ofRat b
+    if exactB then
+      d := lowerB
+    else
+      let mut lower := lowerB
+      let mut upper := Mpbq.mul2 lowerB
+      if b < 0 then
+        let t := lower; lower := upper; upper := t
+      while Mpbq.le lower c do
+        let (l, u) := Mpbq.refineLower b lower upper
+        lower := l; upper := u
+      while true do
+        let signLower := evalSignAtD p lower
+        if signLower == 0 then
+          return .inl lower        -- found root
+        else if signLower == -signA then
+          d := lower               -- found d
+          break
+        let (l, u) := Mpbq.refineLower b lower upper
+        lower := l; upper := u
+  return .inr (c, d)
+
 end LeanNonlinearArith.Kernel.QPoly

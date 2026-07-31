@@ -119,6 +119,79 @@ def eval (p : QPoly) (x : Rat) : Rat :=
 def monic (p : QPoly) : QPoly :=
   if p.isEmpty then p else smul (1 / lc p) p
 
+/-! ## upolynomial gadget ops for anum arithmetic (nla-29.1)
+
+Faithful ports of the `upolynomial::manager` ops Z3's algebraic-number
+module uses to build defining polynomials for `neg`/`inv` and the mixed
+algebraic↔basic `add`/`mul` paths (`algebraic_numbers.cpp:1584-1883`).
+Positive scalar factors in z3's exact outputs (`den^n` in `translateQ`,
+`c^n` in `composePQX`) are preserved verbatim: they are root- and
+sign-preserving, and keeping them makes the port diffable against the
+source line by line. -/
+
+/-- z3 `p_minus_x` (upolynomial.cpp:1614): `p(−x)` — negate the
+odd-degree coefficients. -/
+def pMinusX (p : QPoly) : QPoly := Id.run do
+  let mut r := p
+  for i in [0:p.size] do
+    if i % 2 == 1 && r[i]! != 0 then
+      r := r.set! i (-r[i]!)
+  return r
+
+/-- z3 `p_1_div_x` (upolynomial.cpp:1625): `x^n·p(1/x)` — coefficient
+reversal. Trimmed: z3 keeps the dense size, but its `inv` caller has
+already excluded `0` as a root, so the constant coefficient is nonzero
+and the reversal is already trim there. -/
+def p1DivX (p : QPoly) : QPoly := trim p.reverse
+
+/-- z3 `compose_an_p_x_div_a` (upolynomial.cpp:1671): `a^n · p(x/a)`
+(coefficient `p[i]` gains the factor `a^(n−i)`). -/
+def composeAnPXDivA (p : QPoly) (a : Rat) : QPoly := Id.run do
+  if p.size ≤ 1 then return p
+  let mut r := p
+  let mut ai := a
+  let mut i := p.size - 1
+  while i > 0 do
+    i := i - 1
+    if r[i]! != 0 then
+      r := r.set! i (r[i]! * ai)
+    ai := ai * a
+  return r
+
+/-- z3 `translate_q` (upolynomial.cpp:1580): `den(b)^n · p(x + b)` —
+roots shift by `−b`; the positive `den^n` factor is z3's exact output. -/
+def translateQ (p : QPoly) (b : Rat) : QPoly := Id.run do
+  if p.size ≤ 1 then return p
+  let n := p.size - 1
+  -- Step 1: `den^n · p(x/den)`
+  let mut r := composeAnPXDivA p (b.den : Rat)
+  -- Step 2: the `num(b)` translation sweep (ascending `k`, in-place
+  -- value flow exactly as the source)
+  let c : Rat := b.num
+  for i in [1:n+1] do
+    r := r.set! (n - i) (r[n - i]! + c * r[n - i + 1]!)
+    for k in [n - i + 1:n] do
+      r := r.set! k ((b.den : Rat) * r[k]! + c * r[k + 1]!)
+    r := r.set! n ((b.den : Rat) * r[n]!)
+  return r
+
+/-- z3 `compose_p_q_x` (upolynomial.cpp:1735): for `q = b/c`,
+`c^n · p(b·x/c)` — if `u` is a root of `p` then `u·c/b` is a root of
+the result. -/
+def composePQX (p : QPoly) (q : Rat) : QPoly := Id.run do
+  if p.size ≤ 1 then return p
+  let b : Rat := q.num
+  let c : Rat := q.den
+  let n := p.size - 1
+  let mut bc : Rat := c ^ n
+  let mut r := p
+  for i in [0:p.size] do
+    if r[i]! != 0 then
+      r := r.set! i (r[i]! * bc)
+    if i < n then
+      bc := bc / c * b
+  return r
+
 /-- Monic gcd by the Euclidean algorithm, remainders re-normalized to monic
 each step (kills ℚ coefficient blowup). Fueled by the degree sum. -/
 def gcd (p q : QPoly) : QPoly := Id.run do

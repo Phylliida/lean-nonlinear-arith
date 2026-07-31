@@ -84,4 +84,26 @@ private def p (cs : Array Rat) : QPoly := trim cs
 -- root bound: x²-2 → 1 + 2 = 3
 #guard rootBound (p #[-2, 0, 1]) == 3
 
+-- ## anum gadget ops (nla-29.1a)
+-- pMinusX: 1−2x+x³ ↦ 1+2x−x³
+#guard pMinusX (p #[1, -2, 0, 1]) == p #[1, 2, 0, -1]
+-- pMinusX semantics: roots negate — p(−r) = 0 for root r of pMinusX p
+#guard eval (pMinusX (p #[2, -3, 1])) (-1) == 0   -- (x-1)(x-2): root 1 ↦ -1
+-- p1DivX: 1−2x+3x³ ↦ 3−2x²+x³
+#guard p1DivX (p #[1, -2, 0, 3]) == p #[3, 0, -2, 1]
+-- p1DivX semantics: roots invert — (x-1)(x-2) ↦ roots 1, 1/2
+#guard eval (p1DivX (p #[2, -3, 1])) (1/2) == 0
+-- composeAnPXDivA: x²−2 with a=2 ↦ 4·((x/2)²−2) = x²−8
+#guard composeAnPXDivA (p #[-2, 0, 1]) 2 == p #[-8, 0, 1]
+-- translateQ: (x−2) at b=3 ↦ x+1 (den=1: no scaling)
+#guard translateQ (p #[-2, 1]) 3 == p #[1, 1]
+-- translateQ: x²−2 at b=1/2 ↦ den²·p(x+1/2) = 4x²+4x−7 (z3's exact output)
+#guard translateQ (p #[-2, 0, 1]) (1/2) == p #[-7, 4, 4]
+-- translateQ semantics: roots shift by −b — root 1 of (x-1)(x-2) at b=1/2
+#guard eval (translateQ (p #[2, -3, 1]) (1/2)) (1/2) == 0
+-- composePQX: x²−2 with q=3/2 ↦ c²·p(3x/2) = 9x²−8
+#guard composePQX (p #[-2, 0, 1]) (3/2) == p #[-8, 0, 9]
+-- composePQX semantics: root u ↦ u/q — root 2 of (x-1)(x-2) at q=2 ↦ 1
+#guard eval (composePQX (p #[2, -3, 1]) 2) 1 == 0
+
 end LeanNonlinearArith.Kernel.QPoly.Tests

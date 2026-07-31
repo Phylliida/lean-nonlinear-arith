@@ -60,4 +60,36 @@ private def x2m2 : QPoly := p #[-2, 0, 1]          -- x² - 2
       && (b - a) * 1048576 ≤ (b0 - a0) + 1
       && a > 707/500 && b < 283/200                 -- 1.414 < √2 < 1.415
 
+-- ## convertQ2BqInterval (nla-29.1b)
+-- both endpoints already dyadic (integers): returned verbatim
+#guard convertQ2BqInterval x2m2 1 2
+  == .inr (Mpbq.ofInt 1, Mpbq.ofInt 2)
+-- non-dyadic lower endpoint 4/3: walk tightens to c = 11/8, d = 3/2
+-- (hand-traced against the z3 walk: upper 2 → 3/2, sign + ≠ signA →
+-- found_d; 5/4 → 11/8, sign − = signA → c)
+#guard convertQ2BqInterval x2m2 (4/3) 2
+  == .inr (Mpbq.mk 11 3, Mpbq.mk 3 1)
+-- non-dyadic endpoints on both sides (7/5 < √2 < 10/7): c = 721/512,
+-- d = 91/64 (hand-traced)
+#guard convertQ2BqInterval x2m2 (7/5) (10/7)
+  == .inr (Mpbq.mk 721 9, Mpbq.mk 91 6)
+-- root hit during the walk: p = (x−3/8)(x−5), a = 1/3 non-dyadic; the
+-- first refine lands upper = 3/8 which IS the root → .inl (3/8)
+#guard convertQ2BqInterval (p #[15/8, -43/8, 1]) (1/3) (1/2)
+  == .inl (Mpbq.mk 3 3)
+-- validity shape on a specimen grid: .inr brackets lie inside (a,b)
+-- with opposite endpoint signs straddling the root
+#guard Id.run do
+  let specimens : Array (QPoly × Rat × Rat) :=
+    #[(x2m2, 1, 2), (x2m2, 4/3, 3/2), (x2m2, 7/5, 10/7),
+      (p #[0, -1, 0, 1], 1/3, 5/4), (p #[-6, 11, -6, 1], 3/2, 5/2)]
+  let mut ok := true
+  for (q, a, b) in specimens do
+    match convertQ2BqInterval q a b with
+    | .inl r => ok := ok && eval q r.toRat == 0 && a < r.toRat && r.toRat < b
+    | .inr (c, d) =>
+      ok := ok && a ≤ c.toRat && c.toRat < d.toRat && d.toRat ≤ b
+        && evalSignAtD q c * evalSignAtD q d == -1
+  return ok
+
 end LeanNonlinearArith.Kernel.QPoly.RootsTests

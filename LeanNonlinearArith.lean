@@ -14,6 +14,8 @@ import LeanNonlinearArith.Kernel.Mpbq
 import LeanNonlinearArith.Kernel.MpbqTests
 import LeanNonlinearArith.Kernel.QPoly
 import LeanNonlinearArith.Kernel.QPolyTests
+import LeanNonlinearArith.Kernel.BivPoly
+import LeanNonlinearArith.Kernel.BivPolyTests
 import LeanNonlinearArith.Kernel.QPolyBench
 import LeanNonlinearArith.Kernel.Roots
 import LeanNonlinearArith.Kernel.RootsTests
