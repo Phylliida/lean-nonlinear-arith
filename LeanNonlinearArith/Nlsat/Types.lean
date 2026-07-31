@@ -200,6 +200,15 @@ def ofQPoly (q : QPoly) (x : Var) : MPoly := Id.run do
       out := add out [(c.num, if i == 0 then [] else [(x, i)])]
   return out
 
+/-- Rename variables by a permutation `σ` (z3 `pm::rename`, used by the
+solver's variable reorder). Each monomial's powers are re-sorted into
+ascending-var storage and the terms re-sorted by `lexCompare`; no
+coefficient merging is needed because `σ` is injective. -/
+def renameVars (p : MPoly) (σ : Var → Var) : MPoly :=
+  let p := p.map fun (a, m) =>
+    (a, (m.map (fun (x, e) => (σ x, e))).mergeSort (fun (x, _) (y, _) => x < y))
+  p.mergeSort (fun (_, m1) (_, m2) => Monomial.lexCompare m1 m2 == .lt)
+
 end MPoly
 
 /-! ## Atoms, literals, clauses (`nlsat_types.h`) -/

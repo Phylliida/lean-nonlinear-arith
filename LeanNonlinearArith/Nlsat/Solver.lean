@@ -792,7 +792,6 @@ abbrev ExplainFn := Array Literal → SolverM (Option (Array Literal))
 exactly when the conflict stage has no lower variables to project
 (stage-0/univariate conflicts, boolean conflicts). -/
 def mockExplain : ExplainFn := fun _ => pure (some #[])
-
 /-- z3 `mark` / `reset_mark` / `is_marked`. -/
 def mark (b : Nat) : SolverM Unit :=
   modify fun s => { s with marks := s.marks.set! b true }
@@ -998,6 +997,207 @@ def resolve (explain : ExplainFn) (conflictCid : Nat) : SolverM (Option Bool) :=
           | some true => result := some true; done := true
   resetAllMarks
   return result
+
+/-! ## nla-12c.6 — variable reorder + check shell (`:1607`–`:1640`,
+`:2257`–`:2660` @ 4.12.5)
+
+Reorder is LIVE in the nra path (default true, incremental=false) —
+Danielle's 2026-07-31 call: port verbatim. Dead branches omitted
+(declared non-ports): `simplify()`/`inline_vars` (flag false),
+`shuffle_vars` (random_order false). -/
+
+/-- z3 `is_full_dimensional(literal)` (`:2603`): no equalities or
+non-strict inequalities — the case table verbatim. -/
+def isFullDimLit (s : Solver) (l : Literal) : Bool :=
+  match s.atoms[l.bvar]! with
+  | none => true
+  | some a =>
+    match a with
+    | .ineq ia =>
+      match ia.kind with
+      | .eq => l.neg
+      | .lt | .gt => !l.neg
+    | .root ra =>
+      match ra.kind with
+      | .eq => l.neg
+      | .lt | .gt => !l.neg
+      | .le | .ge => l.neg
+
+/-- z3 `is_full_dimensional()` (`:2638`): over the INPUT clauses. -/
+def isFullDimensional (s : Solver) : Bool :=
+  s.clauses.all fun c => !c.learned && c.lits.all (isFullDimLit s)
+
+/-- z3 `has_root_atom` (`:2481`). -/
+def hasRootAtom (s : Solver) (c : Clause) : Bool :=
+  c.lits.any fun l =>
+    match s.atoms[l.bvar]! with
+    | some (.root _) => true
+    | _ => false
+
+/-- z3 `can_reorder` (`:2373`): no root atoms anywhere (`m_patch_var`
+is always empty under the nra entry). -/
+def canReorder (s : Solver) : Bool :=
+  !s.clauses.any (hasRootAtom s)
+
+/-- z3 `var_info_collector` (`:2257`): (max degree, num occurrences)
+per var, over all clauses (z3 collects `m_clauses` + `m_learned` —
+our single table covers both). -/
+def collectVarInfo (s : Solver) : Array (Nat × Nat) := Id.run do
+  let n := s.isInt.size
+  let mut maxDeg := Array.replicate n 0
+  let mut numOcc := Array.replicate n 0
+  for c in s.clauses do
+    for l in c.lits do
+      match s.atoms[l.bvar]! with
+      | some a =>
+        let polys : List MPoly :=
+          match a with
+          | .ineq ia => ia.factors.map (fun (p, _) => p)
+          | .root ra => [ra.p]
+        for p in polys do
+          for x in MPoly.vars p do
+            numOcc := numOcc.set! x (numOcc[x]! + 1)
+            let d := p.degreeIn x
+            if d > maxDeg[x]! then maxDeg := maxDeg.set! x d
+      | none => pure ()
+  return maxDeg.zip numOcc
+
+/-- z3 `reorder_lt` (`:2321`): high degree first, then more
+occurrences first, then var id. -/
+def reorderLt (info : Array (Nat × Nat)) (x y : Var) : Bool :=
+  let (dx, ox) := info[x]!
+  let (dy, oy) := info[y]!
+  if dx != dy then dx > dy
+  else if ox != oy then ox > oy
+  else x < y
+
+/-- z3 `reset_watches` (`:2535`): clear the ARITH watch lists (z3 does
+not touch `m_bwatches` — boolean watches are var-order independent). -/
+def resetWatches : SolverM Unit := do
+  modify fun s => { s with watches := s.watches.map (fun _ => #[]) }
+
+/-- z3 `reattach_arith_clauses(m_clauses)` + `(m_learned)` (`:2542`):
+re-watch every clause on its (renamed) max_var; pure-boolean clauses
+stay in `m_bwatches` and are not reattached, as z3. -/
+def reattachArithClauses : SolverM Unit := do
+  for cid in [:(← get).clauses.size] do
+    let c := (← get).clauses[cid]!
+    match maxVarClause (← get) c with
+    | some x =>
+      modify fun s => { s with watches := s.watches.modify x (·.push cid) }
+    | none => pure ()
+
+/-- z3 `remove_learned_roots` (`:2465`) as a NO-OP under the nra entry:
+with mock explain there are no root-atom learned clauses; with 12d's
+real explain they exist, but deletion is observable only under
+incremental reuse (ill-formed clauses persisting across checks), which
+the one-shot entry never does — the verdict and restored model are
+unaffected. **12d follow-up (boarded):** port real deletion (and the
+`del_clause` machinery) when the explain-produced root atoms arrive. -/
+def removeLearnedRoots : SolverM Unit := do
+  pure ()
+
+/-- Rename every atom's polys by `σ` (z3 `m_pm.rename(sz, p)`): the
+cells in the store need no renaming (they are variable-free values). -/
+def renameAtoms (σ : Var → Var) : SolverM Unit := do
+  modify fun s => { s with
+    atoms := s.atoms.map fun
+      | none => none
+      | some (.ineq a) =>
+        some (.ineq { a with factors := a.factors.map fun (p, e) =>
+          (p.renameVars σ, e) })
+      | some (.root a) =>
+        some (.root { a with p := a.p.renameVars σ }) }
+
+/-- z3 `reorder(sz, p)` (`:2387`): `p` maps internal vars to their new
+positions. Verbatim order: reset watches, build the permuted
+assignment BEFORE undoing, undo to the null stage (the explain-cache
+reset hooks are 12d no-ops), remap perms and is_int, rename polys,
+swap the assignment in, reattach. -/
+def reorder (p : Array Var) : SolverM Unit := do
+  removeLearnedRoots
+  resetWatches
+  let s ← get
+  let n := s.isInt.size
+  let mut newAsn : Assignment := #[]
+  for x in [:n] do
+    match s.assignment.get? x with
+    | some c => newAsn := newAsn.set p[x]! c
+    | none => pure ()
+  undoUntilStage none
+  -- m_perm / m_inv_perm update (z3's exact remapping)
+  let mut newInv := Array.replicate n 0
+  for extX in [:n] do
+    newInv := newInv.set! extX p[s.invPerm[extX]!]!
+  let mut newPerm := Array.replicate n 0
+  for extX in [:n] do
+    newPerm := newPerm.set! newInv[extX]! extX
+  -- is_int remap
+  let mut newIsInt := Array.replicate n false
+  for x in [:n] do
+    newIsInt := newIsInt.set! p[x]! s.isInt[x]!
+  renameAtoms (fun x => p[x]!)
+  modify fun s => { s with
+    perm := newPerm
+    invPerm := newInv
+    isInt := newIsInt
+    assignment := newAsn }
+  reattachArithClauses
+
+/-- z3 `heuristic_reorder` (`:2340`): sort vars by `reorder_lt` and
+apply the permutation (`perm[new_order[x]] = x`). -/
+def heuristicReorder : SolverM Unit := do
+  let s ← get
+  let n := s.isInt.size
+  let info := collectVarInfo s
+  let newOrder := (Array.range n).qsort (reorderLt info)
+  let mut perm := Array.replicate n 0
+  for x in [:n] do
+    perm := perm.set! newOrder[x]! x
+  reorder perm
+
+/-- z3 `restore_order` (`:2448`): reorder by the current
+(internal → external) permutation. -/
+def restoreOrder : SolverM Unit := do
+  let p := (← get).perm
+  reorder p
+
+/-- z3 `sort_clauses_by_degree`/`sort_watched_clauses` (`:2570`–`:2602`):
+each arith watch list sorted by clause degree with the ORIGINAL
+POSITION as tiebreak (z3's `degree_lt` verbatim — total order, no
+tie-order divergence). -/
+def sortWatchedClauses : SolverM Unit := do
+  let s ← get
+  let deg : Nat → Nat := fun cid => degreeClause s (s.clauses[cid]!)
+  for x in [:s.isInt.size] do
+    let sorted := s.watches[x]!.mapIdx (fun i cid => (deg cid, i, cid))
+      |>.qsort (fun (d1, i1, _) (d2, i2, _) => d1 < d2 || (d1 == d2 && i1 < i2))
+      |>.map (·.2.2)
+    modify fun s => { s with watches := s.watches.set! x sorted }
+
+/-- z3 `search_check` (`:1555`) — REAL-VALUED for 12c: the integer
+branch-and-bound loop is the 12e seam (declared slice boundary, not a
+divergence: it lands before any consumer at 12e; `m_is_int` is
+recorded but no B&B clause is emitted yet). -/
+def searchCheck (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBool) :=
+  search resolve
+
+/-- z3 `check()` (`:1607`): init, full-dimensional flag for 12d's
+explain, reorder, watch sorting, search, restore order. -/
+def check (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBool) := do
+  initSearch
+  modify fun s => { s with fullDimensional := isFullDimensional s }
+  let mut reordered := false
+  if canReorder (← get) then
+    heuristicReorder
+    reordered := true
+  sortWatchedClauses
+  let r ← searchCheck resolve
+  if reordered then
+    restoreOrder
+  -- z3 SASSERT(r != l_true || check_satisfied(m_clauses)) — the pins
+  -- discharge this externally via `modelChecksOut`.
+  return r
 
 end Solver
 

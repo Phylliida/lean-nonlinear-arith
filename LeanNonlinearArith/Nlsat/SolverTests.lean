@@ -714,4 +714,103 @@ stage-0 conflicts, which have no lower variables to project) -/
   let r ← search (resolve mockExplain)
   return r == some .undef)
 
+/-! ## nla-12c.6 — reorder + check shell -/
+
+private def x1cube : MPoly := MPoly.mul (MPoly.mul x1 x1) x1
+
+-- var info collection + reorder_lt
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar true
+  let _ ← mkVar false
+  let _ ← mkIneqLiteral (gtA x0)        -- x0: deg 1, 2 polys
+  let _ ← mkIneqLiteral (ltA (xm 3))
+  let _ ← mkIneqLiteral (gtA x1cube)    -- x1: deg 3, 1 poly
+  let _ ← mkClause #[⟨1, false⟩, ⟨2, false⟩, ⟨3, false⟩] false
+  let s ← get
+  let info := collectVarInfo s
+  return info == #[(1, 2), (3, 1)]
+    && reorderLt info 1 0 && !reorderLt info 0 1)
+
+-- heuristic reorder + restore round-trip: atoms renamed, is_int and
+-- perms remapped, assignment carried through, then fully restored
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar true   -- x0 int
+  let _ ← mkVar false  -- x1 real
+  let a1 ← mkIneqLiteral (gtA x0)
+  let a2 ← mkIneqLiteral (gtA x1cube) -- higher degree ⇒ first
+  let _ ← mkClause #[a1, a2] false
+  let c ← liftC (CellStore.fresh (.rat 7))
+  modify fun s => { s with assignment := s.assignment.set 0 c }
+  let atomsBefore := (← get).atoms
+  heuristicReorder
+  let mid ← get
+  -- perm: x1 ↦ 0, x0 ↦ 1 (x1's degree 3 wins); invPerm mirrors
+  let r1 := mid.perm == #[1, 0] && mid.invPerm == #[1, 0]
+  -- is_int remapped: position 0 = old x1 (real), 1 = old x0 (int)
+  let r2 := mid.isInt == #[false, true]
+  -- the x1³ atom is now on var 0
+  let r3 := mid.atoms[a2.bvar]! == some (Atom.ineq (gtA (MPoly.mul (MPoly.mul x0 x0) x0)))
+  -- assignment moved to the new position
+  let r4 := mid.assignment.contains 1 && !mid.assignment.contains 0
+  -- watches rebuilt on the renamed max_var (clause max = 1: the
+  -- renamed old-x0 literal dominates old-x1³'s new var 0)
+  let r5 := mid.watches[1]!.size == 1 && mid.watches[0]!.isEmpty
+  restoreOrder
+  let fin ← get
+  return r1 && r2 && r3 && r4 && r5
+    && fin.atoms == atomsBefore
+    && fin.perm == #[0, 1] && fin.invPerm == #[0, 1]
+    && fin.isInt == #[true, false]
+    && fin.assignment.contains 0)
+
+-- watch sorting by degree (position tiebreak)
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let sq ← mkIneqLiteral (gtA (MPoly.mul x0 x0)) -- deg 2, created first
+  let lin ← mkIneqLiteral (gtA x0)               -- deg 1
+  let _ ← mkClause #[sq] false
+  let _ ← mkClause #[lin] false
+  sortWatchedClauses
+  let s ← get
+  return s.watches[0]! == #[2, 1]) -- deg-1 clause (cid 2) before deg-2 (cid 1)
+
+-- is_full_dimensional flag
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let _ ← mkIneqLiteral (gtA x0)
+  let _ ← mkClause #[⟨1, false⟩] false -- x0 > 0: strict ⇒ full-dim
+  let s1 ← get
+  let _ ← mkClause #[⟨1, true⟩] false -- x0 ≤ 0: non-strict ⇒ not
+  let s2 ← get
+  return isFullDimensional s1 && !isFullDimensional s2)
+
+-- end-to-end check: SAT with reorder active (stage order changed:
+-- the degree-2 var goes first), model verified by evaluation
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let g0 ← mkIneqLiteral (gtA x0)
+  let g1 ← mkIneqLiteral (gtA (MPoly.add (MPoly.mul x1 x1) (MPoly.ofInt (-2))))
+  let c1 ← mkClause #[g0] false
+  let c2 ← mkClause #[g1] false
+  let r ← check (resolve mockExplain)
+  let s ← get
+  return r == some .true
+    && s.perm == #[0, 1] -- restored
+    && (← modelChecksOut #[c1, c2]))
+
+-- end-to-end check: UNSAT (x0² + 1 < 0 is never true)
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let l ← mkIneqLiteral (ltA x0sq1)
+  let _ ← mkClause #[l] false
+  let r ← check (resolve mockExplain)
+  return r == some .false)
+
 end LeanNonlinearArith.Nlsat.Tests
