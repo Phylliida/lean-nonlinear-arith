@@ -358,4 +358,183 @@ private def eqAtom (p : MPoly) : IneqAtom := IneqAtom.mk .eq [(p, false)]
   assign a (.lazy #[] #[])
   return (← get).var2eq[0]! == some a.bvar)
 
+/-! ## nla-12c.3 — propagation -/
+
+private def gtA (p : MPoly) : IneqAtom := IneqAtom.mk .gt [(p, false)]
+private def ltA (p : MPoly) : IneqAtom := IneqAtom.mk .lt [(p, false)]
+private def xm (c : Int) : MPoly := MPoly.add x0 (MPoly.ofInt (-c))
+private def x0sq1 : MPoly := MPoly.add (MPoly.mul x0 x0) (MPoly.ofInt 1)
+
+private def initStage : SolverM Unit := do
+  Solver.init
+  let _ ← mkVar false
+  newStage
+
+/-- infeasible[x] is exactly the single interval (−∞, q] (closed). -/
+private def checkUptoClosed (x : Var) (q : Rat) : SolverM Bool := do
+  match (← get).infeasible[x]! with
+  | some d =>
+    if d.intervals.size != 1 then return false
+    let iv := d.intervals[0]!
+    if !iv.lowerInf || iv.upperInf || iv.upperOpen then return false
+    return (← liftC (CellStore.read iv.upper)) == .rat q
+  | none => return false
+
+/-- infeasible[x] is exactly (q, ∞) (open). -/
+private def checkAboveOpen (x : Var) (q : Rat) : SolverM Bool := do
+  match (← get).infeasible[x]! with
+  | some d =>
+    if d.intervals.size != 1 then return false
+    let iv := d.intervals[0]!
+    if !iv.upperInf || iv.lowerInf || !iv.lowerOpen then return false
+    return (← liftC (CellStore.read iv.lower)) == .rat q
+  | none => return false
+
+-- subset: boundary and sweep cases
+#guard CellStore.run' (do
+  let u01 ← IntervalSet.mk true true (.rat 0) false false (.rat 1) ⟨0, false⟩
+  let u02 ← IntervalSet.mk true true (.rat 0) false false (.rat 2) ⟨0, false⟩
+  let a ← IntervalSet.subset none u01
+  let b ← IntervalSet.subset u01 none
+  let c ← IntervalSet.subset u01 u02
+  let d ← IntervalSet.subset u02 u01
+  return a && !b && c && !d)
+
+-- case (a): empty infeasible ⇒ propagate the literal (just: ~l only)
+#guard Solver.run' (do
+  initStage
+  let l ← mkIneqLiteral (gtA x0sq1) -- x0²+1 > 0: always true
+  let cid ← mkClause #[l] false
+  let r ← processClauses #[cid]
+  let s ← get
+  return r == some none
+    && s.bvalues[l.bvar]! == .true
+    && s.justifications[l.bvar]! == .lazy #[l.negate] #[])
+
+-- case (b): full infeasible ⇒ propagate ~l (just: l only); the clause
+-- is then all-false ⇒ conflict (z3 returns false after the loop)
+#guard Solver.run' (do
+  initStage
+  let l ← mkIneqLiteral (ltA x0sq1) -- x0²+1 < 0: never
+  let cid ← mkClause #[l] false
+  let r ← processClauses #[cid]
+  let s ← get
+  return r == some (some cid)
+    && s.bvalues[l.bvar]! == .false
+    && s.justifications[l.bvar]! == .lazy #[l] #[])
+
+-- case (f): single undef ⇒ assign with clause justification +
+-- updt_infeasible (trail-saved)
+#guard Solver.run' (do
+  initStage
+  let l ← mkIneqLiteral (gtA (xm 1)) -- x0 > 1
+  let cid ← mkClause #[l] false
+  let r ← processClauses #[cid]
+  let s ← get
+  return r == some none
+    && s.bvalues[l.bvar]! == .true
+    && s.justifications[l.bvar]! == .clause cid
+    && s.trail.contains (.infeasibleUpdt 0 none)
+    && (← checkUptoClosed 0 1))
+
+-- case (c): infeasible ⊆ current set ⇒ propagate with the current
+-- set's justifications + ~l
+#guard Solver.run' (do
+  initStage
+  let l1 ← mkIneqLiteral (gtA (xm 1)) -- x0 > 1 ⇒ xk_set = (−∞, 1]
+  let cid1 ← mkClause #[l1] false
+  let _ ← processClauses #[cid1]
+  let l2 ← mkIneqLiteral (gtA x0) -- x0 > 0 ⇒ infeasible (−∞, 0] ⊆ xk_set
+  let cid2 ← mkClause #[l2] false
+  let r ← processClauses #[cid2]
+  let s ← get
+  return r == some none
+    && s.bvalues[l2.bvar]! == .true
+    && s.justifications[l2.bvar]! == .lazy #[l1, l2.negate] #[cid1])
+
+-- case (d): union with current set = ℝ ⇒ propagate ~l justified by the
+-- union WITHOUT ~l pushed (include_l = false); all-false afterwards ⇒
+-- conflict (genuine: x0 ≤ 0 ∧ x0 ≥ 1 is UNSAT)
+#guard Solver.run' (do
+  initStage
+  let g0 ← mkIneqLiteral (gtA x0)
+  let l1 : Literal := ⟨g0.bvar, true⟩ -- x0 ≤ 0 ⇒ xk_set = (0, ∞)
+  let cid1 ← mkClause #[l1] false
+  let _ ← processClauses #[cid1]
+  let lt1 ← mkIneqLiteral (ltA (xm 1))
+  let l2 : Literal := ⟨lt1.bvar, true⟩ -- x0 ≥ 1 ⇒ infeasible (−∞, 1)
+  let cid2 ← mkClause #[l2] false
+  let r ← processClauses #[cid2]
+  let s ← get
+  return r == some (some cid2)
+    && s.bvalues[lt1.bvar]! == .true -- propagated ¬l2 = x0 < 1
+    && s.justifications[lt1.bvar]! == .lazy #[l2, l1] #[cid2, cid1])
+
+-- case (e): all literals false ⇒ conflict, the clause id is returned
+#guard Solver.run' (do
+  initStage
+  let g0 ← mkIneqLiteral (gtA x0)
+  let cid1 ← mkClause #[⟨g0.bvar, true⟩] false -- x0 ≤ 0
+  let _ ← processClauses #[cid1]
+  let cid2 ← mkClause #[⟨g0.bvar, false⟩] false -- x0 > 0: false now
+  let r ← processClauses #[cid2]
+  return r == some (some cid2))
+
+-- case (g): 2+ undef ⇒ decide the first (lit_lt order) + updt_infeasible
+#guard Solver.run' (do
+  initStage
+  let l1 ← mkIneqLiteral (gtA x0)
+  let l2 ← mkIneqLiteral (gtA (xm 1))
+  let cid ← mkClause #[l2, l1] false -- sorted to #[l1, l2]
+  let r ← processClauses #[cid]
+  let s ← get
+  return r == some none
+    && s.decisions == 1 && s.scopeLvl == 1
+    && s.bvalues[l1.bvar]! == .true
+    && s.justifications[l1.bvar]! == .decision
+    && (← checkUptoClosed 0 0))
+
+-- case (h): lazy mode 2 skips learned clauses (not satisfied, no
+-- action taken)
+#guard Solver.run' (do
+  initStage
+  modify fun s => { s with lazyMode := 2 }
+  let l ← mkIneqLiteral (gtA x0)
+  let cid ← mkClause #[l] true -- learned
+  let r ← processClauses #[cid]
+  let s ← get
+  return r == some none && s.bvalues[l.bvar]! == .undef)
+
+-- boolean path: unit assign / decide / conflict
+#guard Solver.run' (do
+  Solver.init
+  let pb1 ← mkBoolVar
+  let pb2 ← mkBoolVar
+  let cid ← mkClause #[⟨pb2, false⟩, ⟨pb1, false⟩] false
+  let r ← processClauses #[cid]
+  let s ← get
+  -- both undef ⇒ decide the first by literal index (pb1)
+  return r == some none && s.decisions == 1
+    && s.bvalues[pb1]! == .true && s.justifications[pb1]! == .decision)
+
+#guard Solver.run' (do
+  Solver.init
+  let pb1 ← mkBoolVar
+  let pb2 ← mkBoolVar
+  assign ⟨pb1, true⟩ (.clause 0) -- pb1 = false
+  let cid ← mkClause #[⟨pb1, false⟩, ⟨pb2, false⟩] false
+  let r ← processClauses #[cid]
+  let s ← get
+  -- unit ⇒ assign pb2 true with the clause justification
+  return r == some none && s.bvalues[pb2]! == .true
+    && s.justifications[pb2]! == .clause cid)
+
+#guard Solver.run' (do
+  Solver.init
+  let pb1 ← mkBoolVar
+  assign ⟨pb1, true⟩ (.clause 0)
+  let cid ← mkClause #[⟨pb1, false⟩] false -- wants pb1 true: conflict
+  let r ← processClauses #[cid]
+  return r == some (some cid))
+
 end LeanNonlinearArith.Nlsat.Tests

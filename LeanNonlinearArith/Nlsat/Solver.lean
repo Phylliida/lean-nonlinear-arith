@@ -532,6 +532,141 @@ def isInconsistent (lits : Array Literal) : SolverM (Option Bool) := do
     | _ => return some false
   return some true
 
+/-! ## nla-12c.3 — propagation (`:1264`–`:1428` @ 4.12.5) -/
+
+/-- z3 `R_propagate` (`:1256`): assign `l` true because `l` + the
+justifications of `s` is infeasible in the current interpretation. The
+lazy justification carries the set's distinct justification literals
+(plus `~l` when `include_l`) and clause ids. -/
+def rPropagate (l : Literal) (s : IntervalSet) (includeL : Bool := true) :
+    SolverM Unit := do
+  let (core, clauses) := IntervalSet.justifications s
+  let core := if includeL then core.push l.negate else core
+  assign l (.lazy core clauses)
+
+/-- z3 `updt_infeasible` (`:1264`): union `s` into `m_infeasible[m_xk]`
+(trail-saved). z3 SASSERTs `m_xk != null_var`; the caller
+(`processArithClause`) establishes it. -/
+def updtInfeasible (set : IntervalSet) : SolverM Unit := do
+  match (← get).xk with
+  | none => pure () -- z3 SASSERT site: unreachable by construction
+  | some x =>
+    let oldSet := (← get).infeasible[x]!
+    saveSetUpdtTrail x oldSet
+    let newSet ← liftC (IntervalSet.mkUnion set oldSet)
+    modify fun s => { s with infeasible := s.infeasible.set! x newSet }
+
+/-- z3 `process_boolean_clause` (`:1222`): scan for undef literals;
+conflict (false) when none, unit-assign when one, decide otherwise.
+The `value(l) != l_true` SASSERT holds because `processClause` checks
+`is_satisfied` first. -/
+def processBooleanClause (cid : Nat) : SolverM (Option Bool) := do
+  let c := (← get).clauses[cid]!
+  let mut numUndef := 0
+  let mut firstUndef : Option Nat := none
+  for i in [:c.lits.size] do
+    let l := c.lits[i]!
+    match (← value l) with
+    | none => return none
+    | some .false => pure ()
+    | some .undef =>
+      numUndef := numUndef + 1
+      if firstUndef.isNone then firstUndef := some i
+    | some .true => pure () -- z3 SASSERT site: excluded by the caller
+  if numUndef == 0 then return some false
+  match firstUndef with
+  | none => return some false -- unreachable: numUndef > 0
+  | some i =>
+    if numUndef == 1 then
+      assign c.lits[i]! (.clause cid)
+    else
+      decide c.lits[i]!
+  return some true
+
+/-- z3 `process_arith_clause` (`:1317`), the four infeasible-set cases
+verbatim: empty ⇒ propagate `l`; full ⇒ propagate `~l`; subset of the
+current set ⇒ propagate `l` with it; union-full ⇒ propagate `~l`
+justified by the union WITHOUT `l`. Otherwise count undefs: conflict
+when zero, unit-assign + `updt_infeasible` when one, decide +
+`updt_infeasible` when more (unless a skipped learned clause in lazy
+mode). `x` is z3's `m_xk` (SASSERT `m_xk == max_var(cls)`), passed by
+`processClause`. -/
+def processArithClause (x : Var) (cid : Nat) (satisfyLearned : Bool) :
+    SolverM (Option Bool) := do
+  let c := (← get).clauses[cid]!
+  if !satisfyLearned && (← get).lazyMode ≥ 2 && c.learned then
+    return some true -- ignore lemmas in super lazy mode
+  let mut numUndef := 0
+  let mut firstUndef : Option (Nat × IntervalSet) := none
+  for idx in [:c.lits.size] do
+    let l := c.lits[idx]!
+    match (← value l) with
+    | none => return none
+    | some .false => pure ()
+    | some .true => return some true
+    | some .undef =>
+      -- z3 SASSERTs max_var(l) == m_xk and atom != nullptr here
+      let a := ((← get).atoms[l.bvar]!).get!
+      let currSet? ←
+        match a with
+        | .ineq ia =>
+          liftC (infeasibleIntervalsIneq ia l.bvar l.neg (← get).assignment (some cid))
+        | .root ra =>
+          liftC (infeasibleIntervalsRoot ra l.bvar l.neg (← get).assignment (some cid))
+      match currSet? with
+      | none => return none -- evaluator abort image (29.5)
+      | some currSet =>
+        if IntervalSet.isEmpty currSet then
+          rPropagate l none
+          return some true
+        else if IntervalSet.isFull currSet then
+          rPropagate l.negate none
+        else
+          let xkSet := (← get).infeasible[x]!
+          if (← liftC (IntervalSet.subset currSet xkSet)) then
+            rPropagate l xkSet
+            return some true
+          else
+            let tmp ← liftC (IntervalSet.mkUnion currSet xkSet)
+            if IntervalSet.isFull tmp then
+              rPropagate l.negate tmp false
+            else
+              numUndef := numUndef + 1
+              if firstUndef.isNone then firstUndef := some (idx, currSet)
+  if numUndef == 0 then return some false
+  match firstUndef with
+  | none => return some false -- unreachable: numUndef > 0
+  | some (idx, firstSet) =>
+    if numUndef == 1 then
+      assign c.lits[idx]! (.clause cid)
+      updtInfeasible firstSet
+    else if satisfyLearned || !c.learned || (← get).lazyMode == 0 then
+      decide c.lits[idx]!
+      updtInfeasible firstSet
+    else pure () -- skipping learned clause in lazy mode
+  return some true
+
+/-- z3 `process_clause` (`:1404`). -/
+def processClause (cid : Nat) (satisfyLearned : Bool) : SolverM (Option Bool) := do
+  let c := (← get).clauses[cid]!
+  match (← isSatisfiedClause c) with
+  | none => return none
+  | some true => return some true
+  | some false =>
+    match (← get).xk with
+    | none => processBooleanClause cid
+    | some x => processArithClause x cid satisfyLearned
+
+/-- z3 `process_clauses` (`:1417`): the violating clause id, or none
+when the set was satisfied. (Outer `Option` is the 29.5 abort image.) -/
+def processClauses (cids : Array Nat) : SolverM (Option (Option Nat)) := do
+  for cid in cids do
+    match (← processClause cid false) with
+    | none => return none
+    | some false => return some (some cid)
+    | some true => pure ()
+  return some none
+
 end Solver
 
 end LeanNonlinearArith.Nlsat

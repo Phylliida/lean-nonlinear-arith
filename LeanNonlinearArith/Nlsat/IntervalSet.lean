@@ -306,6 +306,52 @@ def justifications (s : IntervalSet) : Array Literal × Array Nat := Id.run do
 
 /-! ## Witness selection (`peek_in_complement`@4.12.5, deterministic path) -/
 
+/-- z3 `interval_set_manager::subset`: every interval of `s1` is
+covered by `s2`. Two-pointer sweep; the endpoint compares refine
+stored cells (CellM threading, as everywhere in this file). z3's
+pointer-equality shortcut is strengthened to structural equality —
+equal sets are subsets anyway, so the answer is unchanged. -/
+def subset (s1 s2 : IntervalSet) : CellM Bool := do
+  if s1 == s2 then return true
+  match s1, s2 with
+  | none, _ => return true
+  | some _, none => return false
+  | some d1, some d2 =>
+    if d2.full then return true
+    if d1.full then return false
+    let sz1 := d1.intervals.size
+    let sz2 := d2.intervals.size
+    let mut i1 := 0
+    let mut i2 := 0
+    while i1 < sz1 && i2 < sz2 do
+      let int1 := d1.intervals[i1]!
+      if (← cmpLowerLower int1 d2.intervals[i2]!) == .lt then
+        return false
+      let mut advanced := false
+      while i2 < sz2 && !advanced do
+        let int2 := d2.intervals[i2]!
+        let u1u2 ← cmpUpperUpper int1 int2
+        if u1u2 == .eq then
+          -- consume both
+          i1 := i1 + 1
+          i2 := i2 + 1
+          advanced := true
+        else if u1u2 == .lt then
+          -- consume only int1
+          i1 := i1 + 1
+          advanced := true
+        else
+          let u2l1 ← cmpUpperLower int2 int1
+          if u2l1 == .lt then
+            -- consume only int2
+            i2 := i2 + 1
+            advanced := true
+          else
+            if i2 == sz2 - 1 then return false
+            if !(← adjacent int2 d2.intervals[i2 + 1]!) then return false
+            i2 := i2 + 1
+    return i1 == sz1
+
 /-- Pick a witness in the complement (Z3 **4.12.5** `peek_in_complement`
 preference order, randomize = false), as a store cell: `none` only for
 a full set. Ladder (nla-32 re-anchor; the post-4.12.5
