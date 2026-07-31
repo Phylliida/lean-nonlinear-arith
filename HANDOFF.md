@@ -11,42 +11,42 @@ history. Build: Nix `lake` on PATH (not elan); `lake build` green
 
 ## Where we are
 
-Critical path `28 → 27 → 12b-ii → 29` is DONE. L1 saturation, the
-computational kernel (QPoly/Mpbq/BivPoly/RAlg/Factor/Roots/CellStore/
-AnumArith), and the nlsat evaluator lane (Types, IntervalSet, AnumEval,
-Evaluator + q≡0 fallbacks, EvaluatorTable) are all landed and pinned.
+Critical path `28 → 27 → 12b-ii → 29 → 32 → 12c` is DONE. L1
+saturation, the computational kernel, the nlsat evaluator lane, the
+4.12.5 re-anchoring audit (nla-32: two divergences re-anchored), and
+**the solver loop (nla-12c, all six slices)** are landed and pinned.
 Everything is sorry-free; trusted layer unchanged this arc (all new
-code is untrusted search-side).
+code is untrusted search-side). `Nlsat/Solver.lean` ports
+`nlsat_solver.cpp`@4.12.5: scaffold + hash-consed atom table, the
+trail/undo family (quirks verbatim), propagation with justification
+capture, the search loop (SAT models verified by evaluation), full
+resolve with the `ExplainFn` boundary pinned to
+`nlsat_explain.h`@4.12.5, and the reorder + check shell (reorder is
+live in the nra path — ported verbatim per Danielle's call).
+12d follow-ups already on the board: real `remove_learned_roots` +
+del_clause when explain's root atoms arrive; explain line anchors
+re-anchor to 4.12.5 when 12d opens.
 
-**12c planning sweep DONE (2026-07-31):** the full nla-12c spec is now
-on the board (slice plan 12c.1–12c.6, state shape, explain boundary,
-dead-code register). The sweep surfaced a **version finding**: the
-workspace z3 checkout is 4.16-nightly, not 4.12.5 — prior arcs ported
-from the working-tree text, and the texts differ materially
-(nlsat_solver.cpp 2464 diff lines; algebraic_numbers.cpp 528;
-interval_set 170; …). New board item **nla-32 (4.12.5 re-anchoring
-audit) is sequenced BEFORE 12c**; seed finding confirmed:
-`IntervalSet.pickInComplement` follows HEAD's `pick_in_complement`
-ladder (zero-first scan, int_gt before int_lt) — 4.12.5's
-`peek_in_complement` has neither. Witness-level only, but rule 3.
-Source-of-truth rule going forward: **all nlsat ports cite
-`git show z3-4.12.5:<path>`, never the working tree.**
+**Next: nla-12d + nla-19a — Explain + Checker v0, same arc** (3–4
+sessions combined per DESIGN-endgame §2.4). 12d: `Nlsat/Explain.lean`
+— classic projection restricted to the fragment (`nlsat_explain.cpp`
+**at 4.12.5** — DESIGN-nlsat-quadratic's line anchors came from HEAD,
+re-anchor first; levelwise absent there = classic is the whole file):
+`project()` with `ensure_sign` on lcs/psc-chain elements, root atoms
+via `mk_linear_root`/`mk_quadratic_root` incl. the degenerate-A
+`mk_plinear_root` fallback, `add_cell_lits`, pseudo-division sign
+transfer, square-free steps; fragment gate deg ≤ 2 in the top var at
+every projection step; emits the 8-shape trace language. 19a:
+`Nlsat/Check.lean` v0 — discharge map (leafNumeric → nla-09
+certificates, thomQuadratic → S3 kit, linearRoot → plain lemmas,
+cellBound → S3 ordering family) + the Q1 grammar-first S3 coverage
+proof derived from nlsat_explain.cpp source. The solver's explain
+hook is live (`ExplainFn` in Solver.lean); trace payloads pin against
+the checker (standing rule 3).
 
-**Next: nla-12c — the solver loop** (4–6 sessions, full spec on the
-board; ~~nla-32~~ DONE same day — two divergences found and
-re-anchored: pickInComplement's ladder [zero-scan dropped, int_below
-first] and int_lt/int_gt [4.12.5 = pure reads, the refine-first +
-const_cast is post-4.12.5]; the rest of the audit verified clean —
-details in the BOARD nla-32 entry). Both sweep decisions are DECIDED
-(Danielle, 2026-07-31, DESIGN-endgame §6): re-anchor pickInComplement
-to the 4.12.5 ladder; port variable reorder verbatim in 12c.6.
-12c.6's integer B&B loop stays the 12e seam.
-
-After 32 → 12c: 12d+19a (same arc — Explain + Check.lean v0, Q1
-grammar-first S3 coverage proof derived from nlsat_explain.cpp
-source **at 4.12.5** — DESIGN-nlsat-quadratic's line anchors came
-from HEAD, re-anchor when 12d opens; levelwise is absent at 4.12.5 so
-the classic path is the whole file), 19b (M3), 12e, 14, 15, 16.
+After 12d+19a: 19b (M3), 12e (integer branching — the search_check
+B&B loop is the marked seam), 14 (nonlinear_arith tactic,
+withLayerHeartbeats), 15 (tactus wiring), 16 (parity harness).
 Parallel lanes: S1 (11a ∥ 11c, Q7 open — 11a doubles as
 resultantElim's semantic proof), L1 hardening (21/22/07b/06), nla-30
 (deferred multivariate-resultant generality), **nla-31 (termination

@@ -999,7 +999,72 @@ working tree.** Estimate 1–2 sessions. Sequenced BEFORE 12c —
 select_witness sits on pick, and 12c's acceptance pins must be
 derived against the final anchor.
 
-## nla-12c `todo` — the solver loop (spec written 2026-07-31, 12c planning sweep)
+## nla-12c `done` (2026-07-31, same day as the spec) — the solver loop
+
+**CLOSED — all six slices landed, full build green (7590 jobs), 50+
+new pins.** `Nlsat/Solver.lean` (+ `SolverTests.lean`).
+
+- **12c.1 scaffold** `done`: LBool, Justification (null/decision/
+  clause/lazy — z3's tagged pointer as an inductive), TrailEntry
+  (5 kinds), Solver record + `SolverM := StateM Solver` + `liftC`,
+  mk_bool_var/mk_var/mk_true_bvar, atom table WITH hash-consing
+  (structural-equality scan — creation is frontend-driven, not hot;
+  `DecidableEq` added to the atom types), max_var/max_bvar/degree
+  family (incl. null-poisoning of `max_var(sz, cls)` — z3's UINT_MAX
+  null is the GREATEST, replicated via `optVarLt`), `lit_lt` (semantic:
+  fixes first_undef selection order), mk_clause (sort + attach),
+  bwatches/watches attachment.
+- **12c.2 trail + undo + assign + value** `done`: the full save/undo
+  family VERBATIM incl. `undo_new_stage`'s decrement-then-reset quirk
+  (the exited stage KEEPS its assignment — probed and pinned) and the
+  `m_bk` rewind; updt_eq with all gates + degree ordering; evaluator-
+  backed value/is_satisfied/is_inconsistent with Option threading
+  (29.5 ruling). **Lesson (pinned in `Solver.run'`): the derived
+  `Inhabited` ignores structure field defaults** — `simplifyCores`
+  came out false; use `{}` (`Solver.empty`), never `default`.
+- **12c.3 propagation** `done`: `IntervalSet.subset` (z3's two-pointer
+  sweep, verbatim cases), R_propagate (lazy justifications carry core
+  literals + CLAUSE IDS — the 12b-ii clauseId seam turned out to
+  exist already), updt_infeasible, the four infeasible-set cases
+  verbatim. **Behavior pin worth remembering:** propagate-then-
+  conflict — after R_propagate falsifies the last undef literal,
+  num_undef == 0 ⇒ z3 returns false (conflict) — the pins assert
+  exactly that.
+- **12c.4 search SAT-mode** `done`: peek_next_bool_var (exhausted bk
+  STAYS exhausted — null ≠ 0), is_satisfied (null xk = UINT_MAX ≥
+  num_vars, matched), select_witness on the re-anchored pick ladder,
+  init_search, `search` with resolve-as-parameter. Acceptance pins
+  verify models by evaluation (z3's check_satisfied CASSERT made
+  external): boolean-only (negative-first decide), one-var algebraic,
+  two-var conflict-free, EQ atom with the shared-endpoint irrational
+  witness, stub-resolve abort on genuine conflict.
+- **12c.5 resolve** `done`: process_antecedent/resolve_clause/
+  resolve_lazy_justification (explain as the `ExplainFn` param pinned
+  to `nlsat_explain.h`@4.12.5 — projection literals returned, resolve
+  appends the negated core), only_previous_stages/max_scope_lvl/
+  remove_literals_from_lvl/is_bool_lemma/find_new_level_arith_lemma/
+  lemma_is_clause, both backjump cases, learned clauses, the goto-
+  start loop. mockExplain for tests is faithful for boolean + stage-0
+  conflicts (nothing below to project). Pins: trivial UNSAT, chained
+  resolution with learned unit + level-0 empty lemma, stage-0 arith
+  UNSAT, case-1 stage backjump + goto start, case-2 decision reversal
+  to SAT, max_conflicts gate.
+- **12c.6 reorder + check shell** `done`: var_info_collector/
+  reorder_lt/heuristic_reorder/reorder/restore_order verbatim
+  (reset+reattach ARITH watches only — z3 keeps bwatches; permuted
+  assignment built BEFORE undo; `pm.rename` as `MPoly.renameVars`
+  over the atom table — cells are var-free, untouched),
+  sort_watched_clauses (z3's degree_lt tiebreaks by ORIGINAL
+  POSITION — total order, no tie divergence), is_full_dimensional
+  (stored for 12d), check()/search_check. **`remove_learned_roots`
+  is a no-op with a written parity argument** (observable only under
+  incremental reuse, which the one-shot nra entry never does;
+  **12d follow-up:** port real deletion + the del_clause machinery
+  when explain-produced root atoms arrive). 12e seam marked in
+  search_check (real-valued; the integer B&B loop lands at 12e
+  before any consumer).
+
+Original spec (the planning-sweep entry, kept for the record):
 
 Port `nlsat_solver.cpp` classic search at **4.12.5**
 (`git show z3-4.12.5:src/nlsat/nlsat_solver.cpp`, 3743 lines — NOT the

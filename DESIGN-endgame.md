@@ -65,11 +65,11 @@ Ordering (revised 2026-07-26 under Danielle's guiding rule, see §6;
 updated 2026-07-28 with nla-29; 29 closed 2026-07-31; 32 inserted
 2026-07-31 after the version finding — the workspace z3 checkout is
 4.16-nightly but the parity target is 4.12.5, so every ported file
-needed a re-anchor audit before the solver builds on it; **32 closed
-same day** — two divergences found and re-anchored
+needed a re-anchor audit before the solver builds on it; **32 and
+12c both closed same day** — 32: two divergences re-anchored
 [pickInComplement ladder, int_lt/int_gt refine-first], rest verified
-clean):
-**~~28~~ → ~~27~~ → ~~12b-ii~~ → ~~29~~ → ~~32~~ → 12c → 12d+19a (same arc) → 19b →
+clean; 12c: all six slices landed incl. the verbatim reorder port):
+**~~28~~ → ~~27~~ → ~~12b-ii~~ → ~~29~~ → ~~32~~ → ~~12c~~ → 12d+19a (same arc) → 19b →
 12e → 14 → 15 → 16.** nla-27 moved ahead of the evaluator/solver
 builds: `factor=false`
 is a live divergence from default z3, and the evaluator/solver behavior
