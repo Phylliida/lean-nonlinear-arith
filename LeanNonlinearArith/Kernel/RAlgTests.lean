@@ -114,13 +114,14 @@ def negSqrt2 : RAlg := .root #[-2, 0, 1] (-2) (-1)
   rs.size == 2 && (RAlg.compare rs[1]! sqrt2).1 == .eq &&
   (match rs[1]! with | .root p _ _ _ => p.size == 3 | _ => false)
 
--- intGt/intLt (z3 refine-then-ceil/floor — note ceil(upper), not ⌊·⌋+1)
-#guard (RAlg.intGt sqrt2).1 == 2
-#guard (RAlg.intLt sqrt2).1 == 1
-#guard (RAlg.intGt (.rat 2)).1 == 3
-#guard (RAlg.intLt (.rat 2)).1 == 1
-#guard (RAlg.intGt negSqrt2).1 == -1
-#guard (RAlg.intLt negSqrt2).1 == -2
+-- intGt/intLt (4.12.5: floor/ceil read off the CURRENT bounds, no
+-- refine-first — ceil(upper), not ⌊·⌋+1, for cells)
+#guard RAlg.intGt sqrt2 == 2
+#guard RAlg.intLt sqrt2 == 1
+#guard RAlg.intGt (.rat 2) == 3
+#guard RAlg.intLt (.rat 2) == 1
+#guard RAlg.intGt negSqrt2 == -1
+#guard RAlg.intLt negSqrt2 == -2
 
 /-! ## Unfueled compare mechanism (nla-26.3, z3 `compare_core` ladder) -/
 
@@ -191,10 +192,9 @@ zero never strictly inside an isolating interval -/
 -- is restored — the returned cell is the input, not the over-refined one
 #guard RAlg.isRational (.root #[-2, 0, 65536] 0 1)
   == (false, .root #[-2, 0, 65536] 0 1)
--- threading: intGt's refine-to-width-<1/2 persists in the returned cell
-#guard match (RAlg.intGt sqrt2).2 with
-  | .root _ a b _ => b.toRat - a.toRat < 1/2
-  | .rat _ => false
+-- nla-32: 4.12.5's int_gt does NOT refine — the cell comes back as-is
+-- (the refine-to-precision-1 const_cast is post-4.12.5)
+#guard RAlg.intGt sqrt2 == 2 && sqrt2 == .root #[-2, 0, 1] 1 2
 -- threading: select's separate refines both sides; returned cells are the
 -- same values (compare eq against the originals)
 #guard

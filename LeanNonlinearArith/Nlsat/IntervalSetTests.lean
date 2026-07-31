@@ -345,9 +345,9 @@ private def buildAllSets : CellM (List IntervalSet) := do
 
 /-! ## nla-28 — statefulness pins (cell-store model) -/
 
--- Acceptance pin 1 (refinement persists): pickInComplement's intGt refines
--- the STORED upper endpoint to width < 1/2 (z3 const_cast, :2830) — visible
--- through the set's endpoint id
+-- Acceptance pin 1 (nla-32 re-anchored): pickInComplement's intGt reads
+-- the CURRENT upper bound (⌈2⌉ = 2) and — unlike post-4.12.5 z3 — does
+-- NOT refine the stored endpoint; it stays exactly the input cell
 #guard withShared fun s => do
   match (← pickInComplement s.uptoSqrt2) with
   | some c =>
@@ -356,9 +356,8 @@ private def buildAllSets : CellM (List IntervalSet) := do
       if q != 2 then return false
       match s.uptoSqrt2 with
       | some d =>
-        match (← CellStore.read d.intervals[d.intervals.size - 1]!.upper) with
-        | .root _ a b _ => return b.toRat - a.toRat < 1/2
-        | _ => return false
+        return (← CellStore.read d.intervals[d.intervals.size - 1]!.upper)
+          == .root #[-2, 0, 1] 1 2
       | none => return false
     | _ => return false
   | none => return false

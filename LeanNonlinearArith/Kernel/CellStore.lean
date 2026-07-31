@@ -96,19 +96,14 @@ def leC (x y : CellId) : CellM Bool := do
   write y b'
   return r
 
-/-- z3 `am::int_lt` (the `const_cast` site). -/
+/-- z3 4.12.5 `am::int_lt` on a stored cell — PURE read at 4.12.5
+(nla-32 re-anchor: no const_cast refinement there). -/
 def intLtC (x : CellId) : CellM Int := do
-  let a ← read x
-  let (r, a') := RAlg.intLt a
-  write x a'
-  return r
+  return RAlg.intLt (← read x)
 
-/-- z3 `am::int_gt` (the `const_cast` site). -/
+/-- z3 4.12.5 `am::int_gt` on a stored cell — pure read, as `intLtC`. -/
 def intGtC (x : CellId) : CellM Int := do
-  let a ← read x
-  let (r, a') := RAlg.intGt a
-  write x a'
-  return r
+  return RAlg.intGt (← read x)
 
 /-- z3 `am::select` on stored cells. Returns the witness as a rational
 (z3 sets a basic output numeral) and persists the separated cells. -/

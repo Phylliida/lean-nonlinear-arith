@@ -36,16 +36,18 @@ counting.
 
 **Statefulness (nla-28):** Z3's anum ops MUTATE their operands and the
 refinement persists in solver state — `compare_core` takes `numeral &`
-and refines both sides; `int_lt`/`int_gt` `const_cast` through const
-pointers (`algebraic_numbers.cpp:2830/2843`); `is_rational` refines and
+and refines both sides; `is_rational` refines and
 can `set(a, candidate)` the value to a discovered rational
 (`algebraic_numbers.cpp:285`); `select`/`separate` take `numeral &`.
+(nla-32 re-anchor: `int_lt`/`int_gt` are PURE at 4.12.5 — the
+`const_cast` refine-to-precision-1 in them is a post-4.12.5 addition,
+not ported.)
 The faithful functional image (DESIGN-endgame §2.1, Q2): every refining
 op returns its (possibly refined) argument(s) alongside the result, and
 callers that store cells (interval sets now, the solver assignment at
 12c) thread the updated cells back into their store. Ops that never
-refine (`sign`, `signOfPolyAt`, `magnitude`, root-vs-rational compare)
-stay pure.
+refine (`sign`, `signOfPolyAt`, `magnitude`, root-vs-rational compare,
+`intLt`/`intGt`) stay pure.
 -/
 
 namespace LeanNonlinearArith.Kernel
@@ -177,22 +179,23 @@ def magnitude : RAlg → Int
   | .rat _ => minMagnitude
   | .root _ a b _ => intervalMagnitude a b
 
-/-- z3 `am::int_lt` (`algebraic_numbers.cpp:2827`): an integer strictly
-below the value — refined to width < 1/2 first, so the answer stays
-near the value (`⌊lower⌋` for cells, `⌊v⌋ − 1` for basic values).
-nla-28: z3 `const_cast`s the refinement into the stored numeral; we
-return the refined cell alongside. -/
-def intLt (x : RAlg) : Int × RAlg :=
-  match refineUntilPrec x 1 with
-  | .rat q => (Mpbq.ratFloorInt q - 1, .rat q)
-  | y@(.root _ a _ _) => (Mpbq.floorInt a, y)
+/-- z3 **4.12.5** `am::int_lt`: an integer strictly below the value
+(`⌊v⌋ − 1` for basic values, `⌊lower⌋` read off the CURRENT dyadic
+bound for cells). PURE: 4.12.5 does not refine or mutate the operand
+here — the `refine_until_prec(a, 1)` + `const_cast` is a post-4.12.5
+addition (nla-32 re-anchor; the tuple return of nla-28 is gone with
+it). -/
+def intLt : RAlg → Int
+  | .rat q => Mpbq.ratFloorInt q - 1
+  | .root _ a _ _ => Mpbq.floorInt a
 
-/-- z3 `am::int_gt` (`algebraic_numbers.cpp:2840`): an integer strictly
-above the value. Same nla-28 threading as `intLt`. -/
-def intGt (x : RAlg) : Int × RAlg :=
-  match refineUntilPrec x 1 with
-  | .rat q => (Mpbq.ratCeilInt q + 1, .rat q)
-  | y@(.root _ _ b _) => (Mpbq.ceilInt b, y)
+/-- z3 **4.12.5** `am::int_gt`: an integer strictly above the value
+(`⌈v⌉ + 1` for basic, `⌈upper⌉` for cells — valid because a cell's
+dyadic upper bound strictly exceeds its irrational value). Pure, same
+re-anchor as `intLt`. -/
+def intGt : RAlg → Int
+  | .rat q => Mpbq.ratCeilInt q + 1
+  | .root _ _ b _ => Mpbq.ceilInt b
 
 /-- z3 `imp::is_rational` (`algebraic_numbers.cpp:285`): rational-root-theorem
 discovery. Refine to width `< 1/2^(log2|aₙ|+1)` so that `|aₙ|·(l,u)` contains
