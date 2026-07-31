@@ -667,6 +667,114 @@ def processClauses (cids : Array Nat) : SolverM (Option (Option Nat)) := do
     | some true => pure ()
   return some none
 
+/-! ## nla-12c.4 — the search loop, SAT mode (`:1429`–`:1545` @ 4.12.5) -/
+
+/-- z3 `peek_next_bool_var` (`:1429`): advance `m_bk` to the first
+unassigned, non-dead, pure-boolean var; null when exhausted (and an
+exhausted bk STAYS exhausted — z3's null is UINT_MAX, not 0). -/
+def peekNextBoolVar : SolverM Unit := do
+  let s ← get
+  let mut bk :=
+    match s.bk with
+    | some b => b
+    | none => s.atoms.size -- z3 null_bool_var: the while loop cannot fire
+  while bk < s.atoms.size do
+    if !s.dead[bk]! && (s.atoms[bk]!).isNone && s.bvalues[bk]! == .undef then
+      modify fun s => { s with bk := some bk }
+      return
+    bk := bk + 1
+  modify fun s => { s with bk := none }
+
+/-- z3 `is_satisfied()` (`:1469`): bk exhausted and stage past the last
+var. z3's null m_xk is UINT_MAX ≥ num_vars — the `none` branch returns
+true to match (that state never reaches the call, but rule 3).
+`fix_patch()` is a no-op under the nra entry (m_patch_var always
+empty — declared non-port). -/
+def isSatisfiedFull : SolverM Bool := do
+  let s ← get
+  if !s.bk.isNone then return false
+  match s.xk with
+  | none => return true
+  | some x => return x ≥ s.isInt.size
+
+/-- z3 `select_witness` (`:1454`): pick a witness in the complement of
+the current infeasible set (the nla-32-re-anchored ladder) and bind
+the stage var to it. SASSERT(!is_full) holds by construction. -/
+def selectWitness : SolverM Unit := do
+  match (← get).xk with
+  | none => pure () -- z3 SASSERT site: unreachable by construction
+  | some x =>
+    match (← liftC (IntervalSet.pickInComplement (← get).infeasible[x]!)) with
+    | none => pure () -- z3 SASSERT(!is_full): unreachable by construction
+    | some c =>
+      modify fun s => { s with assignment := s.assignment.set x c }
+
+/-- z3 `init_search` (`:1642`): unwind everything, reset values and the
+assignment. -/
+def initSearch : SolverM Unit := do
+  undoUntilEmpty
+  while (← get).scopeLvl > 0 do
+    undoNewLevel
+  modify fun s => { s with
+    xk := none
+    bvalues := s.bvalues.map (fun _ => .undef)
+    assignment := #[] }
+
+/-- z3 `search` (`:1485`): stage/level DPLL loop. The resolve
+implementation is a parameter — 12c.4 drives it with the stub (SAT
+mode first, per the board), 12c.5 wires the real conflict resolution.
+Returns l_true/l_false/l_undef as `some _`, or `none` for the 29.5
+abort image (z3's throw). -/
+def search (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBool) := do
+  modify fun s => { s with bk := some 0, xk := none, conflicts := 0 }
+  while true do
+    -- stage advance (z3: peek bool var, else next stage)
+    match (← get).xk with
+    | none =>
+      peekNextBoolVar
+      if (← get).bk.isNone then newStage
+    | some _ => newStage
+    if (← isSatisfiedFull) then return some .true
+    -- propagation until fixpoint (no conflict), abort, or unsat
+    let mut done := false
+    while !done do
+      let s ← get
+      let wl ←
+        match s.xk with
+        | none =>
+          match s.bk with
+          | some b => pure s.bwatches[b]!
+          | none => pure #[] -- unreachable: bk is set by peek above
+        | some x => pure s.watches[x]!
+      match (← processClauses wl) with
+      | none => return none
+      | some (some cid) =>
+        match (← resolve cid) with
+        | none => return none
+        | some false => return some .false
+        | some true =>
+          if (← get).conflicts ≥ (← get).maxConflicts then
+            return some .undef
+      | some none => done := true
+    -- decide the boolean var (negative-first: literal(bk, true)), or
+    -- select the arithmetic witness
+    match (← get).xk with
+    | none =>
+      match (← get).bk with
+      | some b =>
+        if (← get).bvalues[b]! == .undef then
+          decide ⟨b, true⟩
+          modify fun s => { s with bk := some (b + 1) }
+      | none => pure () -- unreachable by construction
+    | some _ => selectWitness
+  -- unreachable: the loop only exits via `return` (z3's checkpoint-cancel
+  -- exits here by exception — the 29.5 abort image; budgets land at 14)
+  return none
+
+/-- The 12c.4 stub resolve: no conflict resolution yet — aborts (the
+`none` image) on the first conflict. SAT-mode-first per the board. -/
+def stubResolve : Nat → SolverM (Option Bool) := fun _ => pure none
+
 end Solver
 
 end LeanNonlinearArith.Nlsat

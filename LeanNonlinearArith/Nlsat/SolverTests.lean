@@ -537,4 +537,97 @@ private def checkAboveOpen (x : Var) (q : Rat) : SolverM Bool := do
   let r ← processClauses #[cid]
   return r == some (some cid))
 
+/-! ## nla-12c.4 — search, SAT mode (models verified by evaluation) -/
+
+private def x0sq2 : MPoly := MPoly.add (MPoly.mul x0 x0) (MPoly.ofInt (-2))
+
+/-- The board's SAT acceptance: every input clause has a true literal
+under the produced assignment (z3's `check_satisfied(m_clauses)`
+CASSERT made an external pin). -/
+private def modelChecksOut (cids : Array Nat) : SolverM Bool := do
+  for cid in cids do
+    let c := (← get).clauses[cid]!
+    if (← isSatisfiedClause c) != some true then return false
+  return true
+
+-- boolean-only SAT, with a negative-first decision
+#guard Solver.run' (do
+  Solver.init
+  let pb1 ← mkBoolVar
+  let pb2 ← mkBoolVar
+  let c1 ← mkClause #[⟨pb1, false⟩, ⟨pb2, false⟩] false
+  let r ← search stubResolve
+  let s ← get
+  return r == some .true
+    && s.bvalues[pb1]! == .false -- negative-first decide
+    && s.bvalues[pb2]! == .true  -- unit after the decide
+    && (← modelChecksOut #[c1]))
+
+-- one arith var: x0² − 2 > 0 ∧ x0 < 2
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let gt ← mkIneqLiteral (gtA x0sq2)
+  let lt ← mkIneqLiteral (ltA (xm 2))
+  let c1 ← mkClause #[gt] false
+  let c2 ← mkClause #[lt] false
+  let r ← search stubResolve
+  let s ← get
+  return r == some .true
+    && s.assignment.contains 0
+    && (← modelChecksOut #[c1, c2]))
+
+-- two arith vars, conflict-free: x0 > 0 ∧ x1 > x0
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let g0 ← mkIneqLiteral (gtA x0)
+  let g10 ← mkIneqLiteral (gtA (MPoly.sub x1 x0))
+  let c1 ← mkClause #[g0] false
+  let c2 ← mkClause #[g10] false
+  let r ← search stubResolve
+  let s ← get
+  return r == some .true
+    && s.assignment.contains 0 && s.assignment.contains 1
+    && (← modelChecksOut #[c1, c2]))
+
+-- EQ atom with irrational witness (shared-endpoint pick): x0² − 2 = 0
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let eq ← mkIneqLiteral (IneqAtom.mk .eq [(x0sq2, false)])
+  let c1 ← mkClause #[eq] false
+  let r ← search stubResolve
+  let s ← get
+  return r == some .true
+    && (← modelChecksOut #[c1]))
+
+-- UNSAT at propagation level, no resolve: the abort image (stub
+-- resolve returns none on the genuine conflict x0 ≤ 0 ∧ x0 ≥ 1)
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let g0 ← mkIneqLiteral (gtA x0)
+  let lt1 ← mkIneqLiteral (ltA (xm 1))
+  let c1 ← mkClause #[⟨g0.bvar, true⟩] false -- x0 ≤ 0
+  let c2 ← mkClause #[⟨lt1.bvar, true⟩] false -- x0 ≥ 1
+  let r ← search stubResolve
+  return r == none)
+
+-- init_search unwinds everything
+#guard Solver.run' (do
+  Solver.init
+  let pb ← mkBoolVar
+  let _ ← mkVar false
+  decide ⟨pb, false⟩
+  newStage
+  let c ← liftC (CellStore.fresh (.rat 3))
+  modify fun s => { s with assignment := s.assignment.set 0 c }
+  initSearch
+  let s ← get
+  return s.scopeLvl == 0 && s.xk == none && s.trail.isEmpty
+    && s.assignment.isEmpty
+    && s.bvalues.all (· == .undef))
+
 end LeanNonlinearArith.Nlsat.Tests
