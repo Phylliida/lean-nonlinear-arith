@@ -1,5 +1,6 @@
 import LeanNonlinearArith.Nlsat.AnumEval
 import LeanNonlinearArith.Nlsat.IntervalSet
+import LeanNonlinearArith.Kernel.AnumArith
 
 /-!
 # nla-12b-ii — evaluator assembly: `evalSignAt` + `isolateRootsAt` + signs
@@ -242,14 +243,89 @@ def evalSignAt (p : MPoly) (σ : Assignment) (defQ : Option Rat := none) : CellM
           | _ => pure ()
   return result
 
+/-- Max variable `< x` appearing in `terms[start..termEnd)` (z3
+`polynomial::max_smaller_than`). -/
+private def maxSmallerThan (terms : Array (Int × Monomial)) (start termEnd : Nat)
+    (x : Var) : Option Var := Id.run do
+  let mut best : Option Var := none
+  for i in [start:termEnd] do
+    for (y, _) in terms[i]!.2 do
+      if y < x then
+        match best with
+        | none => best := some y
+        | some b => if b < y then best := some y
+  return best
+
+/-- z3 `t_eval_core` (polynomial.cpp:6676): evaluate the sub-polynomial
+of monomials `[start, termEnd)` over variables `≤ x` with op-by-op anum
+arithmetic — Horner over `x` with recursive coefficient evaluation.
+Stored cells are refined through the ops (z3 reaches them via the
+public const_cast wrappers); temps are overwritten per op call in both
+worlds, so no temp threading is needed. Precondition (z3 SASSERT):
+every variable `≤ x` in the slice is assigned. -/
+partial def evalCore (terms : Array (Int × Monomial)) (σ : Assignment)
+    (start termEnd : Nat) (x : Var) : CellM RAlg := do
+  if termEnd == start + 1 then
+    let (a, m) := terms[start]!
+    let mut r : RAlg := .rat a
+    for (y, d) in m do
+      if y > x then break
+      let cy := (σ.get? y).get!    -- z3 SASSERT(x2v.contains(y))
+      let (pw, vy') := RAlg.power (← CellStore.read cy) d
+      CellStore.write cy vy'
+      r := (RAlg.mul r pw).1
+    return r
+  else
+    let cx := (σ.get? x).get!      -- z3 SASSERT(x2v.contains(x))
+    let mut r : RAlg := .rat 0
+    let mut i := start
+    while i < termEnd do
+      let d := terms[i]!.2.degreeIn x
+      if d == 0 then
+        match maxSmallerThan terms i termEnd x with
+        | none => r := (RAlg.add r (.rat terms[i]!.1)).1
+        | some y => r := (RAlg.add r (← evalCore terms σ i termEnd y)).1
+        break
+      let mut j := i + 1
+      let mut nextD := 0
+      while j < termEnd do
+        let dj := terms[j]!.2.degreeIn x
+        if dj < d then
+          nextD := dj
+          break
+        j := j + 1
+      let aux ← match maxSmallerThan terms i j x with
+        | none => pure (.rat terms[i]!.1)
+        | some y => evalCore terms σ i j y
+      r := (RAlg.add r aux).1
+      let (pw, xv') := RAlg.power (← CellStore.read cx) (d - nextD)
+      CellStore.write cx xv'
+      r := (RAlg.mul r pw).1
+      i := j
+    return r
+
+/-- z3 `imp::eval` = `t_eval` (polynomial.cpp:6749/6793): evaluate `p`
+at the assignment with op-by-op anum arithmetic. z3 lex-sorts first;
+our MPoly is already canonical (the approved eager-sorted
+representation). Precondition (z3 SASSERT): every variable of `p` is
+assigned. -/
+partial def evalAnum (p : MPoly) (σ : Assignment) : CellM RAlg := do
+  if p.isZero then return .rat 0
+  if let some c := p.asConst? then return .rat c
+  let x := p.maxVar.getD 0
+  evalCore p.toArray σ 0 p.length x
+
 /-- z3 `isolate_roots` under partial assignment (`algebraic_numbers.cpp:2547`).
-Roots are fresh store cells. `none` marks the `q ≡ 0` degenerate
-fallback (linear-coeff solve / auxiliary-z) — boarded as **nla-29**
-(Danielle 2026-07-28). `nested` is the recursive-call flag (z3 SASSERTs
-the degenerate case can't recur there). -/
-def isolateRootsAt (p : MPoly) (σ : Assignment) (nested : Bool := false) :
+Roots are fresh store cells. The `q ≡ 0` degenerate fallbacks
+(:2622-2699) are ported: linear-coefficient solve via anum division,
+and the auxiliary-z nested elimination. `nested` is the recursive-call
+flag — the fallback is unreachable under it (z3 `SASSERT(!nested_call)`;
+the nested resultant cannot vanish since 0 is not a root of the
+polynomial defining the auxiliary value) and returns `none` there.
+`partial`: z3's recursion is capped at one nesting level by the flag —
+not structural for Lean. -/
+partial def isolateRootsAt (p : MPoly) (σ : Assignment) (nested : Bool := false) :
     CellM (Option (Array CellId)) := do
-  let _ := nested
   let freshAll (rs : Array RAlg) : CellM (Array CellId) := do
     let mut out : Array CellId := #[]
     for r in rs do
@@ -295,8 +371,41 @@ def isolateRootsAt (p : MPoly) (σ : Assignment) (nested : Bool := false) :
       | .root qp _ _ _ => q := resultantElim q y qp
       | _ => pure ()
   if q.isZero then
-    -- q ≡ 0 fallback (nla-29: linear-coeff solve / auxiliary-z)
-    return none
+    if nested then
+      -- z3 SASSERT(!nested_call): unreachable — the nested resultant
+      -- cannot vanish (0 is not a root of the poly defining `a`)
+      return none
+    -- q ≡ 0 degenerate fallback (:2628-2699)
+    let n := p'.degreeIn x
+    if n == 1 then
+      -- p' is linear in x: evaluate the coefficients; root = −a0/a1
+      let cs := p'.coeffsIn x
+      let a0 ← evalAnum (cs.getD 0 []) σ
+      let a1 ← evalAnum (cs.getD 1 []) σ
+      if RAlg.isZeroV a1 then
+        -- coefficient of degree 1 vanished: p' has no roots at σ
+        return some #[]
+      let (d, _, _) := RAlg.div a0 a1
+      return some #[← CellStore.fresh (RAlg.neg d)]
+    -- scan coefficients i = n … 1 for the first non-vanishing one
+    let cs := p'.coeffsIn x
+    let mut i := n
+    let mut a : RAlg := .rat 0
+    while i ≥ 1 do
+      a ← evalAnum (cs.getD i []) σ
+      if !RAlg.isZeroV a then break
+      i := i - 1
+    if i == 0 then
+      -- all coefficients of x vanished: p' has no roots at σ
+      return some #[]
+    -- auxiliary variable: q2 = z·xⁱ + (p' with x-degree capped at i−1),
+    -- isolate with σ extended by z ↦ a (z3 ext_var2num)
+    let z := (p'.maxVar.getD 0) + 1
+    let trunc : MPoly := p'.filter fun (_, m) => m.degreeIn x ≤ i - 1
+    let zxi : MPoly := [(1, [(x, i), (z, 1)])]   -- var-ascending (z > x)
+    let q2 := MPoly.add zxi trunc
+    let zc ← CellStore.fresh a
+    return (← isolateRootsAt q2 (σ.set z zc) true)
   if q.asConst?.isSome then
     return some #[]
   -- isolate the univariate q and filter candidates by exact sign

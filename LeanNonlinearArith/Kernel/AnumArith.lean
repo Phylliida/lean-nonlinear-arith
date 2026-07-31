@@ -306,6 +306,87 @@ partial def div (a b : RAlg) : RAlg × RAlg × RAlg :=
   let (c, a', _) := mul a binv
   (c, a', b)
 
+/-- z3 `x − y^k` as a bivariate (the `mk_power_polynomial` shape,
+:1430). -/
+private def xMinusYPow (k : Nat) : BivPoly := Id.run do
+  let mut r : BivPoly := Array.replicate (k + 1) #[]
+  r := r.set! 0 QPoly.X
+  r := r.set! k (QPoly.C (-1))
+  return r
+
+/-- The two functor bundles of z3's `mk_unary` template (analogue of
+`MkBinaryOps`; `mkBasic` returns only the result — the became-basic
+operand is the restored input itself). -/
+structure MkUnaryOps where
+  mkPoly : QPoly → QPoly
+  mkInterval : MpbqI → MpbqI
+  mkBasic : RAlg → RAlg
+
+/-- z3 `mk_unary` (:1292): same engine as `mkBinary`, single operand —
+`save_intervals` on `a` only, restore on both exits (z3's duplicate
+`saved_a` call at :1359 and the destructor agree here). Returns
+`(result, refinedA)` for the nla-28 write-back. -/
+partial def mkUnary (ops : MkUnaryOps) (a : RAlg) : RAlg × RAlg :=
+  match a with
+  | .root pa _ _ _ =>
+    let p := ops.mkPoly pa
+    let (fullFact, fs) := factor (QPoly.toZPoly p)
+    let factors : Array QPoly := fs.factors.map fun (fp, _) => ZPoly.toQPoly fp
+    let seqs0 : Array (Option (Array QPoly)) := factors.map fun f => some (sturmChain f)
+    let rec loop (x : RAlg) (seqs : Array (Option (Array QPoly))) : RAlg × RAlg :=
+      match x with
+      | .root _ xa xb _ =>
+        let ri := ops.mkInterval ⟨xa, xb⟩
+        let (numRem, targetI, targetLV, targetUV, seqs') := Id.run do
+          let mut numRem := 0
+          let mut targetI := seqs.size
+          let mut targetLV : Int := 0
+          let mut targetUV : Int := 0
+          let mut seqs := seqs
+          for i in [0:seqs.size] do
+            if let some ch := seqs[i]! then
+              let lV := signVarAt ch ri.lo.toRat
+              let uV := signVarAt ch ri.hi.toRat
+              let V : Int := (lV : Int) - (uV : Int)
+              if V ≤ 0 then
+                seqs := seqs.set! i none
+              else if V == 1 then
+                targetI := i; targetLV := lV; targetUV := uV
+                numRem := numRem + 1
+              else
+                numRem := numRem + 1
+          return (numRem, targetI, targetLV, targetUV, seqs)
+        if numRem == 1 && targetI != seqs'.size then
+          (setCore factors[targetI]! ri (seqs'[targetI]!.get!)
+            targetLV targetUV fullFact,
+           restoreIfTooSmall a x)
+        else
+          match refine1 x with
+          | x₁@(.rat _) =>
+            let x' := restoreIfTooSmall a x₁
+            (ops.mkBasic x', x')
+          | x₁ => loop x₁ seqs'
+      | _ => (ops.mkBasic x, x)
+    loop a seqs0
+  | _ => (ops.mkBasic a, a)
+
+/-- z3 `power(numeral, k, b)` (:1559): `k = 0 ⇒ 1`, `k = 1 ⇒ a`,
+`a = 0 ⇒ 0`, basic ⇒ rational power, else `mkUnary` with
+`resultant_y(x − y^k, pa(y))` and the interval power. Returns
+`(result, refinedA)` (the stored-cell write-back for the const_cast
+sites, e.g. `t_eval_core`'s `vm.power(x2v(x), …)`). -/
+partial def power (a : RAlg) (k : Nat) : RAlg × RAlg :=
+  if k == 0 then (.rat 1, a)
+  else if k == 1 then (a, a)
+  else if isZeroV a then (.rat 0, a)
+  else
+    match a with
+    | .rat q => (.rat (q ^ k), a)
+    | .root .. =>
+      mkUnary ⟨fun pa => BivPoly.resultantElimY (xMinusYPow k) pa,
+        fun i => MpbqI.pow i k,
+        fun x => (power x k).1⟩ a
+
 end RAlg
 
 /-! ## CellStore lifts (owner-level threading, nla-28 discipline) -/

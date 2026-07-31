@@ -83,12 +83,72 @@ private def x2my : MPoly := MPoly.sub (MPoly.mul x0 x0) x1
 #guard CellStore.run' (do
   let σ ← Assignment.ofValues [(0, .rat 1), (1, .rat 1)]
   return (← isolateRootsAt (MPoly.sub x0 x1) σ) == some #[])
--- q ≡ 0 fallback ⇒ none (nla-29): p = x·(y²−2) shares the cell's defining
--- polynomial with the assignment y ↦ √2
+-- q ≡ 0 fallback (nla-29.5): p = x·(y²−2) shares the cell's defining
+-- polynomial with the assignment y ↦ √2 — the resultant vanishes, the
+-- linear coefficient evaluates to 0 ⇒ z3's "no roots" (:2650-2653)
 #guard CellStore.run' (do
   let σ ← Assignment.ofValues [(1, sqrt2)]
   let p := MPoly.mul x0 (MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2))
-  return (← isolateRootsAt p σ) == none)
+  return (← isolateRootsAt p σ) == some #[])
+
+/-! ## evalAnum (nla-29.4, z3 imp::eval = t_eval) -/
+
+private def sqrt3 : RAlg := .root #[-3, 0, 1] 1 2
+private def sqrt6 : RAlg := .root #[-6, 0, 1] 2 3
+
+-- x²+y² at √2,√3 = 5 exactly (powers become basic through the arithmetic)
+#guard CellStore.run' (do
+  let p := MPoly.add (MPoly.mul x0 x0) (MPoly.mul x1 x1)
+  return (← evalAnum p (← Assignment.ofValues [(0, sqrt2), (1, sqrt3)])) == .rat 5)
+-- x·y at √2,√3 = √6
+#guard CellStore.run' (do
+  let v ← evalAnum (MPoly.mul x0 x1) (← Assignment.ofValues [(0, sqrt2), (1, sqrt3)])
+  return (← CellStore.compareC (← CellStore.fresh v) (← CellStore.fresh sqrt6)) == .eq)
+-- x³−x·y at √2,3 = 2√2−3√2 = −√2 (Horner over the max var, power path)
+#guard CellStore.run' (do
+  let p := MPoly.sub (MPoly.mul (MPoly.mul x0 x0) x0) (MPoly.mul x0 x1)
+  let v ← evalAnum p (← Assignment.ofValues [(0, sqrt2), (1, .rat 3)])
+  return (← CellStore.compareC (← CellStore.fresh v) (← CellStore.fresh sqrt2m)) == .eq)
+
+/-! ## q ≡ 0 fallbacks (nla-29.5) -/
+
+-- the reducible-cell setup (z3's non-minimal defining polys): y ↦ the
+-- √2 root of (y²−2)(y²−3) = y⁴−5y²+6, isolated by (1, 3/2)
+private def sqrt2Reducible : RAlg := .root #[6, 0, -5, 0, 1] 1 (Mpbq.mk 3 1)
+private def y2m3 : MPoly := MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 3)
+
+-- linear-coeff solve: p = (y²−3)(x−1) — the resultant vanishes (y²−3
+-- divides every coefficient), but at y = √2 the coefficients are −1, 1:
+-- root = −a0/a1 = 1 (:2647-2658)
+#guard CellStore.run' (do
+  let σ ← Assignment.ofValues [(1, sqrt2Reducible)]
+  match (← isolateRootsAt (MPoly.mul y2m3 (MPoly.sub x0 (MPoly.ofInt 1))) σ) with
+  | some rs =>
+    if rs.size != 1 then return false
+    return (← CellStore.compareC rs[0]! (← CellStore.fresh (.rat 1))) == .eq
+  | none => return false)
+-- auxiliary-z nested path: p = (y²−3)(x²−x−1) — q ≡ 0, first
+-- non-vanishing coefficient is c₂ = y²−3 ↦ −1 at √2; q2 = z·x² + rest
+-- with z ↦ −1; the nested elimination's candidates are filtered down to
+-- the two roots (1±√5)/2 (:2660-2698)
+#guard CellStore.run' (do
+  let σ ← Assignment.ofValues [(1, sqrt2Reducible)]
+  let x2mxm1 := MPoly.sub (MPoly.sub (MPoly.mul x0 x0) x0) (MPoly.ofInt 1)
+  match (← isolateRootsAt (MPoly.mul y2m3 x2mxm1) σ) with
+  | some rs =>
+    if rs.size != 2 then return false
+    let expected := RAlg.isolateRoots #[-1, -1, 1]
+    if expected.size != 2 then return false
+    return (← CellStore.compareC rs[0]! (← CellStore.fresh expected[0]!)) == .eq
+      && (← CellStore.compareC rs[1]! (← CellStore.fresh expected[1]!)) == .eq
+  | none => return false)
+-- all coefficients vanish ⇒ no roots (:2670-2674): p = (y²−2)(x²+x+1)
+-- at y ↦ √2
+#guard CellStore.run' (do
+  let σ ← Assignment.ofValues [(1, sqrt2)]
+  let y2m2 := MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2)
+  let x2xp1 := MPoly.add (MPoly.add (MPoly.mul x0 x0) x0) (MPoly.ofInt 1)
+  return (← isolateRootsAt (MPoly.mul y2m2 x2xp1) σ) == some #[])
 
 /-! ## isolateRootsSigns -/
 

@@ -621,7 +621,7 @@ This is the next item; complete mutation-site list in DESIGN-endgame
   first; full S1 (nla-11) only unlocks the deep tail. Converts the capstone
   from a cliff into a ramp.
 
-## nla-29 `todo` — anum arithmetic (eval/mul/inv/div) for the q≡0 fallbacks (Danielle, 2026-07-28)
+## nla-29 `done` — anum arithmetic (eval/mul/inv/div) for the q≡0 fallbacks (Danielle, 2026-07-28; closed 2026-07-31)
 
 The `q ≡ 0` degenerate fallbacks inside `isolateRootsAt`
 (`algebraic_numbers.cpp:2622-2678`: linear-coefficient solve with anum
@@ -741,26 +741,55 @@ noted; 29.1 decision resolved below):
   UNREACHABLE in z3 (throws); our callers pre-discharge ≠0 (the 29.5
   linear solve checks `!is_zero(a1)` first) — mirror as an explicit
   precondition, no panic-guard reliance (F7 lesson).
-- **29.4 imp::eval walker**: `ext_pm.eval(c, x2v, a)` — op-by-op anum
-  evaluation of a coefficient polynomial at the assignment, over the
-  29.3 ops. This is the consumer that makes the arc "eval/mul/inv/div"
-  rather than four isolated ops; it is what both 29.5 fallbacks call.
-- **29.5 q≡0 fallbacks in isolateRootsAt** (:2622-2699): n==1 linear
-  solve (eval c0/c1 via 29.4; a1==0 ⇒ no roots; else root = −a0/a1 via
-  div+neg); n>1 auxiliary-z (scan coefficients i=n..1 for the first
-  non-vanishing one; all vanish ⇒ no roots; else build
-  q2 = z·xⁱ + Σ_{j<i} c_j·x^j in the local manager, extend the
-  assignment with z↦a, nested isolateRootsAt — z3's
-  `SASSERT(!nested_call)` caps nesting at one level; port the
-  nested-call flag exactly). Removes the `none` return from 12b-ii.
+- **29.4 imp::eval walker** `done` (2026-07-31): `evalAnum`/`evalCore`
+  in `Nlsat/Evaluator.lean` — `t_eval`/`t_eval_core`
+  (polynomial.cpp:6676/6749) verbatim: Horner over the max var with
+  recursive coefficient evaluation (`maxSmallerThan` =
+  polynomial::max_smaller_than), group splitting on x-degree drops,
+  single-monomial ascending-var walk. z3 lex-sorts first; our MPoly is
+  already canonical (approved eager-sort). Stored-cell refinements
+  persist via the ops' write-backs (z3 reaches them through the public
+  const_cast wrappers — probe-confirmed :3268-3300: the "const&" ops
+  mutate); temps are overwritten per op in both worlds, so no temp
+  threading. Required `RAlg.power` (z3 `power` :1559 via a new
+  `mkUnary` engine in AnumArith.lean — this board's earlier "mk_unary
+  unreachable from our op set" note was WRONG: t_eval's
+  `vm.power(x2v(y), d, …)` reaches it; `xMinusYPow` =
+  resultant_y(x−y^k, pa(y)), `MpbqI.pow` interval, power_proc
+  re-dispatch).
+- **29.5 q≡0 fallbacks in isolateRootsAt** `done` (2026-07-31): linear
+  solve (eval c0/c1; a1 == 0 ⇒ no roots; else root = −a0/a1 via
+  div+neg); auxiliary-z (first non-vanishing coefficient scan i = n..1;
+  all vanish ⇒ no roots; else q2 = z·xⁱ + (p' capped at x-degree i−1),
+  z ↦ a, nested call with the flag — `partial`, z3 caps nesting at one
+  level by SASSERT). `none` survives only for the z3-SASSERT-violation
+  case (nested ∧ q ≡ 0). WITNESS ANALYSIS (corrects the acceptance
+  sketch below): q ≡ 0 needs ONE factor F of the (square-free, possibly
+  reducible) defining poly d dividing EVERY x-coefficient of p'; if F's
+  root IS the assigned value, all coefficients vanish (the no-roots
+  case); if it is a DIFFERENT factor's root, none vanish and aux-z
+  fires with i = n. The "(y²−2)·x² + x + c ⇒ aux-z z↦1" sketch was
+  wrong — the resultant does not vanish there (normal path handles it).
 
-Acceptance pins: √2+√3 lands on an x⁴−10x²+1 cell (differential vs the
+Acceptance pins landed (EvaluatorTests + AnumArithTests): √2+√3 ↦
+x⁴−10x²+1 cell (differential vs the AnumEval pin), √2·√3 = √6, −√2,
+1/√2, div roundtrip; mixed basic/algebraic √2+1/3 and √2/3 (non-dyadic
+⇒ convertQ2BqInterval fallback); the designed became-basic mid-mkBinary
+pin (a' == .rat 2 persisted); evalAnum: x²+y² ↦ 5, x·y ↦ √6,
+x³−xy ↦ −√2; q≡0 witnesses: x·(y²−2) at √2 ⇒ #[] (the stale `none`
+pin updated — z3 returns empty roots there), (y²−3)(x−1) at the
+√2-root-of-(y²−2)(y²−3) cell ⇒ root 1 via div+neg, (y²−3)(x²−x−1)
+same cell ⇒ aux-z ⇒ exactly {(1±√5)/2} (.eq to isolateRoots of
+x²−x−1; the filter drops 0 and ±√(1+√2)), (y²−2)(x²+x+1) at √2 ⇒ #[].
+
+Original acceptance sketch (for the record): √2+√3 lands on an x⁴−10x²+1 cell (differential vs the
 AnumEval pin), √2·√3 on the √6 cell, −√2 sign+interval flip, 1/√2,
 (a/b)·b ≡ a under compare; mixed basic/algebraic √2 + 1/3 (non-dyadic
 basic ⇒ convertQ2BqInterval fallback path); became-basic mid-mk_binary
 re-dispatch (one argument discovers rationality during refinement);
 q≡0 witnesses: (y²−2)(x+1) at y↦√2 ⇒ no roots (all coefficients
-vanish), (y²−2)·x² + x + c at y↦√2 ⇒ auxiliary-z path fires with z↦1.
+vanish), (y²−2)·x² + x + c at y↦√2 ⇒ auxiliary-z path fires with z↦1
+[wrong — see the witness analysis above].
 
 ## nla-30 `todo` — general multivariate resultant (deferred; Danielle 2026-07-31)
 
