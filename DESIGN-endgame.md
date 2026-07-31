@@ -160,7 +160,7 @@ under assignment vs direct QPoly isolation on rational cells
 (differential); zero-poly and degenerate-`q` fallback pins; sign_table
 vs brute-force sampling differential on a probe grid.
 
-### 2.3 nla-12c — Solver loop *(2–4 sessions; the big port)*
+### 2.3 nla-12c — Solver loop *(4–6 sessions revised; the big port)*
 
 **Planning addendum (2026-07-31):** full spec now lives in BOARD.md's
 nla-12c entry; estimate revised to **4–6 sessions** (reorder promoted
