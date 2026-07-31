@@ -27,11 +27,14 @@ Fidelity notes (source: `nlsat_interval_set.cpp`, case comments kept):
 * Compression merges *adjacent* intervals only when their justifications
   coincide (Z3 remark: "we only combine adjacent intervals when they
   have the same justification").
-* `pickInComplement` keeps Z3's deterministic (randomize=false)
-  preference order: zero, an integer above everything, an integer below
-  everything, a rational in some gap, a shared *rational* open endpoint,
-  and finally an irrational shared endpoint as the witness. Since
-  nla-26.4 the selection entry points are the actual `am` ports
+* `pickInComplement` keeps Z3 **4.12.5**'s deterministic
+  (randomize=false) `peek_in_complement` order: zero only for the null
+  set, an integer *below* everything, an integer *above* everything, a
+  rational in the first strict gap, a shared *rational* open endpoint,
+  and finally an irrational shared endpoint as the witness. (nla-32
+  re-anchor: the post-4.12.5 `pick_in_complement`'s zero-first scan
+  and int-branch swap are NOT adopted — they change the witness.)
+  Since nla-26.4 the selection entry points are the actual `am` ports
   (`intGt`/`intLt`/`select` with dyadic `select_small_core` niceness),
   and the shared-endpoint scan goes through `is_rational` exactly as
   z3's does (root-represented rationals are discovered, nla-28).
@@ -301,32 +304,20 @@ def justifications (s : IntervalSet) : Array Literal × Array Nat := Id.run do
             cls := cls.push cid
     return (lits, cls)
 
-/-! ## Witness selection (`pick_in_complement`, deterministic path) -/
+/-! ## Witness selection (`peek_in_complement`@4.12.5, deterministic path) -/
 
-/-- Position of zero relative to an interval: `-1` if the interval is
-entirely below 0, `1` if entirely above, `0` if it contains 0
-(`compare_interval_with_zero`). The compares are root-vs-rational,
-which never refines, so no write-back is needed. -/
-def cmpWithZero (iv : NInterval) : CellM Int := do
-  if !iv.upperInf then
-    let u ← CellStore.read iv.upper
-    match (RAlg.compare u (.rat 0)).1 with
-    | .lt => return -1
-    | .eq => if iv.upperOpen then return -1
-    | _ => pure ()
-  if !iv.lowerInf then
-    let l ← CellStore.read iv.lower
-    match (RAlg.compare l (.rat 0)).1 with
-    | .gt => return 1
-    | .eq => if iv.lowerOpen then return 1
-    | _ => pure ()
-  return 0
-
-/-- Pick a witness in the complement (Z3 preference order,
-randomize = false), as a store cell: `none` only for a full set.
-z3 `pick_in_complement(interval_set const *, ..., anum & w, ...)` sets
-`w` — for a shared-endpoint witness, to the endpoint cell ITSELF (we
-return that cell's id, sharing it exactly as z3's `m_am.set` does). -/
+/-- Pick a witness in the complement (Z3 **4.12.5** `peek_in_complement`
+preference order, randomize = false), as a store cell: `none` only for
+a full set. Ladder (nla-32 re-anchor; the post-4.12.5
+`pick_in_complement` adds a zero-first scan and swaps the int
+branches — both rejected, they change the selected witness):
+null set ⇒ 0; integer BELOW the first interval's lower bound;
+integer ABOVE the last interval's upper bound; `select` in the first
+strict gap; rational shared open endpoint (z3 `is_rational` discovers
+rationals in root representation and converts them); else the first
+irrational shared endpoint. For a shared-endpoint witness z3 sets `w`
+to the endpoint cell ITSELF (we return that cell's id, sharing it
+exactly as z3's `m_am.set` does). -/
 def pickInComplement (s : IntervalSet) : CellM (Option CellId) := do
   match s with
   | none => CellStore.fresh (.rat 0)
@@ -334,48 +325,29 @@ def pickInComplement (s : IntervalSet) : CellM (Option CellId) := do
     if d.full then return none
     let ints := d.intervals
     let num := ints.size
-    -- try zero first, to keep polynomials simple
-    let mut zeroOk := true
-    for iv in ints do
-      let sgn ← cmpWithZero iv
-      if sgn == 0 then
-        zeroOk := false
-        break
-      else if sgn > 0 then
-        break
-    if zeroOk then CellStore.fresh (.rat 0)
-    -- an integer above everything
-    else if !ints[num - 1]!.upperInf then
-      let n ← CellStore.intGtC ints[num - 1]!.upper
-      CellStore.fresh (.rat (mkRat n 1))
-    -- an integer below everything
-    else if !ints[0]!.lowerInf then
+    -- an integer below everything (4.12.5 checks the lower side FIRST)
+    if !ints[0]!.lowerInf then
       let n ← CellStore.intLtC ints[0]!.lower
-      CellStore.fresh (.rat (mkRat n 1))
-    else
-      -- a "nice" dyadic rational inside some non-unit gap
-      let mut witness : Option CellId := none
-      for i in [1:num] do
-        if witness.isNone then
-          if (← CellStore.ltC ints[i-1]!.upper ints[i]!.lower) then
-            let w ← CellStore.selectC ints[i-1]!.upper ints[i]!.lower
-            witness := some (← CellStore.fresh (.rat w))
-      match witness with
-      | some _ => return witness
-      | none =>
-        -- shared open endpoints: prefer a rational one (z3 `is_rational`
-        -- discovers rationals in root representation and converts them)
-        let mut irrational : Option CellId := none
-        for i in [1:num] do
-          if witness.isNone then
-            if ints[i-1]!.upperOpen && ints[i]!.lowerOpen then
-              if (← CellStore.isRationalC ints[i-1]!.upper) then
-                witness := some ints[i-1]!.upper
-              else if irrational.isNone then
-                irrational := some ints[i-1]!.upper
-        match witness with
-        | some _ => return witness
-        | none => return irrational
+      return some (← CellStore.fresh (.rat (mkRat n 1)))
+    -- an integer above everything
+    if !ints[num - 1]!.upperInf then
+      let n ← CellStore.intGtC ints[num - 1]!.upper
+      return some (← CellStore.fresh (.rat (mkRat n 1)))
+    -- a "nice" rational inside the first strict gap
+    for i in [1:num] do
+      if (← CellStore.ltC ints[i-1]!.upper ints[i]!.lower) then
+        let w ← CellStore.selectC ints[i-1]!.upper ints[i]!.lower
+        return some (← CellStore.fresh (.rat w))
+    -- shared open endpoints: prefer a rational one (z3 `is_rational`
+    -- discovers rationals in root representation and converts them)
+    let mut irrational : Option CellId := none
+    for i in [1:num] do
+      if ints[i-1]!.upperOpen && ints[i]!.lowerOpen then
+        if (← CellStore.isRationalC ints[i-1]!.upper) then
+          return some ints[i-1]!.upper
+        else if irrational.isNone then
+          irrational := some ints[i-1]!.upper
+    return irrational
 
 end IntervalSet
 

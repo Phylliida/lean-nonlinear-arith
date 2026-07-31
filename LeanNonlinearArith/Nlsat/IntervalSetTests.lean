@@ -212,6 +212,43 @@ private def withShared (f : Shared → CellM α) : α :=
     | _ => return false
   | none => return false)
 
+/-! ## nla-32 — 4.12.5 `peek_in_complement` re-anchor
+
+The post-4.12.5 `pick_in_complement` scans for 0 first and tries
+int_above before int_below; 4.12.5 does neither (0 only for the null
+set; int_below FIRST). These pins fix the 4.12.5 ladder on shapes
+where the two texts select DIFFERENT witnesses. -/
+
+-- (2, 3): 4.12.5 takes int_below FIRST: ⌊2⌋ − 1 = 1
+-- (post-4.12.5 would pick 0 via the zero-scan)
+#guard CellStore.run' (do
+  let s ← mk true false (.rat 2) true false (.rat 3) j0
+  match (← pickInComplement s) with
+  | some c => match (← CellStore.read c) with
+    | .rat q => return q == 1
+    | _ => return false
+  | none => return false)
+
+-- (−5, −3): int_below: ⌊−5⌋ − 1 = −6 (post-4.12.5: 0)
+#guard CellStore.run' (do
+  let s ← mk true false (.rat (-5)) true false (.rat (-3)) j0
+  match (← pickInComplement s) with
+  | some c => match (← CellStore.read c) with
+    | .rat q => return q == -6
+    | _ => return false
+  | none => return false)
+
+-- (−∞, −2): no lower side, int_above: ⌈−2⌉ + 1 = −1 (post-4.12.5: 0 —
+-- zero IS available in the complement here, but 4.12.5 never tries it
+-- for a non-null set)
+#guard CellStore.run' (do
+  let s ← mk true true (.rat 0) true false (.rat (-2)) j0
+  match (← pickInComplement s) with
+  | some c => match (← CellStore.read c) with
+    | .rat q => return q == -1
+    | _ => return false
+  | none => return false)
+
 /-! ## nla-25.5 — mkUnion differential test
 
 `mkUnion s₁ s₂` must behave as set union pointwise, and every surviving
