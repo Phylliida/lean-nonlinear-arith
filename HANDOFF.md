@@ -32,8 +32,12 @@ ladder (zero-first scan, int_gt before int_lt) — 4.12.5's
 Source-of-truth rule going forward: **all nlsat ports cite
 `git show z3-4.12.5:<path>`, never the working tree.**
 
-**Next: nla-32 (1–2 sessions), then nla-12c — the solver loop**
-(4–6 sessions, spec on the board). Both sweep decisions are DECIDED
+**Next: nla-12c — the solver loop** (4–6 sessions, full spec on the
+board; ~~nla-32~~ DONE same day — two divergences found and
+re-anchored: pickInComplement's ladder [zero-scan dropped, int_below
+first] and int_lt/int_gt [4.12.5 = pure reads, the refine-first +
+const_cast is post-4.12.5]; the rest of the audit verified clean —
+details in the BOARD nla-32 entry). Both sweep decisions are DECIDED
 (Danielle, 2026-07-31, DESIGN-endgame §6): re-anchor pickInComplement
 to the 4.12.5 ladder; port variable reorder verbatim in 12c.6.
 12c.6's integer B&B loop stays the 12e seam.
