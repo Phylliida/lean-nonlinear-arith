@@ -33,13 +33,10 @@ Source-of-truth rule going forward: **all nlsat ports cite
 `git show z3-4.12.5:<path>`, never the working tree.**
 
 **Next: nla-32 (1–2 sessions), then nla-12c — the solver loop**
-(4–6 sessions, spec on the board). Two decisions pending Danielle
-(registered in DESIGN-endgame §6, recommendations recorded): (1)
-re-anchor pickInComplement to the 4.12.5 ladder; (2) port variable
-reorder verbatim in 12c.6 (it IS live in the nra_solver path —
-default true, incremental=false — DESIGN-nlsat-quadratic's "no
-reorder in v0" predates that finding). 12c.6's integer B&B loop stays
-the 12e seam.
+(4–6 sessions, spec on the board). Both sweep decisions are DECIDED
+(Danielle, 2026-07-31, DESIGN-endgame §6): re-anchor pickInComplement
+to the 4.12.5 ladder; port variable reorder verbatim in 12c.6.
+12c.6's integer B&B loop stays the 12e seam.
 
 After 32 → 12c: 12d+19a (same arc — Explain + Check.lean v0, Q1
 grammar-first S3 coverage proof derived from nlsat_explain.cpp

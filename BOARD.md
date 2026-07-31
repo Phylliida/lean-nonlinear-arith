@@ -906,9 +906,10 @@ whenever no interval covers it; 4.12.5 picks 0 ONLY for the null set.
 states (e.g. set `{(−∞,−2)}`: HEAD → 0, 4.12.5 → −1; set `{(1,3)}`:
 HEAD → 0, 4.12.5 → 0 — same by luck; single bounded interval with
 positive lower: HEAD → above, 4.12.5 → below). Witness-level only —
-any complement member is a valid witness — but rule 3 applies. Fix =
-re-anchor to the 4.12.5 ladder (drop the zero-scan, swap the int
-order) and re-derive the affected 12a/28 pins.
+any complement member is a valid witness — but rule 3 applies.
+**DECIDED (Danielle, 2026-07-31): re-anchor** to the 4.12.5 ladder
+(drop the zero-scan, swap the int order) and re-derive the affected
+12a/28 pins.
 
 **Scope** (per cluster: classify each 4.12.5↔HEAD hunk mechanical vs
 semantic; check which text the port follows; re-anchor to 4.12.5 or
@@ -968,21 +969,20 @@ loop); `checkpoint()` (rlimit cancel — no-op with a note; budgets land
 at nla-14 per the withLayerHeartbeats directive); levelwise
 (post-4.12.5 entirely).
 
-**Reorder is LIVE, decision point:** `check()` calls
-`heuristic_reorder()` (reorder default true, `can_reorder()` true
-pre-search since learned is empty and no root atoms yet) and
-`restore_order()` after; nra_solver reads the model post-restore.
-DESIGN-nlsat-quadratic's "no reorder in v0" note predates this
-finding. Reorder changes stage structure → which projections/lemmas/
-witnesses emerge → trace content and cost (witness-level, never
-verdict-level). Per Q3: port verbatim (recommended — ~150
-self-contained lines: `var_info_collector`/`reorder_lt`/
+**Reorder is LIVE, DECIDED (Danielle, 2026-07-31): port verbatim.**
+`check()` calls `heuristic_reorder()` (reorder default true,
+`can_reorder()` true pre-search since learned is empty and no root
+atoms yet) and `restore_order()` after; nra_solver reads the model
+post-restore. DESIGN-nlsat-quadratic's "no reorder in v0" note
+predates this finding. Reorder changes stage structure → which
+projections/lemmas/witnesses emerge → trace content and cost
+(witness-level, never verdict-level), so per Q3 it ports: ~150
+self-contained lines — `var_info_collector`/`reorder_lt`/
 `heuristic_reorder`/`can_reorder`/`reorder`/`restore_order`/
 `remove_learned_roots`/`reset_watches`/`reattach_arith_clauses`/
 `sort_watched_clauses`/`sort_clauses_by_degree`, plus
 `m_perm`/`m_inv_perm` and `pm.rename` as an MPoly-rename over the atom
-table) or register an approved divergence with a written parity
-argument. Flagged for Danielle; plan assumes port.
+table. Lands in 12c.6.
 
 **State shape:** `Nlsat/Solver.lean`, untrusted.
 `SolverM := StateM Solver`; `Solver.store : CellStore` + `liftC`
@@ -1069,8 +1069,8 @@ Slice plan (each lands compiling + pinned, small commits):
   Pins: boolean-only conflicts (explain never called), univariate
   arith conflicts with mock-#[] explain (faithful, above), backjump
   level/stage targets, learned-clause reprocessing.
-- **12c.6 reorder + check shell** `todo` (pending Danielle's reorder
-  call): reorder block per the decision point above;
+- **12c.6 reorder + check shell** `todo` (reorder port DECIDED by
+  Danielle 2026-07-31): reorder block per the decision above;
   check()/search_check (real-valued; the integer branch-and-bound
   loop in search_check is the 12e seam — m_is_int exists but no B&B
   fires in 12c; declared slice boundary, NOT a divergence: 12e lands

@@ -462,14 +462,12 @@ nla-28 (the `is_rational` port discovers them, exactly as z3).
 ~~`factor=false`~~ — eliminated by nla-27 (full
 `upolynomial_factorization` port; default `factor=true` parity).
 
-**Pending Danielle's call (2026-07-31, from the 12c planning sweep;
-neither enters the register until decided):** (1) `pickInComplement`
-currently follows HEAD's `pick_in_complement` (zero-first scan,
-int_gt-before-int_lt); 4.12.5's `peek_in_complement` has neither —
-recommendation: re-anchor under nla-32, small edit. (2) variable
-reorder (`heuristic_reorder`/`restore_order`) is live in the
-nra_solver path (default true, incremental=false) — recommendation:
-port verbatim in 12c.6 rather than register "no reorder".
+**Decided 2026-07-31 (Danielle, from the 12c planning sweep):** (1)
+`pickInComplement` re-anchors to 4.12.5's `peek_in_complement` ladder
+under nla-32 (it currently follows HEAD's zero-first/int_gt-first
+`pick_in_complement`). (2) Variable reorder
+(`heuristic_reorder`/`restore_order`, live in the nra_solver path)
+ports verbatim in 12c.6 — no "no reorder" divergence is registered.
 
 ## 7. Estimates and shape of the remainder
 
