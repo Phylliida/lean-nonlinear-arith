@@ -150,13 +150,48 @@ def powModTableB (qhat : BivPoly) (maxK : Nat) : Array BivPoly := Id.run do
     tbl := tbl.push cur
   return tbl
 
-/-- Determinant of a small `QPoly`-entry matrix by first-column Laplace
-expansion (parallel to `AnumEval.detQTerms`). Laplace is exact over the
-*ring* `ℚ[x]` (no inverses needed); exponential in the matrix size —
-fine at defining-polynomial degrees in the quadratic fragment and
-beyond (`d = deg pb`). A fraction-free (Bareiss) route for large `d` is
-nla-30 territory if deep nesting ever demands it. -/
-partial def detBiv (m : Array (Array QPoly)) : QPoly :=
+/-- Determinant of a `QPoly`-entry matrix by **Bareiss fraction-free
+elimination** (design review 2026-07-31, item 3: coverage must not
+depend on expected matrix sizes — the earlier Laplace expansion was
+exponential in `deg pb`). Exact over the integral domain `ℚ[x]`: the
+division by the previous pivot is exact by the Bareiss identity; row
+pivoting only flips the sign. O(n³) polynomial multiplications at any
+matrix size. `detBivLaplace` is kept (private) as the differential
+reference. -/
+def detBiv (m : Array (Array QPoly)) : QPoly := Id.run do
+  let n := m.size
+  if n == 0 then return #[1]
+  let mut a := m
+  let mut sign : QPoly := #[1]
+  for k in [0:n - 1] do
+    -- find a pivot row (no nonzero entry in the column ⇒ singular ⇒ 0)
+    let mut piv := k
+    while piv < n && a[piv]![k]!.isEmpty do
+      piv := piv + 1
+    if piv == n then return #[]
+    if piv != k then
+      let tmp := a[k]!
+      a := a.set! k a[piv]!
+      a := a.set! piv tmp
+      sign := QPoly.neg sign
+    let prev := if k == 0 then #[1] else a[k - 1]![k - 1]!
+    let pivot := a[k]![k]!
+    for i in [k+1:n] do
+      let aik := a[i]![k]!
+      -- every minor is scaled by the pivot (even when a[i][k] = 0);
+      -- the Bareiss identity keeps the division by `prev` exact
+      let mut row := a[i]!
+      for j in [k+1:n] do
+        let num := QPoly.sub (QPoly.mul pivot row[j]!) (QPoly.mul aik a[k]![j]!)
+        row := row.set! j (QPoly.divExact num prev)
+      a := a.set! i row
+  return QPoly.mul sign a[n - 1]![n - 1]!
+
+/-- First-column Laplace expansion — the pre-Bareiss determinant. Kept
+as the **differential reference** for `detBiv` (exercised in
+`Kernel/BivPolyTests.lean`); not used by the resultant route. Exact
+over the *ring* `ℚ[x]`; exponential in the matrix size. -/
+partial def detBivLaplace (m : Array (Array QPoly)) : QPoly :=
   let n := m.size
   if n == 0 then #[1]
   else if n == 1 then m[0]![0]!
@@ -171,7 +206,7 @@ partial def detBiv (m : Array (Array QPoly)) : QPoly :=
             if r != i then
               rows := rows.push (m[r]!.extract 1 n)
           return rows
-        let term := QPoly.mul entry (detBiv minor)
+        let term := QPoly.mul entry (detBivLaplace minor)
         acc := QPoly.add acc (if i % 2 == 0 then term else QPoly.neg term)
     return acc
 

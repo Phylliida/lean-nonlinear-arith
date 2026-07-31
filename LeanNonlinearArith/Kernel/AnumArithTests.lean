@@ -1,4 +1,5 @@
 import LeanNonlinearArith.Kernel.AnumArith
+import LeanNonlinearArith.Kernel.CellStore
 
 /-!
 # nla-29.2/29.3 tests — anum arithmetic pins
@@ -61,15 +62,24 @@ private def bigRoot : RAlg := (RAlg.isolateRoots (p #[1, 0, -10, 0, 1]))[3]!  --
 
 -- ## inv: 1/√2 = √2/2, root of 2x²−1, sandwiched 0.707 < · < 0.708
 #guard Id.run do
-  let c := inv sqrt2
-  return signOfPolyAt (p #[-1, 0, 2]) c == 0
-    && (compare c (.rat (707/1000))).1 == .gt
-    && (compare c (.rat (708/1000))).1 == .lt
+  match inv sqrt2 with
+  | some c =>
+    return signOfPolyAt (p #[-1, 0, 2]) c == 0
+      && (compare c (.rat (707/1000))).1 == .gt
+      && (compare c (.rat (708/1000))).1 == .lt
+  | none => return false
+-- inv of zero is z3's throw ⇒ none (never a silent wrong value)
+#guard inv (.rat 0) == none
+-- power: 0^0 is z3's throw ⇒ none; (√2)² becomes basic 2
+#guard power (.rat 0) 0 == none
+#guard power sqrt2 2 == some (.rat 2, sqrt2)
 
--- ## div: √6/√2 = √3
+-- ## div: √6/√2 = √3; division by zero ⇒ none (z3's throw)
 #guard Id.run do
-  let (c, _, _) := div sqrt6 sqrt2
-  return (compare c sqrt3).1 == .eq
+  match div sqrt6 sqrt2 with
+  | some (c, _, _) => return (compare c sqrt3).1 == .eq
+  | none => return false
+#guard div sqrt2 (.rat 0) == none
 
 -- ## mixed algebraic×basic, NON-dyadic basic (the convert_q2bq_interval
 -- fallback): √2 + 1/3 is a root of 9x²−6x−17, ≈ 1.74755
@@ -117,11 +127,14 @@ private def bigRoot : RAlg := (RAlg.isolateRoots (p #[1, 0, -10, 0, 1]))[3]!  --
 
 -- ## CellStore divC: √6/√2 = √3 through the store
 #guard Id.run do
-  let c := CellStore.run' do
+  let r := CellStore.run' (do
     let x ← CellStore.fresh sqrt6
     let y ← CellStore.fresh sqrt2
-    let z ← CellStore.divC x y
-    CellStore.read z
-  return (compare c sqrt3).1 == .eq
+    match (← CellStore.divC x y) with
+    | some z => return some (← CellStore.read z)
+    | none => return none)
+  match r with
+  | some c => return (compare c sqrt3).1 == .eq
+  | none => return false
 
 end LeanNonlinearArith.Kernel.RAlg.AnumArithTests

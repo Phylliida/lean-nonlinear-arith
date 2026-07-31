@@ -99,15 +99,17 @@ private def sqrt6 : RAlg := .root #[-6, 0, 1] 2 3
 -- x²+y² at √2,√3 = 5 exactly (powers become basic through the arithmetic)
 #guard CellStore.run' (do
   let p := MPoly.add (MPoly.mul x0 x0) (MPoly.mul x1 x1)
-  return (← evalAnum p (← Assignment.ofValues [(0, sqrt2), (1, sqrt3)])) == .rat 5)
+  return (← evalAnum p (← Assignment.ofValues [(0, sqrt2), (1, sqrt3)])) == some (.rat 5))
 -- x·y at √2,√3 = √6
 #guard CellStore.run' (do
-  let v ← evalAnum (MPoly.mul x0 x1) (← Assignment.ofValues [(0, sqrt2), (1, sqrt3)])
+  let some v ← evalAnum (MPoly.mul x0 x1) (← Assignment.ofValues [(0, sqrt2), (1, sqrt3)])
+    | return false
   return (← CellStore.compareC (← CellStore.fresh v) (← CellStore.fresh sqrt6)) == .eq)
 -- x³−x·y at √2,3 = 2√2−3√2 = −√2 (Horner over the max var, power path)
 #guard CellStore.run' (do
   let p := MPoly.sub (MPoly.mul (MPoly.mul x0 x0) x0) (MPoly.mul x0 x1)
-  let v ← evalAnum p (← Assignment.ofValues [(0, sqrt2), (1, .rat 3)])
+  let some v ← evalAnum p (← Assignment.ofValues [(0, sqrt2), (1, .rat 3)])
+    | return false
   return (← CellStore.compareC (← CellStore.fresh v) (← CellStore.fresh sqrt2m)) == .eq)
 
 /-! ## q ≡ 0 fallbacks (nla-29.5) -/

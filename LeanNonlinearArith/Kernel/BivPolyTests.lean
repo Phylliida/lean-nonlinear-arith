@@ -60,4 +60,28 @@ private def y2m3 : QPoly := p #[-3, 0, 1]          -- y²−3
 #guard BivPoly.resultantElimY (BivPoly.composeXDivY x2m2) x2m2
   == p #[16, 0, -8, 0, 1]
 
+-- ## detBiv (Bareiss) vs detBivLaplace differential + edge cases
+-- identity, zero matrix, singular (row of zeros, proportional rows),
+-- and a hand-checked 3×3 with QPoly entries
+#guard BivPoly.detBiv #[#[p #[1], p #[2]], #[p #[3], p #[4]]] == p #[-2]
+#guard BivPoly.detBiv #[#[p #[1], #[]], #[#[], p #[1]]] == p #[1]
+-- proportional rows ⇒ 0
+#guard BivPoly.detBiv #[#[p #[0, 1], p #[2]], #[p #[0, 2], p #[4]]] == #[]
+-- zero-pivot column forcing a row swap: [[0, 1],[x, 1]] ↦ −x
+#guard BivPoly.detBiv #[#[#[], p #[1]], #[p #[0, 1], p #[1]]] == p #[0, -1]
+-- 3×3 hand-check: [[1,x,0],[0,1,x],[x,0,1]] ↦ 1 + x³
+#guard BivPoly.detBiv #[#[p #[1], p #[0, 1], #[]],
+                        #[#[], p #[1], p #[0, 1]],
+                        #[p #[0, 1], #[], p #[1]]] == p #[1, 0, 0, 1]
+-- differential: Bareiss == Laplace on a specimen family
+#guard Id.run do
+  let specimens : Array (Array (Array QPoly)) :=
+    #[#[#[p #[1], p #[2]], #[p #[3], p #[4]]],
+      #[#[p #[0, 1], p #[-2, 0, 1]], #[p #[3], p #[0, -1]]],
+      #[#[p #[1], p #[0, 1], #[]],
+        #[#[], p #[1], p #[0, 1]],
+        #[p #[0, 1], #[], p #[1]]],
+      #[#[p #[2, 1], p #[1, 0, -1]], #[p #[0, 3], p #[5, 1]]]]
+  return specimens.all fun m => BivPoly.detBiv m == BivPoly.detBivLaplace m
+
 end LeanNonlinearArith.Kernel.BivPoly.Tests

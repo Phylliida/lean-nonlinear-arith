@@ -244,16 +244,17 @@ def evalSignAt (p : MPoly) (σ : Assignment) (defQ : Option Rat := none) : CellM
   return result
 
 /-- Max variable `< x` appearing in `terms[start..termEnd)` (z3
-`polynomial::max_smaller_than`). -/
+`polynomial::max_smaller_than`). The bound rides in the type so
+`evalCore`'s termination measure is checkable (design review item 4). -/
 private def maxSmallerThan (terms : Array (Int × Monomial)) (start termEnd : Nat)
-    (x : Var) : Option Var := Id.run do
-  let mut best : Option Var := none
+    (x : Var) : Option { y : Var // y < x } := Id.run do
+  let mut best : Option { y : Var // y < x } := none
   for i in [start:termEnd] do
     for (y, _) in terms[i]!.2 do
-      if y < x then
+      if hy : y < x then
         match best with
-        | none => best := some y
-        | some b => if b < y then best := some y
+        | none => best := some ⟨y, hy⟩
+        | some ⟨b, _⟩ => if b < y then best := some ⟨y, hy⟩
   return best
 
 /-- z3 `t_eval_core` (polynomial.cpp:6676): evaluate the sub-polynomial
@@ -261,22 +262,25 @@ of monomials `[start, termEnd)` over variables `≤ x` with op-by-op anum
 arithmetic — Horner over `x` with recursive coefficient evaluation.
 Stored cells are refined through the ops (z3 reaches them via the
 public const_cast wrappers); temps are overwritten per op call in both
-worlds, so no temp threading is needed. Precondition (z3 SASSERT):
-every variable `≤ x` in the slice is assigned. -/
-partial def evalCore (terms : Array (Int × Monomial)) (σ : Assignment)
-    (start termEnd : Nat) (x : Var) : CellM RAlg := do
+worlds, so no temp threading is needed. `none` = a z3 throw on the way
+(`0^0` — unreachable here, powers are `≥ 1`) or an UNASSIGNED variable
+(design review item 1: z3's `SASSERT(x2v.contains(y))` — we fail rather
+than silently read the wrong cell). Termination: the variable decreases
+at every recursive call (the measure is `x`). -/
+def evalCore (terms : Array (Int × Monomial)) (σ : Assignment)
+    (start termEnd : Nat) (x : Var) : CellM (Option RAlg) := do
   if termEnd == start + 1 then
     let (a, m) := terms[start]!
     let mut r : RAlg := .rat a
     for (y, d) in m do
       if y > x then break
-      let cy := (σ.get? y).get!    -- z3 SASSERT(x2v.contains(y))
-      let (pw, vy') := RAlg.power (← CellStore.read cy) d
+      let some cy := σ.get? y | return none
+      let some (pw, vy') := RAlg.power (← CellStore.read cy) d | return none
       CellStore.write cy vy'
       r := (RAlg.mul r pw).1
-    return r
+    return some r
   else
-    let cx := (σ.get? x).get!      -- z3 SASSERT(x2v.contains(x))
+    let some cx := σ.get? x | return none
     let mut r : RAlg := .rat 0
     let mut i := start
     while i < termEnd do
@@ -284,7 +288,10 @@ partial def evalCore (terms : Array (Int × Monomial)) (σ : Assignment)
       if d == 0 then
         match maxSmallerThan terms i termEnd x with
         | none => r := (RAlg.add r (.rat terms[i]!.1)).1
-        | some y => r := (RAlg.add r (← evalCore terms σ i termEnd y)).1
+        | some ⟨y, _hy⟩ =>
+          match (← evalCore terms σ i termEnd y) with
+          | some v => r := (RAlg.add r v).1
+          | none => return none
         break
       let mut j := i + 1
       let mut nextD := 0
@@ -295,36 +302,40 @@ partial def evalCore (terms : Array (Int × Monomial)) (σ : Assignment)
           break
         j := j + 1
       let aux ← match maxSmallerThan terms i j x with
-        | none => pure (.rat terms[i]!.1)
-        | some y => evalCore terms σ i j y
-      r := (RAlg.add r aux).1
-      let (pw, xv') := RAlg.power (← CellStore.read cx) (d - nextD)
+        | none => pure (some (.rat terms[i]!.1))
+        | some ⟨y, _hy⟩ => evalCore terms σ i j y
+      match aux with
+      | some v => r := (RAlg.add r v).1
+      | none => return none
+      let some (pw, xv') := RAlg.power (← CellStore.read cx) (d - nextD) | return none
       CellStore.write cx xv'
       r := (RAlg.mul r pw).1
       i := j
-    return r
+    return some r
+termination_by x
+decreasing_by
+  all_goals (simp_wf; assumption)
 
 /-- z3 `imp::eval` = `t_eval` (polynomial.cpp:6749/6793): evaluate `p`
 at the assignment with op-by-op anum arithmetic. z3 lex-sorts first;
 our MPoly is already canonical (the approved eager-sorted
-representation). Precondition (z3 SASSERT): every variable of `p` is
-assigned. -/
-partial def evalAnum (p : MPoly) (σ : Assignment) : CellM RAlg := do
-  if p.isZero then return .rat 0
-  if let some c := p.asConst? then return .rat c
+representation). `none` = a z3 throw or an unassigned variable (z3
+`SASSERT`: every variable of `p` is assigned). -/
+def evalAnum (p : MPoly) (σ : Assignment) : CellM (Option RAlg) := do
+  if p.isZero then return some (.rat 0)
+  if let some c := p.asConst? then return some (.rat c)
   let x := p.maxVar.getD 0
   evalCore p.toArray σ 0 p.length x
 
-/-- z3 `isolate_roots` under partial assignment (`algebraic_numbers.cpp:2547`).
-Roots are fresh store cells. The `q ≡ 0` degenerate fallbacks
-(:2622-2699) are ported: linear-coefficient solve via anum division,
-and the auxiliary-z nested elimination. `nested` is the recursive-call
-flag — the fallback is unreachable under it (z3 `SASSERT(!nested_call)`;
-the nested resultant cannot vanish since 0 is not a root of the
-polynomial defining the auxiliary value) and returns `none` there.
-`partial`: z3's recursion is capped at one nesting level by the flag —
-not structural for Lean. -/
-partial def isolateRootsAt (p : MPoly) (σ : Assignment) (nested : Bool := false) :
+/-- Shared body of `isolateRootsAt` / `isolateRootsNested` (design
+review 2026-07-31, item 4): z3 `isolate_roots` (:2547) up to the `q ≡ 0`
+branch, which the `qZero` handler supplies — the outer call runs the
+degenerate fallback; the nested call treats it as unreachable (z3
+`SASSERT(!nested_call)`). Splitting the one-level recursion into two
+functions makes both structurally terminating (no `partial`). Roots are
+fresh store cells. -/
+private def isolateRootsAtCore (p : MPoly) (σ : Assignment)
+    (qZero : MPoly → Var → CellM (Option (Array CellId))) :
     CellM (Option (Array CellId)) := do
   let freshAll (rs : Array RAlg) : CellM (Array CellId) := do
     let mut out : Array CellId := #[]
@@ -371,41 +382,7 @@ partial def isolateRootsAt (p : MPoly) (σ : Assignment) (nested : Bool := false
       | .root qp _ _ _ => q := resultantElim q y qp
       | _ => pure ()
   if q.isZero then
-    if nested then
-      -- z3 SASSERT(!nested_call): unreachable — the nested resultant
-      -- cannot vanish (0 is not a root of the poly defining `a`)
-      return none
-    -- q ≡ 0 degenerate fallback (:2628-2699)
-    let n := p'.degreeIn x
-    if n == 1 then
-      -- p' is linear in x: evaluate the coefficients; root = −a0/a1
-      let cs := p'.coeffsIn x
-      let a0 ← evalAnum (cs.getD 0 []) σ
-      let a1 ← evalAnum (cs.getD 1 []) σ
-      if RAlg.isZeroV a1 then
-        -- coefficient of degree 1 vanished: p' has no roots at σ
-        return some #[]
-      let (d, _, _) := RAlg.div a0 a1
-      return some #[← CellStore.fresh (RAlg.neg d)]
-    -- scan coefficients i = n … 1 for the first non-vanishing one
-    let cs := p'.coeffsIn x
-    let mut i := n
-    let mut a : RAlg := .rat 0
-    while i ≥ 1 do
-      a ← evalAnum (cs.getD i []) σ
-      if !RAlg.isZeroV a then break
-      i := i - 1
-    if i == 0 then
-      -- all coefficients of x vanished: p' has no roots at σ
-      return some #[]
-    -- auxiliary variable: q2 = z·xⁱ + (p' with x-degree capped at i−1),
-    -- isolate with σ extended by z ↦ a (z3 ext_var2num)
-    let z := (p'.maxVar.getD 0) + 1
-    let trunc : MPoly := p'.filter fun (_, m) => m.degreeIn x ≤ i - 1
-    let zxi : MPoly := [(1, [(x, i), (z, 1)])]   -- var-ascending (z > x)
-    let q2 := MPoly.add zxi trunc
-    let zc ← CellStore.fresh a
-    return (← isolateRootsAt q2 (σ.set z zc) true)
+    return (← qZero p' x)
   if q.asConst?.isSome then
     return some #[]
   -- isolate the univariate q and filter candidates by exact sign
@@ -419,6 +396,54 @@ partial def isolateRootsAt (p : MPoly) (σ : Assignment) (nested : Bool := false
       if s == 0 then
         kept := kept.push c
     return some kept
+
+/-- The nested call (z3 `nested_call = true`): the resultant cannot
+vanish again (0 is not a root of the polynomial defining the auxiliary
+value), so `q ≡ 0` maps to `none`. -/
+def isolateRootsNested (p : MPoly) (σ : Assignment) :
+    CellM (Option (Array CellId)) :=
+  isolateRootsAtCore p σ fun _ _ => return none
+
+/-- z3 `isolate_roots` under partial assignment (`algebraic_numbers.cpp:2547`)
+with the `q ≡ 0` degenerate fallbacks (:2622-2699): linear-coefficient
+solve via anum division (`root = −a0/a1`), and the auxiliary-z nested
+elimination. `none` = a z3 throw (eval of an unassigned variable /
+division by a vanished coefficient) or the nested `q ≡ 0`. -/
+def isolateRootsAt (p : MPoly) (σ : Assignment) :
+    CellM (Option (Array CellId)) :=
+  isolateRootsAtCore p σ fun p' x => do
+    -- q ≡ 0 degenerate fallback (:2628-2699)
+    let n := p'.degreeIn x
+    if n == 1 then
+      -- p' is linear in x: evaluate the coefficients; root = −a0/a1
+      let cs := p'.coeffsIn x
+      let some a0 ← evalAnum (cs.getD 0 []) σ | return none
+      let some a1 ← evalAnum (cs.getD 1 []) σ | return none
+      if RAlg.isZeroV a1 then
+        -- coefficient of degree 1 vanished: p' has no roots at σ
+        return some #[]
+      let some (d, _, _) := RAlg.div a0 a1 | return none
+      return some #[← CellStore.fresh (RAlg.neg d)]
+    -- scan coefficients i = n … 1 for the first non-vanishing one
+    let cs := p'.coeffsIn x
+    let mut i := n
+    let mut a : RAlg := .rat 0
+    while i ≥ 1 do
+      let some a' ← evalAnum (cs.getD i []) σ | return none
+      a := a'
+      if !RAlg.isZeroV a then break
+      i := i - 1
+    if i == 0 then
+      -- all coefficients of x vanished: p' has no roots at σ
+      return some #[]
+    -- auxiliary variable: q2 = z·xⁱ + (p' with x-degree capped at i−1),
+    -- isolate with σ extended by z ↦ a (z3 ext_var2num)
+    let z := (p'.maxVar.getD 0) + 1
+    let trunc : MPoly := p'.filter fun (_, m) => m.degreeIn x ≤ i - 1
+    let zxi : MPoly := [(1, [(x, i), (z, 1)])]   -- var-ascending (z > x)
+    let q2 := MPoly.add zxi trunc
+    let zc ← CellStore.fresh a
+    isolateRootsNested q2 (σ.set z zc)
 
 /-- z3's `DEFAULT_PRECISION` (`algebraic_numbers.cpp:2900`). -/
 def defaultPrecision : Nat := 2

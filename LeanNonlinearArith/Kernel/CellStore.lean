@@ -1,4 +1,4 @@
-import LeanNonlinearArith.Kernel.RAlg
+import LeanNonlinearArith.Kernel.AnumArith
 
 /-!
 # Cell store — owner-level sharing for algebraic cells (design 2026-07-28)
@@ -142,6 +142,60 @@ def refineUntilPrecC (x : CellId) (prec : Nat) : CellM Unit := do
 /-- `refine1` on a stored cell (z3 `am::refine`). -/
 def refine1C (x : CellId) : CellM Unit := do
   modifyCell x RAlg.refine1
+
+/-! ## Arithmetic lifts (moved from AnumArith.lean, design review
+2026-07-31 item 5 — all lifts live in this one file) -/
+
+/-- `RAlg.add` on stored cells: refinements persist; result is a fresh
+cell (z3 `set(c, …)` on an output numeral). -/
+def addC (x y : CellId) : CellM CellId := do
+  let a ← read x
+  let b ← read y
+  let (c, a', b') := RAlg.add a b
+  write x a'
+  write y b'
+  fresh c
+
+/-- `RAlg.sub` on stored cells. -/
+def subC (x y : CellId) : CellM CellId := do
+  let a ← read x
+  let b ← read y
+  let (c, a', b') := RAlg.sub a b
+  write x a'
+  write y b'
+  fresh c
+
+/-- `RAlg.mul` on stored cells. -/
+def mulC (x y : CellId) : CellM CellId := do
+  let a ← read x
+  let b ← read y
+  let (c, a', b') := RAlg.mul a b
+  write x a'
+  write y b'
+  fresh c
+
+/-- `RAlg.neg` in place (z3 `neg(numeral &)` mutates the numeral). -/
+def negC (x : CellId) : CellM Unit := do
+  modifyCell x RAlg.neg
+
+/-- `RAlg.inv` in place (z3 `inv(numeral &)` mutates the numeral).
+`false` = z3's throw on a zero input. -/
+def invC (x : CellId) : CellM Bool := do
+  match RAlg.inv (← read x) with
+  | some v => write x v; return true
+  | none => return false
+
+/-- `RAlg.div` on stored cells (divisor not mutated, as z3).
+`none` = z3's throw on a zero divisor. -/
+def divC (x y : CellId) : CellM (Option CellId) := do
+  let a ← read x
+  let b ← read y
+  match RAlg.div a b with
+  | some (c, a', b') =>
+    write x a'
+    write y b'
+    return some (← fresh c)
+  | none => return none
 
 end CellStore
 

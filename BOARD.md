@@ -636,11 +636,68 @@ a divergence; target-factor V ≥ 1 always (non-root-endpoint invariant
 makes r_i's bracket strict) so the discard loop can never drop the
 target — no infinite-loop corner; aux-z z-shadowing ≡ z3's ext_var2num
 within the nested call; convert(x, i−1) truncation exact (:7718).
-Open items carried to the review log in the session summary: evalCore
-`.get!` on unassigned vars (panic-returns-default ⇒ silently reads cell
-0 — F7 class), silent wrong values on violated preconditions where z3
-THROWS (inv/div by zero, power 0^0), detBiv Laplace (nla-30), the new
-partial-def termination trust list, CellStore-lift file split.
+
+**Review follow-ups (Danielle's directives, 2026-07-31 — "nearly
+unreachable still needs fixing"; "identical behavior in practice";
+"cover all cases"; "prove the termination arguments"):** ALL LANDED.
+(1) `evalCore`/`evalAnum` return `Option` — an unassigned variable is a
+`none`, never the panic-default silent cell-0 read. (2) z3's throw
+paths are `Option` too: `inv`/`div` of zero, `power` 0^0 — `none`
+propagates (the faithful image of the exception unwinding out of the
+nlsat call), replacing Lean's silent `1/0 = 0` / `0^0 = 1`; pins cover
+the `none` cases. (3) `detBiv` is now Bareiss fraction-free (O(n³) poly
+muls, exact over ℚ[x] at ANY matrix size) — first cut had a real bug
+(skip-on-zero-entry dropped the pivot scaling; caught by the
+composeXDivY pins); Laplace kept as the differential reference, pinned
+equal on a specimen family. (4) Termination: the ops are now
+non-recursive — became-basic is DATA (`MkBinaryResult`/`MkUnaryResult`
+carrying the discovered rational; the caller re-dispatches through
+`*RatL`/`*RatR` = `mk_basic` with a basic operand) instead of a
+callback into the full op; `isolateRootsAt` split into
+`isolateRootsAtCore` + `isolateRootsNested`/`isolateRootsAt`
+(structural, no `partial`, the one-level nesting is now by
+construction); `evalCore` has a real `termination_by x` (the variable
+decreases; `maxSmallerThan` returns a proof-carrying subtype).
+Remaining `partial` (analytic termination): **nla-31** below.
+(5) CellStore lifts consolidated into `CellStore.lean` (which now
+imports AnumArith); the `MkBinaryOps`/`MkUnaryOps` records are gone
+(plain parameters). (6) eval-walker temp analysis agreed — recheck if
+12c ever reuses temporaries across op calls.
+
+## nla-31 `todo` — termination proofs for the analytic walks/loops (Danielle, 2026-07-31)
+
+The remaining `partial` defs in the anum layer, with the shape of each
+argument. Danielle's directive: build and PROVE the termination
+arguments properly.
+
+- **`mkBinary`/`mkUnary` loops**: each iteration strictly halves both
+  isolating intervals (or exits became-basic). The target factor's
+  `V ≥ 1` at every iteration (its root is strictly inside `r_i` by the
+  non-root-endpoint invariant); distinct factors have distinct roots
+  (factorization correctness), so once the interval is narrower than
+  every root-gap the scan yields a unique `V == 1`. Needs: correctness
+  of `Factor.factor` (product of distinct square-free factors ∼ p, no
+  shared roots), Sturm count correctness (**nla-10**), root separation
+  (square-free ⇒ nonzero minimum gap).
+- **`isolating2Refinable` walks** (cases 2–4): the halving walk reaches
+  a point whose sign differs from the endpoint sign (or the exact
+  root). Existence of that point follows from the `V == 1` count +
+  square-freeness (the root is simple, so the sign changes across it) —
+  same nla-10 flavor.
+- **`refineNzBound` walks**: sign stability of a polynomial near a
+  NON-root point — elementary (continuity-style: `p(0) ≠ 0` ⇒ sign
+  eventually constant on the halving sequence); does NOT need Sturm.
+  Cheapest of the bunch, do first.
+- **Pre-existing partials in the same class** (include in scope):
+  `Mpbq.refineUpper`/`refineLower` (dyadic grid finer than
+  `|q − dyadic|` with `q` non-dyadic), `refineToPrecD` (width gate
+  halves), `compareCore`'s loops, `separate`, `selectSmallCore*`,
+  `BivPoly.detBivLaplace` (structural on matrix size — actually easy:
+  recursion on `n`).
+
+Sequencing: the elementary ones (refineNzBound, refineUpper/Lower,
+detBivLaplace) are independent; the Sturm-flavored ones (mkBinary,
+mkUnary, isolating2Refinable) compose with nla-10.
 
 The `q ≡ 0` degenerate fallbacks inside `isolateRootsAt`
 (`algebraic_numbers.cpp:2622-2678`: linear-coefficient solve with anum
