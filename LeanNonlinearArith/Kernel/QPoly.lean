@@ -192,6 +192,17 @@ def composePQX (p : QPoly) (q : Rat) : QPoly := Id.run do
       bc := bc / c * b
   return r
 
+/-- z3 `has_zero_roots`: the constant coefficient is zero. -/
+def hasZeroRoots (p : QPoly) : Bool := coeff p 0 == 0
+
+/-- z3 `remove_zero_roots` (upolynomial.cpp:1296): strip the zero root —
+drop the low-degree zero coefficients. -/
+def removeZeroRoots (p : QPoly) : QPoly := Id.run do
+  let mut k := 0
+  while k < p.size && p[k]! == 0 do
+    k := k + 1
+  return trim (p.extract k p.size)
+
 /-- Monic gcd by the Euclidean algorithm, remainders re-normalized to monic
 each step (kills ℚ coefficient blowup). Fueled by the degree sum. -/
 def gcd (p q : QPoly) : QPoly := Id.run do

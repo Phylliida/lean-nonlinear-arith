@@ -677,7 +677,22 @@ noted; 29.1 decision resolved below):
   beyond this are multivariate second arguments, which no reachable
   call site produces (the second argument is always a univariate
   defining poly). Deferred-generality work recorded as **nla-30**.
-- **29.2 mk_binary/mk_unary engine** (:1210-1290, :1292+): factor
+- **29.2 mk_binary/mk_unary engine** `done` (2026-07-31, engine half):
+  `Kernel/AnumArith.lean` — `mkBinary` (:1210) verbatim: resultant-composed
+  poly (BivPoly route) → nla-27 factor → per-factor `sturmChain` (|lc|-
+  normalized; positive rescaling preserves the V counts) → discard/target
+  scan with the UINT_MAX analogue → `setCore` (:1150: zero-snap via
+  `signVarAt seq 0`, zero-strip, new `isolating2Refinable` in Roots.lean —
+  all 4 cases) → refine with z3's short-circuit `!refine(a) || !refine(b)`
+  became-basic re-dispatch. `save_intervals` semantics:
+  `restoreIfTooSmall` on BOTH exits (z3's duplicate `saved_a` call at
+  :1285-1286 is a no-op; saved_b is restored by its destructor — net
+  effect both, ported as both). mk_unary NOT ported: only serves k-th
+  roots/powers (:1550/:1580), unreachable from our op set. MpbqI moved
+  Nlsat/AnumEval → Kernel/Mpbq (mk_interval functors need it; resolves
+  via the existing `open`). Original slice text kept:
+
+  Original scope: factor
   (nla-27) → sturmChain per factor → signVarAt at r_i endpoints →
   discard/target loop (V≤0 discard, V==1 target, else keep) →
   refine a/b with became-basic re-dispatch to mk_basic
@@ -688,7 +703,33 @@ noted; 29.1 decision resolved below):
   throughout (refine mutates cells); store-era lessons apply: one
   CellM computation per scenario, `modify`-style fresh, no per-probe
   allocations on mutation-free paths.
-- **29.3 the ops** (:1584-1883), dispatch tables verbatim: add/sub
+- **29.3 the ops** `done` (2026-07-31, with 29.2): dispatch tables
+  verbatim in `Kernel/AnumArith.lean` — add/sub (zero shortcuts,
+  basic+basic, algebraic+basic via `addAlgebraicBasic` = translateQ with
+  to_mpbq fast path + convertQ2BqInterval fallback, algebraic+algebraic
+  via mkBinary IsAdd); mul (zero reset, `mulAlgebraicBasic` = composePQX
+  with negative-scalar endpoint swap, mkBinary); neg (pMinusX + interval
+  negation); inv (`refineNzBound` FIRST — div2 walk with root-hit ⇒
+  became basic; then p1DivX + rational endpoint inversion + swap +
+  convertQ2BqInterval); div = inv + mul on a COPY of the divisor (b never
+  mutated). Two declared z3-bug-side treatments (verdict-preserving, in
+  the file header): (1) add/mul mixed-path convert exact-root ⇒ z3 logs
+  "conversion failed" and calls set with a STALE upper bound (:1629/:1742)
+  — we return `.rat` of the found root (the value IS that dyadic);
+  (2) inv's convert exact-root ⇒ z3 THROWS (:1858), aborting the nlsat
+  call — we return `.rat` (can only continue where z3 fails, never the
+  reverse). Division-by-zero is UNREACHABLE in z3 (throws); our callers
+  pre-discharge ≠0 (29.5's linear solve checks `!is_zero(a1)` first) —
+  explicit precondition, no panic-guard reliance (F7 lesson).
+  Pins (AnumArithTests): √2+√3 .eq to the isolated x⁴−10x²+1 cell,
+  √2·√3 = √6 .eq, √3−√2 small root, neg/inv/div, non-dyadic mixed paths
+  (√2+1/3, √2/3), and the DESIGNED became-basic pin: x²−4 cell (1,3) +
+  −√3 cell (−32,−1) — sum interval covers both result factors so the
+  first scan leaves 2 candidates, first refine bisects at exactly 2 ⇒
+  a' == .rat 2 persisted, result 2−√3. CellStore lifts addC/subC/mulC/
+  negC/invC/divC pinned through the store. Original slice text kept:
+
+  Original scope: (:1584-1883), dispatch tables verbatim: add/sub
   (zero shortcuts, basic+basic, algebraic+basic via translateQ with
   to_mpbq fast path + convertQ2BqInterval fallback, algebraic+algebraic
   via mk_binary IsAdd); mul (zero reset, basic scaling via composePQX

@@ -277,4 +277,54 @@ def convertQ2BqInterval (p : QPoly) (a b : Rat) : Mpbq ⊕ (Mpbq × Mpbq) := Id.
         lower := l; upper := u
   return .inr (c, d)
 
+/-- z3 `isolating2refinable` (upolynomial.cpp:2618): convert an isolating
+interval — whose endpoints may be roots of `p` — into a *refinable* one
+(both endpoints non-roots, `sign p(a') = −sign p(b')`). `.inl (a', b')`
+on success; `.inr r` when the bisection walk lands on the exact root
+(z3's `false` return, root stored in `a`). Cases 1–4 as in the source:
+non-root endpoints pass through; a root endpoint walks the midpoint in;
+two root endpoints run both half-walks in "parallel". -/
+partial def isolating2Refinable (p : QPoly) (a b : Mpbq) : (Mpbq × Mpbq) ⊕ Mpbq :=
+  let signA := evalSignAtD p a
+  let signB := evalSignAtD p b
+  if signA != 0 && signB != 0 then
+    .inl (a, b)                    -- CASE 1
+  else if signA == 0 && signB != 0 then
+    -- CASE 2: `a` is the root endpoint; `newA` walks toward it
+    let rec walkLo (a newA : Mpbq) : (Mpbq × Mpbq) ⊕ Mpbq :=
+      let s := evalSignAtD p newA
+      if s != signB then
+        if s == 0 then .inr newA else .inl (newA, b)
+      else
+        walkLo a (Mpbq.div2 (Mpbq.add newA a))
+    walkLo a (Mpbq.div2 (Mpbq.add a b))
+  else if signA != 0 && signB == 0 then
+    -- CASE 3: mirror of case 2
+    let rec walkHi (b newB : Mpbq) : (Mpbq × Mpbq) ⊕ Mpbq :=
+      let s := evalSignAtD p newB
+      if s != signA then
+        if s == 0 then .inr newB else .inl (a, newB)
+      else
+        walkHi b (Mpbq.div2 (Mpbq.add b newB))
+    walkHi b (Mpbq.div2 (Mpbq.add a b))
+  else
+    -- CASE 4: both endpoints roots; split at the midpoint, walk both halves
+    let b1 := Mpbq.div2 (Mpbq.add a b)
+    let signB1 := evalSignAtD p b1
+    if signB1 == 0 then .inr b1
+    else
+      let rec walk4 (a1 b1 newA1 a2 b2 newB2 : Mpbq) : (Mpbq × Mpbq) ⊕ Mpbq :=
+        let s1 := evalSignAtD p newA1
+        if s1 == 0 then .inr newA1
+        else if s1 == -signB1 then .inl (newA1, b1)
+        else
+          let s2 := evalSignAtD p newB2
+          if s2 == 0 then .inr newB2
+          else if s2 == -signB1 then .inl (a2, newB2)
+          else
+            walk4 a1 newA1 (Mpbq.div2 (Mpbq.add newA1 a1))
+              newB2 b2 (Mpbq.div2 (Mpbq.add b2 newB2))
+      walk4 a b1 (Mpbq.div2 (Mpbq.add a b1))
+        b1 b (Mpbq.div2 (Mpbq.add b1 b))
+
 end LeanNonlinearArith.Kernel.QPoly

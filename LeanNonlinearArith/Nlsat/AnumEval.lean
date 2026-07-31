@@ -32,57 +32,9 @@ namespace LeanNonlinearArith.Nlsat
 
 open LeanNonlinearArith.Kernel
 
-/-- Closed dyadic interval `[lo, hi]` — z3 `mpbqi`
-(`basic_interval_manager<mpbq_manager, false>`; "for precise numerals":
-every operation below is exact, there are no rounding hooks). -/
-structure MpbqI where
-  lo : Mpbq
-  hi : Mpbq
-deriving Repr, Inhabited, BEq
-
-namespace MpbqI
-
-def ofMpbq (a : Mpbq) : MpbqI := ⟨a, a⟩
-
-def ofInt (n : Int) : MpbqI := ⟨.ofInt n, .ofInt n⟩
-
-/-- `basic_interval.h` add. -/
-def add (i j : MpbqI) : MpbqI := ⟨Mpbq.add i.lo j.lo, Mpbq.add i.hi j.hi⟩
-
-/-- `basic_interval.h` sub (`lo − hi'`, `hi − lo'`). -/
-def sub (i j : MpbqI) : MpbqI := ⟨Mpbq.sub i.lo j.hi, Mpbq.sub i.hi j.lo⟩
-
-def neg (i : MpbqI) : MpbqI := ⟨Mpbq.neg i.hi, Mpbq.neg i.lo⟩
-
-/-- `basic_interval.h` mul: min/max over the four endpoint products. -/
-def mul (i j : MpbqI) : MpbqI :=
-  let c1 := Mpbq.mul i.lo j.lo
-  let c2 := Mpbq.mul i.lo j.hi
-  let c3 := Mpbq.mul i.hi j.lo
-  let c4 := Mpbq.mul i.hi j.hi
-  ⟨Mpbq.min (Mpbq.min c1 c2) (Mpbq.min c3 c4),
-   Mpbq.max (Mpbq.max c1 c2) (Mpbq.max c3 c4)⟩
-
-/-- `basic_interval.h` power (:326): odd exponents map endpoints;
-even exponents split on the interval's sign (`[-2,3]² = [0,9]`). -/
-def pow (i : MpbqI) (n : Nat) : MpbqI :=
-  if n % 2 == 1 then ⟨Mpbq.power i.lo n, Mpbq.power i.hi n⟩
-  else
-    let l := Mpbq.power i.lo n
-    let h := Mpbq.power i.hi n
-    if i.lo.isNonneg then ⟨l, h⟩
-    else if i.hi.isNeg then ⟨h, l⟩
-    else ⟨Mpbq.ofInt 0, Mpbq.max l h⟩
-
-def containsZero (i : MpbqI) : Bool := i.lo.isNonpos && i.hi.isNonneg
-
-def isPos (i : MpbqI) : Bool := i.lo.isPos
-
-def isNeg (i : MpbqI) : Bool := i.hi.isNeg
-
-def width (i : MpbqI) : Mpbq := Mpbq.sub i.hi i.lo
-
-end MpbqI
+-- `MpbqI` moved to `Kernel/Mpbq.lean` at nla-29.2 (anum arithmetic's
+-- `mk_interval` functors need it); the `open` above keeps all references
+-- in this file and its importers resolving unchanged.
 
 namespace MPoly
 
