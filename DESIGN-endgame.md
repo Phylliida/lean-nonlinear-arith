@@ -49,19 +49,21 @@ Done and green (all sorry-free, full build 7575 jobs):
 | L1 saturation | nla-01..05, 07, 20, 24-partial, 26 | **complete** — 112+ tests, RULES.md 27/27 rows, parity audited row-by-row |
 | Kernel | nla-08 (QPoly), nla-09 (roots + trusted certs), Mpbq, RAlg mini-anum | **complete**, perf derisked |
 | nlsat lane | 12a (Types/IntervalSet), 12b-i (AnumEval), 12b-ii (Evaluator + Table), S3 Thom kit, nla-26 fidelity arc, F1–F7 review, 25.4 order theorems, nla-28 statefulness threading, nla-27 ℤ factorization (default `factor=true` parity) | **complete** |
+| anum arithmetic | nla-29 (29.1 gadgets + BivPoly resultant route, 29.2 mkBinary/mkUnary engines, 29.3 field ops, 29.4 eval walker, 29.5 q≡0 fallbacks) | **complete** (2026-07-31) |
 | Remaining declared divergences | Sturm-vs-Descartes isolation; QPoly ℚ[x] kernel (bridged at `ofQPoly`/`toZPoly`) | tracked |
 
-Open: 29 (anum arithmetic → q≡0 fallbacks), 12c, 12d, 19a, 19b, 12e,
+Open: 12c, 12d, 19a, 19b, 12e,
 13, 14, 15, 16 (critical path); 21, 22, 07b, 06 (L1 hardening);
-23, 24-residual, 25-residual, 10, 11 (proof layer / S1).
+23, 24-residual, 25-residual, 10, 11, 30 (proof layer / S1 / deferred
+generality).
 
 ---
 
 ## 2. Critical path to Tier A
 
 Ordering (revised 2026-07-26 under Danielle's guiding rule, see §6;
-updated 2026-07-28 with nla-29):
-**~~28~~ → ~~27~~ → ~~12b-ii~~ → 29 → 12c → 12d+19a (same arc) → 19b →
+updated 2026-07-28 with nla-29; 29 closed 2026-07-31):
+**~~28~~ → ~~27~~ → ~~12b-ii~~ → ~~29~~ → 12c → 12d+19a (same arc) → 19b →
 12e → 14 → 15 → 16.** nla-27 moved ahead of the evaluator/solver
 builds: `factor=false`
 is a live divergence from default z3, and the evaluator/solver behavior
