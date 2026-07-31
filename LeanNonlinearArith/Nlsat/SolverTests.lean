@@ -630,4 +630,88 @@ private def modelChecksOut (cids : Array Nat) : SolverM Bool := do
     && s.assignment.isEmpty
     && s.bvalues.all (· == .undef))
 
+/-! ## nla-12c.5 — resolve (mock explain: faithful for boolean and
+stage-0 conflicts, which have no lower variables to project) -/
+
+-- trivial boolean UNSAT
+#guard Solver.run' (do
+  Solver.init
+  let pb ← mkBoolVar
+  let _ ← mkClause #[⟨pb, false⟩] false
+  let _ ← mkClause #[⟨pb, true⟩] false
+  let r ← search (resolve mockExplain)
+  let s ← get
+  return r == some .false && s.conflicts == 1)
+
+-- chained resolution: decision reversal via a learned unit, then the
+-- empty lemma at level 0 (2 conflicts)
+#guard Solver.run' (do
+  Solver.init
+  let pb1 ← mkBoolVar
+  let pb2 ← mkBoolVar
+  let _ ← mkClause #[⟨pb1, false⟩, ⟨pb2, false⟩] false
+  let _ ← mkClause #[⟨pb1, true⟩, ⟨pb2, false⟩] false
+  let _ ← mkClause #[⟨pb2, true⟩] false
+  let r ← search (resolve mockExplain)
+  let s ← get
+  return r == some .false
+    && s.conflicts ≥ 2
+    && s.clauses.any (fun c => c.learned && c.lits == #[⟨pb1, false⟩]))
+
+-- stage-0 arith UNSAT: x0 ≤ 0 ∧ x0 ≥ 1 (mock explain is faithful —
+-- there is nothing below stage 0 to project)
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let g0 ← mkIneqLiteral (gtA x0)
+  let lt1 ← mkIneqLiteral (ltA (xm 1))
+  let _ ← mkClause #[⟨g0.bvar, true⟩] false -- x0 ≤ 0
+  let _ ← mkClause #[⟨lt1.bvar, true⟩] false -- x0 ≥ 1
+  let r ← search (resolve mockExplain)
+  return r == some .false)
+
+-- mixed: case-1 STAGE backjump with a learned clause, then reprocess
+-- (z3's `goto start`): [b1 ∨ x0 > 0] ∧ [¬b1] ∧ [x0 < −1]
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let pb ← mkBoolVar
+  let g0 ← mkIneqLiteral (gtA x0)
+  let lt1 ← mkIneqLiteral (ltA (xm (-1)))
+  let _ ← mkClause #[⟨pb, false⟩, g0] false
+  let _ ← mkClause #[⟨pb, true⟩] false
+  let _ ← mkClause #[lt1] false
+  let r ← search (resolve mockExplain)
+  let s ← get
+  return r == some .false
+    && s.clauses.any (fun c => c.learned && c.lits == #[⟨pb, false⟩]))
+
+-- case-2 backjump: the learned clause reverses a decision, then SAT
+#guard Solver.run' (do
+  Solver.init
+  let pb1 ← mkBoolVar
+  let pb2 ← mkBoolVar
+  let pb3 ← mkBoolVar
+  let c1 ← mkClause #[⟨pb1, false⟩, ⟨pb2, false⟩, ⟨pb3, false⟩] false
+  let c2 ← mkClause #[⟨pb3, true⟩, ⟨pb2, false⟩] false
+  let r ← search (resolve mockExplain)
+  let s ← get
+  return r == some .true
+    && s.bvalues[pb2]! == .true -- reversed from the negative-first decide
+    && s.clauses.any (fun c => c.learned
+      && c.lits == #[⟨pb1, false⟩, ⟨pb2, false⟩])
+    && (← modelChecksOut #[c1, c2]))
+
+-- max_conflicts gate
+#guard Solver.run' (do
+  Solver.init
+  let pb1 ← mkBoolVar
+  let pb2 ← mkBoolVar
+  let _ ← mkClause #[⟨pb1, false⟩, ⟨pb2, false⟩] false
+  let _ ← mkClause #[⟨pb1, true⟩, ⟨pb2, false⟩] false
+  let _ ← mkClause #[⟨pb2, true⟩] false
+  modify fun s => { s with maxConflicts := 1 }
+  let r ← search (resolve mockExplain)
+  return r == some .undef)
+
 end LeanNonlinearArith.Nlsat.Tests

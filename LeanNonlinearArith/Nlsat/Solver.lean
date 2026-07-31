@@ -100,6 +100,9 @@ structure Solver where
   invPerm : Array Var := #[]
   clauses : Array Clause := #[]
   trail : Array TrailEntry := #[]
+  marks : Array Bool := #[]
+  numMarks : Nat := 0
+  lemma : Array Literal := #[]
   bk : Option Nat := none
   xk : Option Var := none
   scopeLvl : Nat := 0
@@ -144,7 +147,8 @@ def mkBoolVar : SolverM Nat := do
     levels := s.levels.push 0
     justifications := s.justifications.push .null
     bwatches := s.bwatches.push #[]
-    dead := s.dead.push false }
+    dead := s.dead.push false
+    marks := s.marks.push false }
   return b
 
 /-- z3 `mk_var` + `register_var`: fresh var with identity perm entries
@@ -774,6 +778,226 @@ def search (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBool) :=
 /-- The 12c.4 stub resolve: no conflict resolution yet — aborts (the
 `none` image) on the first conflict. SAT-mode-first per the board. -/
 def stubResolve : Nat → SolverM (Option Bool) := fun _ => pure none
+
+/-! ## nla-12c.5 — conflict resolution (`:1764`–`:2146` @ 4.12.5) -/
+
+/-- The explain boundary (pinned to `explain::operator()(num, lits,
+out)` @ 4.12.5): given the core literals of a lazy justification,
+return the projection literals to prepend (`resolve_lazy_justification`
+itself appends the negated core). The `Option` is the 29.5 abort
+image. 12d supplies the real projection. -/
+abbrev ExplainFn := Array Literal → SolverM (Option (Array Literal))
+
+/-- Mock explain for solver-level tests: adds nothing — faithful
+exactly when the conflict stage has no lower variables to project
+(stage-0/univariate conflicts, boolean conflicts). -/
+def mockExplain : ExplainFn := fun _ => pure (some #[])
+
+/-- z3 `mark` / `reset_mark` / `is_marked`. -/
+def mark (b : Nat) : SolverM Unit :=
+  modify fun s => { s with marks := s.marks.set! b true }
+
+def unmark (b : Nat) : SolverM Unit :=
+  modify fun s => { s with marks := s.marks.set! b false }
+
+def isMarked (b : Nat) : SolverM Bool := do
+  return (← get).marks[b]!
+
+/-- z3's `scoped_reset_marks` destructor: clear everything on exit. -/
+def resetAllMarks : SolverM Unit :=
+  modify fun s => { s with marks := s.marks.map (fun _ => false), numMarks := 0 }
+
+/-- z3 `reset_marks()`: unmark the lemma's vars and zero the counter
+(other marks are cleared by `resetAllMarks` at resolve's exit). -/
+def resetMarksLemma : SolverM Unit := do
+  for l in (← get).lemma do
+    unmark l.bvar
+  modify fun s => { s with numMarks := 0 }
+
+/-- z3 `process_antecedent` (`:1764`): collect marked literals into the
+lemma or bump the same-level same-stage mark counter. The undef case
+is a previous-stage literal false in the current arith interpretation
+(z3 SASSERTs `max_var(b) < m_xk` there). -/
+def processAntecedent (l : Literal) : SolverM Unit := do
+  let s ← get
+  let b := l.bvar
+  if assignedValue s l == .undef then
+    if !(← isMarked b) then
+      mark b
+      modify fun s => { s with lemma := s.lemma.push l }
+    return
+  let bLvl := s.levels[b]!
+  if !(← isMarked b) then
+    mark b
+    if bLvl == s.scopeLvl && maxVarB s b == s.xk then
+      modify fun s => { s with numMarks := s.numMarks + 1 }
+    else
+      modify fun s => { s with lemma := s.lemma.push l }
+
+/-- z3 `resolve_clause(b, sz, c)` (`:1797`): process every literal not
+on `b`. (z3's assumption join is a declared non-port.) -/
+def resolveClause (b : Option Nat) (lits : Array Literal) : SolverM Unit := do
+  for l in lits do
+    if some l.bvar != b then processAntecedent l
+
+/-- z3 `resolve_lazy_justification` (`:1813`): explain the core, append
+the negated core, resolve. -/
+def resolveLazyJustification (explain : ExplainFn) (b : Nat)
+    (lits : Array Literal) : SolverM (Option Unit) := do
+  match (← explain lits) with
+  | none => return none
+  | some proj =>
+    let mut lazyClause := proj
+    for l in lits do
+      lazyClause := lazyClause.push l.negate
+    resolveClause (some b) lazyClause
+    return some ()
+
+/-- z3 `only_literals_from_previous_stages` (`:1871`). -/
+def onlyLitsFromPrevStages : SolverM Bool := do
+  let s ← get
+  return s.lemma.all (fun l => maxVarB s l.bvar != s.xk)
+
+/-- z3 `max_scope_lvl` (`:1884`): max level over the lemma's
+assigned-false literals (undef ones are previous-stage and skipped). -/
+def maxScopeLvlOfLemma : SolverM Nat := do
+  let s ← get
+  let mut mx := 0
+  for l in s.lemma do
+    if assignedValue s l == .false then
+      mx := max mx s.levels[l.bvar]!
+  return mx
+
+/-- z3 `remove_literals_from_lvl` (`:1911`): pull the same-stage
+literals at `lvl` back out of the lemma (they stay marked and become
+the new resolution targets). -/
+def removeLitsFromLvl (lvl : Nat) : SolverM Unit := do
+  let s ← get
+  let mut kept : Array Literal := #[]
+  for l in s.lemma do
+    if assignedValue s l == .false && s.levels[l.bvar]! == lvl
+        && maxVarB s l.bvar == s.xk then
+      modify fun s => { s with numMarks := s.numMarks + 1 }
+    else
+      kept := kept.push l
+  modify fun s => { s with lemma := kept }
+
+/-- z3 `is_bool_lemma` (`:1933`). -/
+def isBoolLemma : SolverM Bool := do
+  let s ← get
+  return s.lemma.all (fun l => !isArithAtom s l.bvar)
+
+/-- z3 `find_new_level_arith_lemma` (`:1947`): max decision level of
+the same-stage literals in the first sz-1 positions; backtrack one
+level when there are none. -/
+def findNewLevelArithLemma : SolverM Nat := do
+  let s ← get
+  let mut newLvl : Option Nat := none
+  for i in [:s.lemma.size - 1] do
+    let l := s.lemma[i]!
+    if maxVarB s l.bvar == s.xk then
+      let lv := s.levels[l.bvar]!
+      newLvl := some (match newLvl with
+        | none => lv
+        | some cur => max cur lv)
+  return newLvl.getD (s.scopeLvl - 1)
+
+/-- z3 `lemma_is_clause` (`:2148`). -/
+def lemmaIsClause (cid : Nat) : SolverM Bool := do
+  let s ← get
+  return s.lemma == s.clauses[cid]!.lits
+
+/-- z3 `resolve` (`:1983`): conflict analysis with the explain
+implementation as a parameter (12d). Verbatim structure incl. the
+`goto start` loop for conflicts triggered by the learned clause.
+Returns `some false` when the empty lemma is derived (UNSAT), `some
+true` on resolution, `none` for the 29.5 abort image. -/
+def resolve (explain : ExplainFn) (conflictCid : Nat) : SolverM (Option Bool) := do
+  let mut conflictCid := conflictCid
+  let mut result : Option Bool := none
+  let mut done := false
+  while !done do
+    -- z3 `start:` — fresh conflict analysis round
+    modify fun s => { s with conflicts := s.conflicts + 1, numMarks := 0, lemma := #[] }
+    resolveClause none (← get).clauses[conflictCid]!.lits
+    let mut top := (← get).trail.size
+    let mut foundDecision := false
+    let mut aborted := false
+    let mut broke := false
+    while !broke && !aborted do
+      foundDecision := false
+      -- trail scan for the marked literals (z3 SASSERT(t.m_kind !=
+      -- NEW_STAGE): only same-stage literals are marked)
+      while (← get).numMarks > 0 && !aborted do
+        if top == 0 then
+          aborted := true -- z3 SASSERT(top > 0): unreachable by construction
+        else
+          match (← get).trail[top - 1]! with
+          | .bvarAssignment b =>
+            if (← isMarked b) then
+              modify fun s => { s with numMarks := s.numMarks - 1 }
+              unmark b
+              match (← get).justifications[b]! with
+              | .clause cid =>
+                resolveClause (some b) (← get).clauses[cid]!.lits
+              | .lazy lits _ =>
+                match (← resolveLazyJustification explain b lits) with
+                | none => aborted := true
+                | some () => pure ()
+              | .decision =>
+                -- z3 SASSERT(m_num_marks == 0)
+                foundDecision := true
+                let v := (← get).bvalues[b]!
+                modify fun s => { s with lemma := s.lemma.push ⟨b, v == .true⟩ }
+              | .null => pure () -- z3 UNREACHABLE
+          | _ => pure ()
+          top := top - 1
+      if aborted then broke := true
+      else if foundDecision then broke := true
+      else if (← onlyLitsFromPrevStages) then broke := true
+      else
+        -- conflict independent of the current decision, still in this
+        -- stage: backtrack to the lemma's max level and continue
+        let maxLvl ← maxScopeLvlOfLemma
+        removeLitsFromLvl maxLvl
+        undoUntilLevel maxLvl
+        top := (← get).trail.size
+    if aborted then
+      result := none
+      done := true
+    else if (← get).lemma.isEmpty then
+      result := some false -- empty clause derived: UNSAT
+      done := true
+    else
+      resetMarksLemma
+      if !foundDecision then
+        -- case 1: lemma from previous stages only — backjump stages
+        let newMaxVar := maxVarLits (← get) (← get).lemma
+        undoUntilStage newMaxVar
+        let newCid ← mkClause (← get).lemma true
+        match (← processClause newCid true) with
+        | none => result := none; done := true
+        | some false => conflictCid := newCid -- z3 `goto start`
+        | some true => result := some true; done := true
+      else
+        -- case 2: decision learned — backjump levels within the stage
+        if (← isBoolLemma) then
+          undoUntilUnassigned (← get).lemma.back!.bvar
+        else
+          undoUntilLevel (← findNewLevelArithLemma)
+        if (← lemmaIsClause conflictCid) then
+          -- the conflict clause itself became asserting
+          match (← processClause conflictCid true) with
+          | none => result := none; done := true
+          | some _ => result := some true; done := true -- z3 VERIFY(...)
+        else
+          let newCid ← mkClause (← get).lemma true
+          match (← processClause newCid true) with
+          | none => result := none; done := true
+          | some false => conflictCid := newCid -- z3 `goto start`
+          | some true => result := some true; done := true
+  resetAllMarks
+  return result
 
 end Solver
 
