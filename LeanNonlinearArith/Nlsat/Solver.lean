@@ -180,7 +180,14 @@ def mkIneqAtom (a : IneqAtom) : SolverM Nat := do
     modify fun s => { s with atoms := s.atoms.set! b (some (Atom.ineq a)) }
     return b
 
+/-- z3 `mk_root_atom`: the stored poly is `flip_sign_if_lm_neg`-normalized
+(roots unchanged) and `x` is expected to dominate `p`'s variables (z3
+SASSERT(x >= max_var(p)); explain maintains this at 12d). Hash-consed
+on (kind, x, i, normalized p), as z3's `root_atom_table` (whose hash
+uses the `m_cache.mk_unique`d poly — structural equality here covers
+the same key). -/
 def mkRootAtom (a : RootAtom) : SolverM Nat := do
+  let a := { a with p := a.p.flipSignIfLmNeg }
   let target := some (Atom.root a)
   match (← get).atoms.findIdx? (· == target) with
   | some b => return b
@@ -1097,8 +1104,11 @@ unaffected. **12d follow-up (boarded):** port real deletion (and the
 def removeLearnedRoots : SolverM Unit := do
   pure ()
 
-/-- Rename every atom's polys by `σ` (z3 `m_pm.rename(sz, p)`): the
-cells in the store need no renaming (they are variable-free values). -/
+/-- Rename every atom's polys by `σ` (z3 `m_pm.rename(sz, p)` — ALL
+variables, including a root atom's `x`; today unreachable since
+`can_reorder` is false when root atoms exist, but rule: cover all
+cases). The cells in the store need no renaming (they are
+variable-free values). -/
 def renameAtoms (σ : Var → Var) : SolverM Unit := do
   modify fun s => { s with
     atoms := s.atoms.map fun
@@ -1107,7 +1117,7 @@ def renameAtoms (σ : Var → Var) : SolverM Unit := do
         some (.ineq { a with factors := a.factors.map fun (p, e) =>
           (p.renameVars σ, e) })
       | some (.root a) =>
-        some (.root { a with p := a.p.renameVars σ }) }
+        some (.root { a with x := σ a.x, p := a.p.renameVars σ }) }
 
 /-- z3 `reorder(sz, p)` (`:2387`): `p` maps internal vars to their new
 positions. Verbatim order: reset watches, build the permuted

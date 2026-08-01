@@ -209,6 +209,17 @@ def renameVars (p : MPoly) (σ : Var → Var) : MPoly :=
     (a, (m.map (fun (x, e) => (σ x, e))).mergeSort (fun (x, _) (y, _) => x < y))
   p.mergeSort (fun (_, m1) (_, m2) => Monomial.lexCompare m1 m2 == .lt)
 
+/-- z3 `flip_sign_if_lm_neg`: negate when the graded-lex-maximal
+monomial's coefficient is negative (roots unchanged; z3 normalizes
+root-atom polys at creation — `mk_root_atom`). -/
+def flipSignIfLmNeg (p : MPoly) : MPoly :=
+  match p with
+  | [] => p
+  | (a0, m0) :: rest =>
+    let (a, _) := rest.foldl (fun (acc : Int × Monomial) (b, m) =>
+      if Monomial.gradedLexCompare m acc.2 == .gt then (b, m) else acc) (a0, m0)
+    if a < 0 then neg p else p
+
 end MPoly
 
 /-! ## Atoms, literals, clauses (`nlsat_types.h`) -/

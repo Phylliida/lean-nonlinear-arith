@@ -61,6 +61,27 @@ private def x2 : MPoly := MPoly.ofVar 2
   let r3 ← mkRootAtom (RootAtom.mk .lt 0 1 x1)
   return r1 == 1 && r2 == 1 && r3 == 2)
 
+-- flip_sign_if_lm_neg at root-atom creation: the stored poly is
+-- normalized (graded-lex-max coeff positive); roots unchanged
+#guard Solver.run' (do
+  Solver.init
+  let negP := MPoly.mul (MPoly.ofInt (-1)) x1 -- −x1: lm coeff negative
+  let r ← mkRootAtom (RootAtom.mk .eq 0 1 negP)
+  let s ← get
+  return s.atoms[r]! == some (Atom.root (RootAtom.mk .eq 0 1 x1))
+    -- dedup: −x1 and x1 are the same atom after normalization
+    && r == (← mkRootAtom (RootAtom.mk .eq 0 1 x1)))
+
+-- renameAtoms renames a root atom's x AND its poly (z3 pm.rename)
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let r ← mkRootAtom (RootAtom.mk .eq 1 2 (MPoly.ofVar 0))
+  renameAtoms (fun x => 1 - x) -- swap 0 ↔ 1
+  let s ← get
+  return s.atoms[r]! == some (Atom.root (RootAtom.mk .eq 0 2 (MPoly.ofVar 1))))
+
 /-! ## max_var / degree family -/
 
 -- max_var(sz, cls): ordinary max, null-poisoning (constant atom's
