@@ -1139,60 +1139,60 @@ Slice plan (each lands compiling + pinned, small commits):
   MULTIVARIATE psc chain (psc in the top var with MPoly coefficients —
   QPoly.discChain/resChain are univariate-ℚ only); engine lands with
   12d.5 behind `ExplainCache.pscChains`.
-- **12d.2 elim_vanishing + normalize** `todo`: both elim_vanishing
-  arities (:307/:363 — vanishing non-const lc → add_zero_assumption;
-  all-coeffs-vanish → p := 0; early-outs at :334/:341; the variable
-  walk-down), normalize(l) :403 (lower-stage factor elimination with
-  EQ/LT/GT sign assumptions :427-433, atom_sign flips from negative
-  odd factors :440-442, rebuild via mkIneqLiteral with atom::flip
-  :468-471, true/false_literal const-resolution; root atoms NOT
-  normalized :481), normalize(core) :492 (false_literal ⇒ clear whole
-  core :499-502). Pins per quirk.
-- **12d.3 cell machinery** `todo`: sign() via evalSignAt (:211),
-  add_cell_lits :899 (isolate_roots with y temporarily unassigned —
-  undef_var_assignment :922; exact-root hit ⇒ single ¬ROOT_EQ +
-  immediate return :936-937; tightest lower/upper bound tracking with
-  UINT_MAX sentinels :910-912; emit ¬ROOT_GT/¬ROOT_LT (GE/LE under
-  full_dimensional) :964-969; 1-based indices), all_univ :975. Pins:
-  √2-grade cells, exact-hit asymmetry, full_dimensional openness.
-- **12d.4 root-atom creation** `todo`: add_root_literal :725's three
-  tiers — mk_linear_root :742 (deg 1, const lc) / mk_plinear_root :756
-  (deg 1, non-const lc: require lc sign ≠ 0, ensure_sign, then linear
-  with sign) / mk_quadratic_root :787 (Thom: ensure_sign on disc :805
-  (abort if disc < 0 :806), A :809 with A-vanishing ⇒ plinear fallback
-  on B·y+C :811-812, p′ = 2Ay+B :814, and p itself when disc > 0
-  :815-818; only i ∈ {1,2} :791); generic fallback ⇒ Solver.mkRootAtom
-  (dedup + flip normalization live there), literal negated :733. Root
-  atoms ONLY via Solver.mkRootAtom (12c carry-over).
-- **12d.5 projection loop + simplify cluster** `todo`: project(ps,
-  max_x) :990 (todo reset/insert, remove_max_polys, the x < max_x
-  degenerate cell-lits case :1000, the all_univ break :1002-1005,
-  add_lc :610 + psc_discriminant :683 + psc_resultant :704 per round,
-  add_cell_lits for the next lower stage :1014); psc :633 with the
-  first-surviving-element return quirks; add_factors :578 with
-  factor=true (factor, elim_vanishing each, insert non-consts).
-  **Prerequisite to verify at slice open: multivariate
-  pseudo-remainder** — z3's pm.pseudo_remainder(f, eq, x, d, r) :1127
-  is multivariate; the kernel has only univariate ZPoly.prem
-  (ZPoly.lean:162) — an MPoly-level prem in the top var likely lands
-  first. Then select_eq :1270 (unsigned single-factor odd-degree EQ,
-  min_d UINT_MAX, degree-1 early break :1293), select_lower_stage_eq
-  :1307 (x2eq, CONST lc only :1333), simplify(l) :1096 (pseudo-
-  division rewrite, sign-flip rule :1132-1137, const-remainder lc
-  ineq/diseq recording :1138-1188, keep-original/emit-direct cases
-  :1199-1205), simplify(C,eq) :1218 (lc assumption emission
-  :1259/:1261), simplify(C,max) loop :1346.
-- **12d.6 operator() + fragment gate + trace** `todo`:
-  process/process2/main pipeline (:1474/:1387/:1375); the fragment
-  gate — deg ≤ 2 in the top var at every projection/root step,
-  checked at explain time; out-of-fragment marks the trace S1-gated
-  (search remains a model-finder/disprover); Trace.lean emission
-  (8-shape, payloads pinned against 19a); wire as the production
-  ExplainFn; port remove_learned_roots + the del_clause machinery (12c
-  carry-over — real deletion now that explain-produced root atoms
-  exist). Pins: 12c multivariate-conflict shapes re-green with the
-  real explain (mock's stage-0 pins stay), fragment-gate accept/reject
-  cases.
+- **12d.2 elim_vanishing + normalize** `done` (2026-08-01): both
+  arities (walk-down re-peek, nonzero-const-lc stop, zero reduct via
+  is_const — the literal k==0 branch is defensive-dead, ported), all
+  assumption shapes (EQ / EQ-negated for even factors / LT / GT),
+  negative-ODD-factor flips, atom::flip + literal-negation rebuild,
+  ps-empty const resolution, false-clears-core. IneqKind.flip into
+  Types.lean. 12 pins incl. z3's Example 2 verbatim.
+- **12d.3 cell machinery** `done` (2026-08-01): sign, add_cell_lits
+  (exact-hit early return, tightest-bound tracking, full_dimensional
+  openness, abort image as Option), all_univ. Pins: √2 exact hit,
+  two-sided with dedup across bound emissions, one-sided both
+  directions, linear bounds ± full_dimensional.
+- **12d.4 root-atom creation** `done` (2026-08-01): all three tiers;
+  p_diff goes through m_pm.normalize = ℤ content-strip (:803, pinned);
+  mk_plinear is NOT in add_root_literal's chain (reachable only via
+  the quadratic A-vanishing degenerate — pinned); generic fallback via
+  Solver.mkRootAtom only. RootKind.toIneqSign into Types.lean.
+  7 pins.
+- **12d.5 projection loop + simplify cluster** `done` (2026-08-01):
+  psc-chain engine FIRST (MPolyOps: Se_Lazard dichotomous +
+  optimized_S_e_1 + psc_chain_optimized — hand-verified chains:
+  −8/108/4/[2,1]; **lc-at-own-degree bug in optimizedSE1 caught by
+  x⁴+1 probe hang** [defective chains have deg S_{d−1} = e < d−1;
+  out-of-bounds → panic-default → div-by-zero loop]). pseudo_remainder
+  was already MPoly-level from 12d.1b-i (pseudoDivisionCore).
+  Explain-side: todo in ExplainState, addFactors (factor=true path),
+  addLc, pscChainCached + psc/pscDiscriminant/pscResultant
+  (first-surviving-element semantics), project (degenerate cell-lits
+  case, all_univ break). Simplify cluster: EqInfo lc bookkeeping,
+  simplifyLit (keep-original on value-true counts as UNMODIFIED —
+  pinned), simplifyWithEq, selectEq (**release semantics: d = 0
+  lower-stage eqs ARE selected** — z3's SASSERT is debug-only,
+  documented), selectLowerStageEq, simplifyCore. 17 pins.
+- **12d.6a operator() + production explain** `done` (2026-08-01):
+  main/process2/process pipeline (const-poison as UINT_MAX = release
+  semantics; minimize cluster stays non-port); `Explain.explain`
+  behind the ExplainFn boundary (fresh ExplainState per call = z3's
+  per-call scratch). Real removeLearnedRoots + delClause
+  (Clause.deleted + deattach; skip-deleted at canReorder/
+  collectVarInfo/reattachArithClauses; ids stable, no cid recycling).
+  **Fragment gate DECISION (documented in Explain.lean): NOT an
+  explain-side abort — z3's projection is degree-generic; the gate
+  marks the TRACE (12d.6b/19a), the search stays z3-faithful.**
+  ACCEPTANCE PINS: x²+y²<0 refuted end-to-end by the real projection
+  (zero assumption at x:=0, cell bounds at x:=±1, stage-0 core
+  conflict), multivariate SAT green, stage-0 pin re-green with the
+  production explain, removeLearnedRoots deletion/deattach.
+- **12d.6b trace emission** `todo` (with 19a): `Nlsat/Trace.lean`
+  (8-shape), emission points inside explain (operator wrap, cell
+  lits, Thom, linear encodings, pseudo-division, factorSplit via
+  add_zero_assumption/add_factors, resolution glue at the solver),
+  fragment-gate marking (generic root-atom fallback ⇒ S1-gated),
+  the trace egress design question (pins HERE: solver-state field vs
+  ExplainFn returning literals×steps).
 
 Acceptance (arc, shared with 19a): end-to-end on hand goals with
 algebraic cells (√2-grade), negative probes (corrupted trace
