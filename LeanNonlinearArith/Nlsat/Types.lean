@@ -238,6 +238,17 @@ def IneqKind.flip : IneqKind → IneqKind
 inductive RootKind | eq | lt | gt | le | ge
 deriving Repr, DecidableEq, Inhabited
 
+/-- The kind/lsign remap of z3's `mk_linear_root`
+(nlsat_explain.cpp:866-874 @ 4.12.5): ROOT_LE ⇒ (GT, negated literal),
+ROOT_GE ⇒ (LT, negated literal) — the negation is folded into the
+remap, not the root literal. -/
+def RootKind.toIneqSign : RootKind → IneqKind × Bool
+  | .eq => (.eq, false)
+  | .lt => (.lt, false)
+  | .gt => (.gt, false)
+  | .le => (.gt, true)
+  | .ge => (.lt, true)
+
 /-- Sign condition on a product of polynomials; each factor carries its
 exponent-parity bit (`isEven`), which is all sign semantics needs.
 Z3: `ineq_atom`. -/

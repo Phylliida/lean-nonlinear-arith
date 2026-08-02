@@ -351,6 +351,131 @@ def normalizeCore (C : Array Literal) (max : Var) : ExplainM (Array Literal) := 
     out := out.push newL
   return out
 
+/-! ## add_root_literal family (:717-878) — 12d.4 -/
+
+/-- z3 `mk_linear_root(k, y, i, p, mk_neg)` (:861): a linear root atom
+becomes a plain ineq atom on the (possibly negated) poly. -/
+def mkLinearRoot5 (k : RootKind) (p : MPoly) (mkNeg : Bool) : ExplainM Unit := do
+  let (k', lsign) := k.toIneqSign
+  addSimpleAssumption k' (if mkNeg then p.neg else p) lsign
+
+/-- z3 `mk_linear_root(k, y, i, p)` (:742): deg-1 with CONSTANT leading
+coefficient (deg-1 polys have a single root; `i` is unused, as
+upstream). -/
+def mkLinearRoot (k : RootKind) (y : Var) (p : MPoly) : ExplainM Bool := do
+  if p.degreeIn y != 1 then return false
+  match (p.coeffsIn y)[1]!.asConst? with
+  | none => return false
+  | some c =>
+    if c == 0 then return false   -- z3 SASSERTs; defensive
+    mkLinearRoot5 k p (c < 0)
+    return true
+
+/-- z3 `mk_plinear_root` (:756): deg-1 with non-const lc — the lc's
+sign must be pinned by an `ensure_sign` assumption; fails (⇒ generic
+fallback) when the lc vanishes under the assignment. -/
+def mkPlinearRoot (k : RootKind) (y : Var) (p : MPoly) : ExplainM Bool := do
+  if p.degreeIn y != 1 then return false
+  let c := (p.coeffsIn y)[1]!
+  let s ← sign c
+  if s == 0 then return false
+  let _ ← ensureSign c
+  mkLinearRoot5 k p (s < 0)
+  return true
+
+/-- z3 `mk_quadratic_root` (:787): Thom encoding — the root condition
+is witnessed purely by sign literals on {disc, A, 2Ay+B, p}. The
+A-vanishing degenerate falls back to `mk_plinear_root` on B·y + C
+(:811-812); p_diff goes through `m_pm.normalize` (:803 — ℤ-mode
+content strip); a negative discriminant rejects (:806). -/
+def mkQuadraticRoot (k : RootKind) (y : Var) (i : Nat) (p : MPoly) : ExplainM Bool := do
+  if p.degreeIn y != 2 then return false
+  if i != 1 && i != 2 then return false
+  let cs := p.coeffsIn y
+  let (A, B, C) := (cs[2]!, cs[1]!, cs[0]!)
+  let q := (B.mul B).sub ((MPoly.ofInt 4).mul (A.mul C))
+  let pDiff := MPoly.managerNormalize none
+    (MPoly.add (MPoly.mul (MPoly.smulTerm 2 [] A) (MPoly.ofVar y)) B)
+  let sq ← ensureSign q
+  if sq < 0 then return false
+  let sa ← ensureSign A
+  if sa == 0 then
+    return ← mkPlinearRoot k y ((B.mul (MPoly.ofVar y)).add C)
+  let _ ← ensureSign pDiff
+  if sq > 0 then
+    let _ ← ensureSign p
+  return true
+
+/-- z3 `add_root_literal` (:725): linear encoding, then quadratic,
+then the generic root atom via `Solver.mkRootAtom` — always emitted
+NEGATED (:733). (`mk_plinear_root` is NOT in this chain upstream —
+only reachable via the quadratic degenerate.) -/
+def addRootLiteral (k : RootKind) (y : Var) (i : Nat) (p : MPoly) : ExplainM Unit := do
+  if !(← mkLinearRoot k y p) && !(← mkQuadraticRoot k y i p) then
+    let b ← liftS (Solver.mkRootAtom ⟨k, y, i, p⟩)
+    addLiteral ⟨b, true⟩
+
+/-! ## add_cell_lits / all_univ (:899/:975) — 12d.3 -/
+
+/-- z3 `add_cell_lits` (:899): describe the cell of `y` containing the
+current value — a single ¬ROOT_EQ literal when `y` hits a root
+exactly (immediate return, :936-937), else the tightest root bounds
+¬ROOT_GT/¬ROOT_LT (GE/LE under `full_dimensional`), skipping infinite
+sides. Root indices are 1-based. `y` is temporarily unassigned for
+root isolation (:922). `none` = the 29.5 abort image
+(isolate_roots throw: unassigned-var eval). -/
+def addCellLits (ps : Array MPoly) (y : Var) : ExplainM (Option Unit) := do
+  let s ← liftS get
+  let yv := (s.assignment.get? y).get!   -- z3 SASSERTs y assigned
+  let mut lowerInf := true
+  let mut upperInf := true
+  let mut lower : CellId := 0
+  let mut upper : CellId := 0
+  let mut pLower : MPoly := []
+  let mut pUpper : MPoly := []
+  let mut iLower : Nat := 0
+  let mut iUpper : Nat := 0
+  let mut done := false
+  for p in ps do
+    if !done && p.maxVar == some y then
+      match (← liftS (liftC (AnumEval.isolateRootsAt p (s.assignment.erase y)))) with
+      | none => return none
+      | some roots =>
+        for i in [:roots.size] do
+          if !done then
+            match (← liftS (liftC (CellStore.compareC yv roots[i]!))) with
+            | .eq =>
+              addRootLiteral .eq y (i + 1) p
+              done := true
+            | .lt =>
+              let better ← if upperInf then pure true
+                else liftS (liftC (CellStore.ltC roots[i]! upper))
+              if better then
+                upperInf := false
+                upper := roots[i]!
+                pUpper := p
+                iUpper := i + 1
+            | .gt =>
+              let better ← if lowerInf then pure true
+                else liftS (liftC (CellStore.ltC lower roots[i]!))
+              if better then
+                lowerInf := false
+                lower := roots[i]!
+                pLower := p
+                iLower := i + 1
+  if done then return some ()
+  let fd := (← liftS get).fullDimensional
+  if !lowerInf then
+    addRootLiteral (if fd then .ge else .gt) y iLower pLower
+  if !upperInf then
+    addRootLiteral (if fd then .le else .lt) y iUpper pUpper
+  return some ()
+
+/-- z3 `all_univ` (:975): every poly is univariate in `x` with `x` its
+max var. -/
+def allUniv (ps : Array MPoly) (x : Var) : Bool :=
+  ps.all fun p => p.maxVar == some x && p.varDegrees.size == 1
+
 end Explain
 
 end LeanNonlinearArith.Nlsat

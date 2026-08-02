@@ -291,4 +291,173 @@ private def oneM : MPoly := MPoly.ofInt 1
   let newL ← normalizeLit ⟨b, true⟩ 1
   return newL == ⟨b, true⟩ && (← get).result == #[])
 
+/-! ## add_root_literal family (12d.4) -/
+
+-- linear, const lc: root becomes a plain ineq atom (negated literal)
+#guard Explain.run' (do
+  Solver.init
+  addRootLiteral .gt 0 1 (MPoly.sub (MPoly.smulTerm 2 [] x0) (MPoly.ofInt 6))
+  let s ← liftS get
+  return (← get).result == #[⟨1, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.gt,
+      [(MPoly.sub (MPoly.smulTerm 2 [] x0) (MPoly.ofInt 6), false)]⟩))
+
+-- negative const lc: poly negated first (mk_neg), same atom shape
+#guard Explain.run' (do
+  Solver.init
+  addRootLiteral .gt 0 1 (MPoly.add (MPoly.smulTerm (-2) [] x0) (MPoly.ofInt 6))
+  let s ← liftS get
+  return (← get).result == #[⟨1, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.gt,
+      [(MPoly.sub (MPoly.smulTerm 2 [] x0) (MPoly.ofInt 6), false)]⟩))
+
+-- ROOT_LE remap: (GT, negated) ⇒ POSITIVE literal on the GT atom
+#guard Explain.run' (do
+  Solver.init
+  addRootLiteral .le 0 1 (MPoly.sub (MPoly.smulTerm 2 [] x0) (MPoly.ofInt 6))
+  let s ← liftS get
+  return (← get).result == #[⟨1, false⟩]
+    && s.atoms[1]! == some (.ineq ⟨.gt,
+      [(MPoly.sub (MPoly.smulTerm 2 [] x0) (MPoly.ofInt 6), false)]⟩))
+
+-- quadratic with A vanishing at the sample ⇒ plinear fallback on
+-- B·y + C; emissions in order: disc sign, A sign, linear encoding
+#guard Explain.run' (do
+  Solver.init
+  let c0 ← liftS (liftC (CellStore.fresh (.rat 0 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c0 })
+  let c5 ← liftS (liftC (CellStore.fresh (.rat 5 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c5 })
+  let p := MPoly.add (MPoly.smulTerm 1 [(1,2)] x0)
+    (MPoly.sub x1 oneM)
+  addRootLiteral .eq 1 1 p
+  let st ← get
+  let s ← liftS get
+  return st.result == #[⟨1, true⟩, ⟨2, true⟩, ⟨3, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.gt, [(MPoly.add oneM (MPoly.smulTerm 4 [] x0), false)]⟩)
+    && s.atoms[2]! == some (.ineq ⟨.eq, [(x0, false)]⟩)
+    && s.atoms[3]! == some (.ineq ⟨.eq, [(MPoly.sub x1 oneM, false)]⟩))
+
+-- full Thom: emissions are sign literals on {p_diff (CONTENT-STRIPPED
+-- by m_pm.normalize!), p}; disc/A are const here ⇒ no literals
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c1 })
+  addRootLiteral .lt 1 1 (MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2))
+  let st ← get
+  let s ← liftS get
+  return st.result == #[⟨1, true⟩, ⟨2, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.gt, [(x1, false)]⟩)
+    && s.atoms[2]! == some (.ineq ⟨.lt,
+      [(MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2), false)]⟩))
+
+-- generic fallback (deg ≥ 3): root atom, negated literal
+#guard Explain.run' (do
+  Solver.init
+  addRootLiteral .lt 1 1 (MPoly.sub (MPoly.pw x1 3) (MPoly.ofInt 2))
+  let s ← liftS get
+  return (← get).result == #[⟨1, true⟩]
+    && s.atoms[1]! == some (.root ⟨.lt, 1, 1,
+      MPoly.sub (MPoly.pw x1 3) (MPoly.ofInt 2)⟩))
+
+-- deg-1 with non-const lc: mk_plinear is NOT in add_root_literal's
+-- chain ⇒ generic root atom (z3 :725-735)
+#guard Explain.run' (do
+  Solver.init
+  let c3 ← liftS (liftC (CellStore.fresh (.rat 3 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c3 })
+  addRootLiteral .gt 1 1 (MPoly.add (MPoly.mul x0 x1) oneM)
+  let s ← liftS get
+  return (← get).result == #[⟨1, true⟩]
+    && s.atoms[1]! == some (.root ⟨.gt, 1, 1,
+      MPoly.add (MPoly.mul x0 x1) oneM⟩))
+
+/-! ## add_cell_lits (12d.3) -/
+
+private def x1sqM2 : MPoly := MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2)
+
+-- exact-root hit: y = √2 is root 2 of x1²−2 ⇒ single Thom emission
+-- round (p_diff GT, p EQ), NO bounds (immediate return :936-937)
+#guard Explain.run' (do
+  Solver.init
+  let c ← liftS (liftC (CellStore.fresh (.root #[-2, 0, 1] 1 2 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c })
+  let r ← addCellLits #[x1sqM2] 1
+  let st ← get
+  let s ← liftS get
+  return r == some ()
+    && st.result == #[⟨1, true⟩, ⟨2, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.gt, [(x1, false)]⟩)
+    && s.atoms[2]! == some (.ineq ⟨.eq, [(x1sqM2, false)]⟩))
+
+-- two-sided cell (y = 1 between −√2 and √2): bound literals from both
+-- sides — and the Thom emissions DEDUP across the two add_root_literal
+-- calls (same p_diff/p sign atoms)
+#guard Explain.run' (do
+  Solver.init
+  let c ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c })
+  let r ← addCellLits #[x1sqM2] 1
+  let st ← get
+  let s ← liftS get
+  return r == some ()
+    && st.result == #[⟨1, true⟩, ⟨2, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.gt, [(x1, false)]⟩)
+    && s.atoms[2]! == some (.ineq ⟨.lt, [(x1sqM2, false)]⟩))
+
+-- lower-only (y = 3): one bound; p's sign is positive ⇒ GT on p
+#guard Explain.run' (do
+  Solver.init
+  let c ← liftS (liftC (CellStore.fresh (.rat 3 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c })
+  let r ← addCellLits #[x1sqM2] 1
+  let st ← get
+  let s ← liftS get
+  return r == some ()
+    && st.result == #[⟨1, true⟩, ⟨2, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.gt, [(x1, false)]⟩)
+    && s.atoms[2]! == some (.ineq ⟨.gt, [(x1sqM2, false)]⟩))
+
+-- upper-only (y = −3): p_diff negative ⇒ LT on it; p positive ⇒ GT
+#guard Explain.run' (do
+  Solver.init
+  let c ← liftS (liftC (CellStore.fresh (.rat (-3) : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c })
+  let r ← addCellLits #[x1sqM2] 1
+  let st ← get
+  let s ← liftS get
+  return r == some ()
+    && st.result == #[⟨1, true⟩, ⟨2, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.lt, [(x1, false)]⟩)
+    && s.atoms[2]! == some (.ineq ⟨.gt, [(x1sqM2, false)]⟩))
+
+-- linear cell bounds: plain ineq encoding; full_dimensional flips
+-- GT→GE (remapped to a POSITIVE LT literal by mk_linear_root)
+#guard Explain.run' (do
+  Solver.init
+  let c ← liftS (liftC (CellStore.fresh (.rat 3 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c })
+  let r ← addCellLits #[MPoly.sub x1 (MPoly.ofInt 2)] 1
+  let s ← liftS get
+  return r == some ()
+    && (← get).result == #[⟨1, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.gt, [(MPoly.sub x1 (MPoly.ofInt 2), false)]⟩))
+
+#guard Explain.run' (do
+  Solver.init
+  let c ← liftS (liftC (CellStore.fresh (.rat 3 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c
+                                , fullDimensional := true })
+  let r ← addCellLits #[MPoly.sub x1 (MPoly.ofInt 2)] 1
+  let s ← liftS get
+  return r == some ()
+    && (← get).result == #[⟨1, false⟩]
+    && s.atoms[1]! == some (.ineq ⟨.lt, [(MPoly.sub x1 (MPoly.ofInt 2), false)]⟩))
+
+-- all_univ
+#guard allUniv #[x0, MPoly.add (MPoly.mul x0 x0) oneM] 0
+    && !allUniv #[MPoly.mul x0 x1] 1
+    && !allUniv #[x0] 1
+
 end LeanNonlinearArith.Nlsat.Tests
