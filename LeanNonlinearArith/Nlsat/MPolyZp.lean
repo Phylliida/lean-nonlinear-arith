@@ -276,42 +276,48 @@ end LinearEqSolver
 /-- z3 `sparse_interpolator` (:3115): solve for the coefficients of a
 known-support polynomial (its skeleton) from `max_num_powers` samples.
 `outputs` is flat over `sk.powers` (z3's layout). -/
-structure SparseInterpolator (c : ZpCtx) (sk : Skeleton) where
+structure SparseInterpolator (c : ZpCtx) where
+  sk : Skeleton
   inputs : Array Int := #[]
-  outputs : Array Int := Array.replicate sk.powers.size 0
+  outputs : Array Int := #[]
 deriving Inhabited
 
 namespace SparseInterpolator
 
+/-- Smart constructor (z3's ctor pre-sizes `m_outputs` over the flat
+powers layout). -/
+def ofSkeleton {c : ZpCtx} (sk : Skeleton) : SparseInterpolator c :=
+  { sk, outputs := Array.replicate sk.powers.size 0 }
+
 /-- z3 `reset`. -/
-def reset {c : ZpCtx} {sk : Skeleton} (si : SparseInterpolator c sk) :
-    SparseInterpolator c sk :=
+def reset {c : ZpCtx} (si : SparseInterpolator c) : SparseInterpolator c :=
   { si with inputs := #[] }
 
 /-- z3 `ready`. -/
-def ready {c : ZpCtx} {sk : Skeleton} (si : SparseInterpolator c sk) : Bool :=
-  si.inputs.size == sk.maxPowers
+def ready {c : ZpCtx} (si : SparseInterpolator c) : Bool :=
+  si.inputs.size == si.sk.maxPowers
 
 /-- z3 `add(in, q)` (:3142): record q's coefficients against the
 skeleton entries. `false` (z3) = q's support escapes the skeleton ⇒
 `sparse_mgcd_failed`. -/
-def add {c : ZpCtx} {sk : Skeleton} (si : SparseInterpolator c sk)
-    (inp : Int) (q : MPoly) : Option (SparseInterpolator c sk) := Id.run do
+def add {c : ZpCtx} (si : SparseInterpolator c)
+    (inp : Int) (q : MPoly) : Option (SparseInterpolator c) := Id.run do
   let inputIdx := si.inputs.size
   let mut outputs := si.outputs
   for (a, mon) in q do
-    match sk.getEntryIdx mon with
+    match si.sk.getEntryIdx mon with
     | none => return none
     | some eidx =>
-      let (_, fi, np) := sk.entries[eidx]!
+      let (_, fi, np) := si.sk.entries[eidx]!
       if inputIdx < np then
         outputs := outputs.set! (fi + inputIdx) a
-  return some { inputs := si.inputs.push inp, outputs }
+  return some { si with inputs := si.inputs.push inp, outputs }
 
 /-- z3 `mk(r)` (:3168): per skeleton entry, solve the Vandermonde
 system for the coefficient powers; `false` (singular) ⇒
 `sparse_mgcd_failed`. -/
-def mkPoly {c : ZpCtx} {sk : Skeleton} (si : SparseInterpolator c sk) : Option MPoly := Id.run do
+def mkPoly {c : ZpCtx} (si : SparseInterpolator c) : Option MPoly := Id.run do
+  let sk := si.sk
   let mut r : MPoly := []
   for eidx in [:sk.entries.size] do
     let (_, fi, np) := sk.entries[eidx]!

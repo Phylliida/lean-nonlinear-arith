@@ -119,7 +119,7 @@ private def st (k : Int) (m : Monomial) (p : MPoly) : MPoly := MPoly.smulTerm k 
   let z := zp 7
   let p := MPoly.add (MPoly.mul x0 x1) (st 2 [] x1)
   let sk := Skeleton.build p 0
-  let si : SparseInterpolator z sk := {}
+  let si := SparseInterpolator.ofSkeleton (c := z) sk
   let si := (si.add 0 (st 2 [] x1)).get!     -- p(0) = 2·x1
   let si := (si.add 1 (st 3 [] x1)).get!     -- p(1) = 3·x1
   si.ready && si.mkPoly == some p
@@ -129,7 +129,7 @@ private def st (k : Int) (m : Monomial) (p : MPoly) : MPoly := MPoly.smulTerm k 
   let z := zp 7
   let p := MPoly.add (MPoly.mul x0 x1) (st 2 [] x1)
   let sk := Skeleton.build p 0
-  let si : SparseInterpolator z sk := {}
+  let si := SparseInterpolator.ofSkeleton (c := z) sk
   (si.add 0 (MPoly.add x0 x1)).isNone
 
 /-! ## craCombineImagesM -/
