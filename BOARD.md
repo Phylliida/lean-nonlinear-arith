@@ -1072,17 +1072,64 @@ Slice plan (each lands compiling + pinned, small commits):
   unfactored "TODO Dejan's procedure"), returning DISTINCT factors
   with the constant (incl. sign flips) dropped — that engine is its
   own slice:
-- **12d.1b multivariate factor_core** `todo`: MPoly gcd (check z3's
-  `manager::gcd` route at 4.12.5 before choosing — subresultant vs
-  heuristic), content/pp (`iccp` :3496), derivative, exact_div,
-  multivariate `sqrt` attempt, `get_min_degree_var` (:6433), the Yun
-  loop (:6628) and the four `factor_sqf_pp` branches (:6600-6624),
-  constant accumulation + odd-multiplicity sign flips into the
-  DROPPED constant. Then `add_zero_assumption` (:262 — zero-sign
-  factors only, multi-factor ¬EQ) and the cache wrapper with memo
-  (:221-226). Pins: iccp/Yun per-branch cases, deg-2 sqrt vs
-  irreducible, distinct-factor + constant-drop semantics, zero-
-  assumption shapes.
+- **12d.1b multivariate factor_core** `active` (sub-sliced 2026-08-01;
+  **engine decision: FULL mod_gcd — Danielle**): z3's gcd ladder
+  (`manager::gcd` :4395) is zero/const/eq cases → `gcd_content` (var
+  in only one side) → same-var-set: univariate `uni_mod_gcd` (:3812 —
+  big-prime loop + Zp `euclid_gcd` + CRA + `pp(C_star)` candidate +
+  divides check, gcd_prs fallback) / multivariate `mod_gcd` (:4300s —
+  big-prime loop + `mod_gcd_rec` Zp evaluation/interpolation +
+  skeleton cache + CRA, gcd_prs fallback). `m_use_prs_gcd=false`
+  hardcoded (:2340) ⇒ mod_gcd is the live route; gcd_prs is the
+  documented fallback (ported first — needed by both). Note:
+  `uni_mod_gcd`'s inner gcd is polynomial.cpp's Zp-mode `euclid_gcd`
+  (→ gcd_prs), NOT nla-27's upolynomial mod_gcd — the Zp layer is
+  shared by both modular gcds. The 231-prime table + balanced CRA idiom
+  already exist (`Kernel/ZPoly.lean` bigPrimes/craCombineImages —
+  univariate; multivariate CRA at :3700s lands in iii).
+  - **12d.1b-i ℤ-mode MPoly foundations** `todo`: graded-lex
+    argmax/argmin (graded_lex_max/min_pos), var_max_degrees +
+    get_min_degree_var (:6433), derivative (:4554), pw, ic (:3386 +
+    :3449), exact_div (scalar :5137; multivariate glex-max reduction
+    :5159), divides (:5197), pseudo_division_core family
+    (exact_pseudo_remainder/pseudo_remainder :5095 — 12d.5 consumes
+    the latter), is_perfect_square + monomial sqrt + sqrt (:5841,
+    the max-monomial-stripping loop). Differential pins vs naive
+    definitions.
+  - **12d.1b-ii gcd ladder ℤ-mode** `todo`: gcd_content (:3671),
+    gcd_prs (:3598 — exact_pseudo_remainder + g/h subresultant
+    bookkeeping + pp on exit, flip_sign_if_lm_neg), top-level gcd
+    (:4395) with the mod_gcd branch delegating to iii. Pins: known
+    gcds, sign normalization, content cases.
+  - **12d.1b-iii Zp-mode layer** `todo`: numeral-mode abstraction (ℤ
+    vs balanced Zp on the same MPoly repr — balanced reps per the
+    nla-27 p_normalize_core lesson), ZpX ops (iccp_ZpX :3919,
+    lc_glex_ZpX, primitive_ZpX, normalize, substitute, univ_eval,
+    euclid_gcd → gcd_prs in Zp mode, mk_glex_monic, Zp divides),
+    newton_interpolator (:2850), sparse_interpolator + skeleton
+    (:2960+), peek_fresh (fresh-value generator — reachable here;
+    nla-32's "unreachable" note was pre-12d), multivariate
+    CRA_combine_images (:3700s).
+  - **12d.1b-iv mod_gcd assembly** `todo`: mod_gcd_rec (:4119 —
+    min_deg_q reset semantics, skeleton save on success, dense-vs-
+    sparse interpolation dispatch, sparse_mgcd_failed → gcd_prs),
+    mod_gcd (:4300s — bad-prime skips, C_star accumulation with
+    glex-max discard rule, candidate normalize + lc_g divisibility +
+    divides checks, prime exhaustion → gcd_prs), uni_mod_gcd (:3812).
+    Pins: multivariate gcds incl. unlucky-prime paths.
+  - **12d.1b-v factor layer** `todo`: iccp (:3496 — the filter
+    optimization + gcd-of-coeffs), pp/is_primitive, factor_1/2/n_
+    sqf_pp (:6465/:6474/:6600 — deg-2 discriminant sqrt attempt with
+    flipped_coeffs sign bookkeeping; deg>2 multivariate pushed back
+    unfactored, z3's own TODO), factor_sqf_pp_univ (:6558 — bridge to
+    nla-27 factorSquareFree), factor_sqf_pp/factor_core (:6610/:6628 —
+    Yun loop, acc_constant + odd-multiplicity flip_sign into the
+    DROPPED constant), manager::factor (:6700). `factors` =
+    constant + (poly, mult) list; cache returns DISTINCT factors,
+    constant dropped. Then `Explain.factor` cache wrapper (:221) +
+    `add_zero_assumption` (:262 — zero-sign factors only, multi-factor
+    ¬EQ). Pins: iccp/Yun branches, deg-2 sqrt vs irreducible,
+    distinct-factor + constant-drop semantics, zero-assumption shapes.
 - **12d.1 residual note**: `m_cache.psc_chain` (:231-236) needs a
   MULTIVARIATE psc chain (psc in the top var with MPoly coefficients —
   QPoly.discChain/resChain are univariate-ℚ only); engine lands with
