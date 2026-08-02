@@ -41,6 +41,8 @@ import LeanNonlinearArith.Nlsat.Solver
 import LeanNonlinearArith.Nlsat.SolverTests
 import LeanNonlinearArith.Nlsat.Explain
 import LeanNonlinearArith.Nlsat.ExplainTests
+import LeanNonlinearArith.Nlsat.MPolyOps
+import LeanNonlinearArith.Nlsat.MPolyOpsTests
 import LeanNonlinearArith.Kernel.Zp
 import LeanNonlinearArith.Kernel.ZPoly
 import LeanNonlinearArith.Kernel.ZPolyTests
