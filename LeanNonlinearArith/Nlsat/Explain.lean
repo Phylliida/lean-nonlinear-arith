@@ -1,4 +1,5 @@
 import LeanNonlinearArith.Nlsat.Solver
+import LeanNonlinearArith.Nlsat.MPolyFactor
 
 /-!
 # nla-12d — explain: the projection port (z3 `nlsat_explain.cpp` @ **4.12.5**)
@@ -20,12 +21,10 @@ non-ports (dead on the nra path at 4.12.5): the minimize cluster
 
 **Slice 12d.1 (this file, so far):** the explain monad + per-call
 state, `add_literal`/`reset_already_added`, `sign`, `collect_polys`,
-the `max_var` family, `todo_set`, and the assumption machinery
-(`add_simple_assumption`/`add_assumption`/`ensure_sign`). Deferred:
-`add_zero_assumption` (:262) needs the factor engine — the
-multivariate `factor_core` port (iccp/Yun/deg-1/deg-2/univ pieces,
-`sqrt` attempt, distinct-factors with the constant dropped) lands as
-**12d.1b** behind `ExplainCache.factors`; the psc-chain engine lands
+the `max_var` family, `todo_set`, the assumption machinery
+(`add_simple_assumption`/`add_assumption`/`ensure_sign`), and — after
+12d.1b's `factor_core` port (`Nlsat/MPolyFactor.lean`) — the factor
+cache wrapper + `add_zero_assumption`. The psc-chain engine lands
 with 12d.5 behind `ExplainCache.pscChains`.
 
 **Clause polarity convention (load-bearing):** explain's output is a
@@ -207,6 +206,37 @@ def ensureSign (p : MPoly) : ExplainM Int := do
   if !p.asConst?.isSome then
     addSimpleAssumption (if s == 0 then .eq else if s < 0 then .lt else .gt) p
   return s
+
+/-! ## The factor cache wrapper + add_zero_assumption (:221/:262) -/
+
+/-- z3 `explain::factor` (:221) with the solver-owned memo
+(`polynomial_cache::factor` shape; `mk_unique` = identity on canonical
+MPoly). Returns the DISTINCT factors — z3's `fs.distinct_factors()`:
+the constant and multiplicities are dropped. -/
+def factor (p : MPoly) : ExplainM (Array MPoly) := do
+  let s ← liftS get
+  match s.explainCache.factors.find? (fun (q, _) => q == p) with
+  | some (_, fs) => return fs
+  | none =>
+    let fs := p.factorDistinct
+    liftS (modify fun s =>
+      { s with explainCache := { s.explainCache with
+          factors := s.explainCache.factors.push (p, fs) } })
+    return fs
+
+/-- z3 `add_zero_assumption` (:262): factor `p`, keep the factors that
+vanish under the current assignment, and emit the NEGATED
+multi-factor EQ literal (`p_i1·…·p_im ≠ 0` as a clause literal —
+"the case where the needed assumption fails"). z3 SASSERTs at least
+one factor vanishes (p itself is zero under the assignment). -/
+def addZeroAssumption (p : MPoly) : ExplainM Unit := do
+  let fs ← factor p
+  let mut zeroFs : List (MPoly × Bool) := []
+  for f in fs do
+    if (← sign f) == 0 then
+      zeroFs := zeroFs ++ [(f, false)]
+  let l ← liftS (Solver.mkIneqLiteral ⟨.eq, zeroFs⟩)
+  addLiteral l.negate
 
 end Explain
 
