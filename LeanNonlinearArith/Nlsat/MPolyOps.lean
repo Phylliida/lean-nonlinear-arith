@@ -28,6 +28,46 @@ namespace LeanNonlinearArith.Nlsat
 
 open LeanNonlinearArith.Kernel
 
+/-- z3 `mpzzp_manager` mode flag: `none` = ℤ, `some c` = Zp (balanced
+reps via nla-27's `ZpCtx`). z3 shares one polynomial representation
+and one set of algorithms between the modes — mirrored here by taking
+the mode as a parameter on the numeral-touching ops. -/
+abbrev NumMode := Option ZpCtx
+
+namespace NumMode
+
+def norm : NumMode → Int → Int
+  | none, a => a
+  | some c, a => c.norm a
+
+def add (m : NumMode) (a b : Int) : Int := m.norm (a + b)
+def sub (m : NumMode) (a b : Int) : Int := m.norm (a - b)
+def mul (m : NumMode) (a b : Int) : Int := m.norm (a * b)
+def neg (m : NumMode) (a : Int) : Int := m.norm (-a)
+
+/-- z3 `mpzzp_manager::div`: ℤ exact division (pre: `b | a`); Zp
+`a·b⁻¹` (prime field). -/
+def div : NumMode → Int → Int → Int
+  | none, a, b => a / b
+  | some c, a, b => c.mul a (c.inv b)
+
+/-- z3 `mpzzp_manager::divides(a, b)` ("`a | b`"): ℤ mpz divisibility;
+Zp prime field ⇒ any nonzero divides. -/
+def divides : NumMode → Int → Int → Bool
+  | none, a, b => if a == 0 then b == 0 else b % a == 0
+  | some _, a, _ => a != 0
+
+/-- z3 `mpzzp_manager::gcd` = mpz gcd in BOTH modes (gcd of the
+balanced reps). -/
+def gcd (a b : Int) : Int := Int.gcd a b
+
+/-- z3 `m().power`, mode-aware. -/
+def pow (m : NumMode) (a : Int) : Nat → Int
+  | 0 => m.norm 1
+  | k + 1 => m.mul (m.pow a k) a
+
+end NumMode
+
 namespace Monomial
 
 /-- z3 `mm().div(m1, m2, r)`: pointwise exponent subtraction when
@@ -77,6 +117,29 @@ namespace MPoly
 /-- `x^k` as a polynomial (the unit poly at `k = 0`). -/
 def ofVarPow (x : Var) (k : Nat) : MPoly := if k == 0 then ofInt 1 else [(1, [(x, k)])]
 
+/-- Normalize every coefficient through the numeral mode, dropping
+zeros (z3's `is_p_normalized` maintenance; identity in ℤ mode). -/
+def pNorm (mode : NumMode) (p : MPoly) : MPoly :=
+  match mode with
+  | none => p
+  | some c =>
+    p.foldl (fun acc (a, m) =>
+      let a' := c.norm a
+      if a' == 0 then acc else add acc [(a', m)]) []
+
+/-- Mode-aware arithmetic (z3's manager-mode ops on the shared
+representation). In ℤ mode these reduce to the plain ops. -/
+def addM (mode : NumMode) (p q : MPoly) : MPoly := pNorm mode (add p q)
+def negM (mode : NumMode) (p : MPoly) : MPoly := pNorm mode (neg p)
+def subM (mode : NumMode) (p q : MPoly) : MPoly := pNorm mode (sub p q)
+def mulM (mode : NumMode) (p q : MPoly) : MPoly := pNorm mode (mul p q)
+def smulTermM (mode : NumMode) (a : Int) (mo : Monomial) (p : MPoly) : MPoly :=
+  pNorm mode (smulTerm (mode.norm a) mo p)
+def pwM (mode : NumMode) (p : MPoly) : Nat → MPoly
+  | 0 => ofInt (mode.norm 1)
+  | 1 => p
+  | k + 2 => mulM mode (pwM mode p (k + 1)) p
+
 /-- z3 `graded_lex_max_pos` as a term (the maximal monomial with its
 coefficient). Canonical monomials are unique, so no tie-breaking. -/
 def glexMaxTerm : MPoly → Option (Int × Monomial)
@@ -117,20 +180,22 @@ def ic (p : MPoly) : Int :=
 
 /-- z3 `ic(p, a, c)` (:3449): content + ℤ-primitive part. Const polys
 keep the coeff's SIGN in the content (z3's const branch) — the
-non-const branch's gcd is nonneg. -/
-def icStrip (p : MPoly) : Int × MPoly :=
+non-const branch's gcd is nonneg. Mode-aware scalar division (in Zp
+mode `a·inv(g)` equals the integer quotient — `g` divides each rep in
+ℤ by the gcd property). -/
+def icStrip (p : MPoly) (mode : NumMode := none) : Int × MPoly :=
   match p with
   | [] => (0, [])
-  | [(a, [])] => (a, ofInt 1)
+  | [(a, [])] => (a, ofInt (mode.norm 1))
   | _ =>
     let a := p.ic
     if a == 1 then (1, p)
-    else (a, p.map fun (b, m) => (b / a, m))
+    else (a, pNorm mode (p.map fun (b, m) => (mode.div b a, m)))
 
 /-- z3 `exact_div(p, c)` (:5137). Pre: `c ≠ 0` divides every coeff. -/
-def exactDivScalar (p : MPoly) (c : Int) : MPoly :=
+def exactDivScalar (p : MPoly) (c : Int) (mode : NumMode := none) : MPoly :=
   p.foldl (fun acc (a, m) =>
-    let q := a / c
+    let q := mode.div a c
     if q == 0 then acc else add acc [(q, m)]) []
 
 /-- z3 `var_max_degrees` (sorted ascending by var, `power::lt_var`). -/
@@ -153,8 +218,9 @@ def getMinDegreeVar (p : MPoly) : Option Var :=
     | some (_, dmin) => if d < dmin then some (x, d) else acc) none).map (·.1)
 
 /-- z3 `exact_div(p, q)` (:5159): the graded-lex-max reduction.
-Pre: `q | p` (z3 VERIFYs monomial divisibility each step). -/
-partial def exactDiv (p q : MPoly) : MPoly := loop p []
+Pre: `q | p` (z3 VERIFYs monomial divisibility each step). Mode-aware
+coefficient arithmetic (Zp mode: `a·inv(b)` per `mpzzp_manager::div`). -/
+partial def exactDiv (p q : MPoly) (mode : NumMode := none) : MPoly := loop p []
 where
   loop (R C : MPoly) : MPoly :=
     match R.glexMaxTerm with
@@ -162,12 +228,12 @@ where
     | some (ar, mr) =>
       let (aq, mq) := q.glexMaxTerm.get!
       let mrq := (mr.div? mq).get!
-      let arq := ar / aq
-      loop (add R (smulTerm (-arq) mrq q)) (add C [(arq, mrq)])
+      let arq := mode.div ar aq
+      loop (addM mode R (smulTermM mode (-arq) mrq q)) (addM mode C [(arq, mrq)])
 
 /-- z3 `divides(q, p)` (:5197): same sweep, `false` at the first
 failed divisibility. Pre: `q ≠ 0`. -/
-partial def divides (q p : MPoly) : Bool := loop p
+partial def divides (q p : MPoly) (mode : NumMode := none) : Bool := loop p
 where
   loop (R : MPoly) : Bool :=
     match R.glexMaxTerm with
@@ -177,8 +243,8 @@ where
       match mr.div? mq with
       | none => false
       | some mrq =>
-        if ar % aq != 0 then false
-        else loop (add R (smulTerm (-(ar / aq)) mrq q))
+        if !mode.divides aq ar then false
+        else loop (addM mode R (smulTermM mode (-(mode.div ar aq)) mrq q))
 
 /-- z3 `pseudo_division_core<exactD, quotient, false>` (:4948).
 Returns `(d, Q, R)`; each loop iteration multiplies through by
@@ -191,8 +257,8 @@ The `deg_B > deg_A` + `exactD` combination is precondition-excluded
 (z3's `SASSERT(d <= exact_d)`; Nat truncated subtraction makes the
 top-up a no-op here). `d` is meaningless when `deg_B == 0` and
 `quotient = false` (z3 leaves it unset; 0 returned). -/
-partial def pseudoDivisionCore (p q : MPoly) (x : Var) (exactD quotient : Bool) :
-    Nat × MPoly × MPoly :=
+partial def pseudoDivisionCore (p q : MPoly) (x : Var) (exactD quotient : Bool)
+    (mode : NumMode := none) : Nat × MPoly × MPoly :=
   let degA := p.degreeIn x
   let degB := q.degreeIn x
   if degB == 0 then
@@ -200,13 +266,13 @@ partial def pseudoDivisionCore (p q : MPoly) (x : Var) (exactD quotient : Bool) 
       if exactD then
         let d := degA + 1
         if d == 1 then (d, p, [])
-        else (d, mul p (pw q (d - 1)), [])
+        else (d, mulM mode p (pwM mode q (d - 1)), [])
       else (1, p, [])
     else (0, [], [])
   else if degB > degA then (0, [], p)
   else
     let lB := (q.coeffsIn x)[degB]!
-    let rB := sub q (smulTerm 1 [(x, degB)] lB)
+    let rB := subM mode q (smulTermM mode 1 [(x, degB)] lB)
     loop degA degB lB rB 0 [] p
 where
   loop (degA degB : Nat) (lB rB : MPoly) (d : Nat) (Q R : MPoly) :
@@ -216,8 +282,8 @@ where
       if exactD then
         let exact_d := degA - degB + 1
         if d < exact_d then
-          let lBe := pw lB (exact_d - d)
-          (d, if quotient then mul lBe Q else Q, mul lBe R)
+          let lBe := pwM mode lB (exact_d - d)
+          (d, if quotient then mulM mode lBe Q else Q, mulM mode lBe R)
         else (d, Q, R)
       else (d, Q, R)
     else
@@ -227,25 +293,25 @@ where
         for (a, m) in R do
           if m.degreeIn x == degR then
             let m' := m.divXk x degB
-            if quotient then bufQ := add bufQ [(a, m')]
-            bufR := add bufR (smulTerm (-a) m' rB)
+            if quotient then bufQ := addM mode bufQ [(a, m')]
+            bufR := addM mode bufR (smulTermM mode (-a) m' rB)
           else
-            bufR := add bufR (smulTerm a m lB)
+            bufR := addM mode bufR (smulTermM mode a m lB)
         return (bufR, bufQ)
       let Q' := if quotient then
-        Q.foldl (fun acc (a, m) => add acc (smulTerm a m lB)) step.2
+        Q.foldl (fun acc (a, m) => addM mode acc (smulTermM mode a m lB)) step.2
       else Q
       loop degA degB lB rB (d + 1) Q' step.1
 
 /-- z3 `exact_pseudo_remainder` (:5089): `<true, false>` — the R
 component topped up to `exact_d`. -/
-def exactPseudoRemainder (p q : MPoly) (x : Var) : MPoly :=
-  (pseudoDivisionCore p q x true false).2.2
+def exactPseudoRemainder (p q : MPoly) (x : Var) (mode : NumMode := none) : MPoly :=
+  (pseudoDivisionCore p q x true false mode).2.2
 
 /-- z3 `pseudo_remainder` (:5095, release `<false, false>`): iteration-
 count `d` + untopped remainder. 12d.5's explain consume. -/
-def pseudoRemainder (p q : MPoly) (x : Var) : Nat × MPoly :=
-  let (d, _, R) := pseudoDivisionCore p q x false false
+def pseudoRemainder (p q : MPoly) (x : Var) (mode : NumMode := none) : Nat × MPoly :=
+  let (d, _, R) := pseudoDivisionCore p q x false false mode
   (d, R)
 
 /-- z3 `m_manager.is_perfect_square(a, sqrt_a)`: nonneg square root. -/

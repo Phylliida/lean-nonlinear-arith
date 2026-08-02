@@ -43,6 +43,8 @@ import LeanNonlinearArith.Nlsat.Explain
 import LeanNonlinearArith.Nlsat.ExplainTests
 import LeanNonlinearArith.Nlsat.MPolyOps
 import LeanNonlinearArith.Nlsat.MPolyOpsTests
+import LeanNonlinearArith.Nlsat.MPolyZp
+import LeanNonlinearArith.Nlsat.MPolyZpTests
 import LeanNonlinearArith.Kernel.Zp
 import LeanNonlinearArith.Kernel.ZPoly
 import LeanNonlinearArith.Kernel.ZPolyTests
