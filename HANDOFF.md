@@ -33,6 +33,10 @@ is 4.16-nightly and differs materially).
 
 ## Next: nla-12d + nla-19a — Explain + Checker v0 (one arc, 3–4 sessions)
 
+**BOARDED 2026-08-01** — full slice specs (12d.1–12d.6 + 19a) with the
+interface-audit findings, non-port register, and quirk list are in
+BOARD.md (`nla-12d`, `nla-19a` entries).
+
 These are deliberately one arc (DESIGN-endgame §2.4): trace payloads
 pin only when the checker consumes them (standing rule 3).
 
@@ -61,9 +65,14 @@ came from HEAD; these are 4.12.5):
   (true), `set_minimize_cores` (false), `set_full_dimensional`
   (solver's check() computes it — flag already stored),
   `set_factor` (true), `set_signed_project`, `maximize`,
-  `test_root_literal`. **First task:** verify which of these the nra
-  path touches (expected: only the flags + `operator()`; register the
-  rest as non-ports if confirmed).
+  `test_root_literal`. **Interface audit DONE (2026-08-01):** the nra
+  path touches only the flags + `operator()` + `reset`
+  (nlsat_solver.cpp:239/:276-278/:1611/:1828; nra_solver.cpp never
+  calls explain). Non-ports registered in BOARD.md nla-12d: minimize
+  cluster, signed_project cluster, maximize (dead+buggy upstream),
+  public project(var,…), keep_p_x, test_root_literal. **The
+  pseudo-division simplify cluster is LIVE** (simplify_cores=true is
+  the nra default — not a flag case).
 
 **The ExplainFn contract (already live):**
 `Solver.lean` defines `ExplainFn := Array Literal → SolverM (Option

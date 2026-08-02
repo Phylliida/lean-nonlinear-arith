@@ -999,6 +999,178 @@ working tree.** Estimate 1–2 sessions. Sequenced BEFORE 12c —
 select_witness sits on pick, and 12c's acceptance pins must be
 derived against the final anchor.
 
+## nla-12d `active` (opened 2026-08-01) — explain: the projection port
+
+Source of truth: `git show z3-4.12.5:src/nlsat/nlsat_explain.{h,cpp}`
+(1914 lines; levelwise does not exist at 4.12.5 — the classic
+Jovanović–de Moura projection is the WHOLE file). Same-arc twin:
+nla-19a (trace payloads pin only when the checker consumes them —
+standing rule 3). Explain lives behind the already-live `ExplainFn`
+boundary (`Solver.lean:791`, `Array Literal → SolverM (Option (Array
+Literal))`, consumed by `resolveLazyJustification` :849); mockExplain
+stays as the test mock (faithful for boolean + stage-0 conflicts).
+
+**Interface audit (12d.0, DONE 2026-08-01):** the nra path touches
+explain at exactly four points — construction (nlsat_solver.cpp:239),
+updt_params flags (:276-278), set_full_dimensional in check() (:1611),
+and the single operator() call in resolve_lazy_justification (:1828).
+nra_solver.cpp never calls explain directly. Flags on our path:
+simplify_cores=TRUE, minimize_cores=FALSE, factor=TRUE,
+full_dimensional=dynamic (stored at check() since 12c.6),
+signed_project=FALSE.
+
+**Declared non-ports (dead on the nra path at 4.12.5, zero call
+sites):** minimize/minimize_core (:1405-1472); the signed_project
+cluster (:1604-1806 incl. solve_eq, project_±infinity, project_pairs/
+single); maximize (:1808 — dead upstream, and buggy: split_literals →
+add_literal with m_result null); public project(var,…) (:1503 —
+nlqsat-only: reorder/restore + result-negation duality); keep_p_x
+(:559 — dead helper); test_root_literal (:1879, test API); display/pp
+printers. **Live and mandatory:** the pseudo-division simplify cluster
+(:1096-1341) — simplify_cores=true is the nra default, so it is NOT a
+flag case; the pipeline is operator() → process → process2 →
+normalize+simplify → main → project(ps, max_x).
+
+**Porting quirks to preserve (from the audit):** m_factor never
+ctor-initialized upstream (ours gets a defined default, set from
+params); add_literal silently drops false_literal (:186) and asserts
+≠ true_literal; root literals always emitted NEGATED (:733) EXCEPT
+mk_linear_root encodings, which fold negation into the kind/lsign
+remap (LE→GT+negate-lit, GE→LT+negate-lit :869-873); 1-based root
+indices; psc returns after the FIRST surviving chain element BUT a
+nonzero-constant psc also returns (:652) while vanishing ones continue
+with a zero assumption (:656); elim_vanishing walks DOWN variables
+(re-peeks the new max var :318-322); add_cell_lits exact-root hit
+returns immediately, skipping the upper bound (:937); all_univ early
+break skips cell lits for the final stage (:1002-1005); sign-flip
+accounting only for negative ODD factors (:440-442, :1132-1137 —
+three independent parity tests); atom::flip on rebuilt kinds + literal
+negation = double-negation sites (:468-473, :1192-1196); UINT_MAX
+sentinels in select_eq (:1272) and add_cell_lits (:910-912).
+
+Slice plan (each lands compiling + pinned, small commits):
+
+- **12d.1 scaffold** `todo`: explain state — todo_set (dedup keyed on
+  poly identity, canonicalized via mk_unique :67), result accumulation
+  (add_literal dedup + false_literal drop + reset_already_added bulk
+  clear :199), the m_cache wrappers (mk_unique; psc_chain :235 via
+  QPoly.discChain/resChain; factor :225 via nla-27 Factor),
+  assumption machinery (add_zero_assumption :262 — multi-factor ¬EQ
+  over the ZERO-SIGN factors only; add_simple_assumption/
+  add_assumption :286-297 with the `// TODO: factor` pass-through;
+  ensure_sign :822 active #else branch), collect_polys :241, max_var
+  family :510. Wire the reorder cache-reset hook (the Solver.lean:1124
+  seam). Pins: todo dedup/ordering, assumption emission shapes,
+  false_literal drop.
+- **12d.2 elim_vanishing + normalize** `todo`: both elim_vanishing
+  arities (:307/:363 — vanishing non-const lc → add_zero_assumption;
+  all-coeffs-vanish → p := 0; early-outs at :334/:341; the variable
+  walk-down), normalize(l) :403 (lower-stage factor elimination with
+  EQ/LT/GT sign assumptions :427-433, atom_sign flips from negative
+  odd factors :440-442, rebuild via mkIneqLiteral with atom::flip
+  :468-471, true/false_literal const-resolution; root atoms NOT
+  normalized :481), normalize(core) :492 (false_literal ⇒ clear whole
+  core :499-502). Pins per quirk.
+- **12d.3 cell machinery** `todo`: sign() via evalSignAt (:211),
+  add_cell_lits :899 (isolate_roots with y temporarily unassigned —
+  undef_var_assignment :922; exact-root hit ⇒ single ¬ROOT_EQ +
+  immediate return :936-937; tightest lower/upper bound tracking with
+  UINT_MAX sentinels :910-912; emit ¬ROOT_GT/¬ROOT_LT (GE/LE under
+  full_dimensional) :964-969; 1-based indices), all_univ :975. Pins:
+  √2-grade cells, exact-hit asymmetry, full_dimensional openness.
+- **12d.4 root-atom creation** `todo`: add_root_literal :725's three
+  tiers — mk_linear_root :742 (deg 1, const lc) / mk_plinear_root :756
+  (deg 1, non-const lc: require lc sign ≠ 0, ensure_sign, then linear
+  with sign) / mk_quadratic_root :787 (Thom: ensure_sign on disc :805
+  (abort if disc < 0 :806), A :809 with A-vanishing ⇒ plinear fallback
+  on B·y+C :811-812, p′ = 2Ay+B :814, and p itself when disc > 0
+  :815-818; only i ∈ {1,2} :791); generic fallback ⇒ Solver.mkRootAtom
+  (dedup + flip normalization live there), literal negated :733. Root
+  atoms ONLY via Solver.mkRootAtom (12c carry-over).
+- **12d.5 projection loop + simplify cluster** `todo`: project(ps,
+  max_x) :990 (todo reset/insert, remove_max_polys, the x < max_x
+  degenerate cell-lits case :1000, the all_univ break :1002-1005,
+  add_lc :610 + psc_discriminant :683 + psc_resultant :704 per round,
+  add_cell_lits for the next lower stage :1014); psc :633 with the
+  first-surviving-element return quirks; add_factors :578 with
+  factor=true (factor, elim_vanishing each, insert non-consts).
+  **Prerequisite to verify at slice open: multivariate
+  pseudo-remainder** — z3's pm.pseudo_remainder(f, eq, x, d, r) :1127
+  is multivariate; the kernel has only univariate ZPoly.prem
+  (ZPoly.lean:162) — an MPoly-level prem in the top var likely lands
+  first. Then select_eq :1270 (unsigned single-factor odd-degree EQ,
+  min_d UINT_MAX, degree-1 early break :1293), select_lower_stage_eq
+  :1307 (x2eq, CONST lc only :1333), simplify(l) :1096 (pseudo-
+  division rewrite, sign-flip rule :1132-1137, const-remainder lc
+  ineq/diseq recording :1138-1188, keep-original/emit-direct cases
+  :1199-1205), simplify(C,eq) :1218 (lc assumption emission
+  :1259/:1261), simplify(C,max) loop :1346.
+- **12d.6 operator() + fragment gate + trace** `todo`:
+  process/process2/main pipeline (:1474/:1387/:1375); the fragment
+  gate — deg ≤ 2 in the top var at every projection/root step,
+  checked at explain time; out-of-fragment marks the trace S1-gated
+  (search remains a model-finder/disprover); Trace.lean emission
+  (8-shape, payloads pinned against 19a); wire as the production
+  ExplainFn; port remove_learned_roots + the del_clause machinery (12c
+  carry-over — real deletion now that explain-produced root atoms
+  exist). Pins: 12c multivariate-conflict shapes re-green with the
+  real explain (mock's stage-0 pins stay), fragment-gate accept/reject
+  cases.
+
+Acceptance (arc, shared with 19a): end-to-end on hand goals with
+algebraic cells (√2-grade), negative probes (corrupted trace
+rejected), first search→trace→checked-theorem round trip. Estimate
+3–4 sessions for the arc (DESIGN-endgame §7).
+
+## nla-19a `active` (opened 2026-08-01) — checker v0 + Q1 coverage proof (12d twin)
+
+Trusted layer (no assume/admit/external_body). Two files land in this
+arc: `Nlsat/Trace.lean` (the 8-shape language: leafNumeric /
+thomQuadratic / linearRoot / cellBound / pseudoDivision / factorSplit /
+intBranch / resolution — DESIGN-nlsat-quadratic §2; **payloads pin
+against the checker, never before**) and `Nlsat/Check.lean` v0.
+
+**Discharge map (v0):**
+- `leafNumeric` → nla-09 certificates: `checkNoRoot_sound` /
+  `checkUniqueRoot_sound` / `checkPosOn_sound` / `checkNegOn_sound`
+  (`Certificates/Sound.lean:286/313/376/393`), certs discharged
+  `by decide`.
+- `thomQuadratic` → S3 kit (`Templates/Quadratic.lean`, 12 lemmas):
+  `quad_key` completing-the-square instance + the sign-dictionary iffs
+  both lead signs + the definite-disc cases.
+- `linearRoot` → plain inequality lemmas (exact mk_linear_root
+  arithmetic, incl. the LE/GE kind-remap + literal-negation fold at
+  nlsat_explain.cpp:869-878).
+- `cellBound` → the S3 4-lemma point-vs-root ordering family
+  (`quad_{left,right}_of_{inside,root}`) + `quad_roots_order` +
+  linarith glue.
+
+**Q1 (grammar-first, prove-over-empiricism):** the emission grammar is
+now enumerated FROM SOURCE (nlsat_explain.cpp@4.12.5): ineq shapes
+A1–A5 (multi-factor ¬EQ from add_zero_assumption :280; single-factor
+sign assumptions :289; rebuilt core literals from normalize :471 and
+simplify :1194; lc ineq/diseq from simplify :1259/:1261), root tiers B
+(linear→ineq :861-879; Thom → pure sign assumptions on {disc, A,
+2Ay+B, p} :787-820; generic mk_root_atom fallback :732), cell literals
+C (ROOT_EQ early-return :936-937; ROOT_GT/LT bounds :965/:968, GE/LE
+under full_dimensional; 1-based indices). Formalize this grammar in
+Lean and prove the S3-coverage lemma against it during 19a; if the
+grammar exceeds the current S3 family, extend the family first (same
+Templates/Quadratic style).
+
+**v0 scope tension (stated, not a divergence):** with
+simplify_cores=true and factor=true (nra defaults), real conflicts can
+emit `pseudoDivision`/`factorSplit`/`resolution` steps — those
+discharge in 19b. The v0 checker marks them undischarged; 19a's
+end-to-end acceptance targets conflicts whose traces stay in the four
+v0 shapes.
+
+**Trace egress design question (pins during 19a, not before — rule
+3):** how the trace leaves SolverM — a `trace : Array TraceStep`
+solver-state field that explain appends to vs. ExplainFn returning
+(literals × steps) — and the checker's theorem shape (per-step
+discharge lemmas composing into the learned-clause theorem).
+
 ## nla-12c design review `done` (2026-07-31, Danielle-requested, post-close)
 
 Method: the standing one — adversarial re-read of
