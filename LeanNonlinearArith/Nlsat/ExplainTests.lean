@@ -151,4 +151,144 @@ private def c5 : MPoly := MPoly.ofInt 5
   let s3 ← ensureSign MPoly.zero
   return s1 == 1 && s2 == -1 && s3 == 0 && (← get).result == #[])
 
+/-! ## elim_vanishing / normalize (12d.2) -/
+
+private def oneM : MPoly := MPoly.ofInt 1
+
+-- elim_vanishing: (x0−1)·x1² + x1 + 1 at x0 := 1 — the vanishing lc
+-- becomes a zero assumption, result is x1 + 1 (z3's Example 1 shape)
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c1 })
+  let p := MPoly.add (MPoly.smulTerm 1 [(1,2)] (MPoly.sub x0 oneM)) (MPoly.add x1 oneM)
+  let p' ← elimVanishing p
+  let st ← get
+  let s ← liftS get
+  return p' == MPoly.add x1 oneM
+    && st.result == #[⟨1, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.eq, [(MPoly.sub x0 oneM, false)]⟩))
+
+-- all coefficients vanish ⇒ the zero polynomial
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c1 })
+  let p' ← elimVanishing (MPoly.smulTerm 1 [(1,1)] (MPoly.sub x0 oneM))
+  return p' == MPoly.zero && (← get).result == #[⟨1, true⟩])
+
+-- the walk-down re-peek: (x0−1)·x1 + (x0−1) at x0 := 1 — after x1's
+-- coeff vanishes, x0 is re-peeked; its lc (1) is nonzero const ⇒ stop
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c1 })
+  let p := MPoly.add (MPoly.smulTerm 1 [(1,1)] (MPoly.sub x0 oneM)) (MPoly.sub x0 oneM)
+  let p' ← elimVanishing p
+  return p' == MPoly.sub x0 oneM && (← get).result == #[⟨1, true⟩])
+
+-- elim_vanishing(ps): zero results dropped
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c1 })
+  let out ← elimVanishingVec #[MPoly.add x1 oneM,
+    MPoly.smulTerm 1 [(1,1)] (MPoly.sub x0 oneM)]
+  return out == #[MPoly.add x1 oneM] && (← get).result == #[⟨1, true⟩])
+
+-- normalize, z3's Example 2 VERBATIM: (x1+2)·(x0−1) > 0 with max = x1
+-- and x0 := 0 ⇒ returns (x1+2) < 0 with assumption x0−1 < 0 (negated
+-- in the clause); kind flipped by the negative odd factor
+#guard Explain.run' (do
+  Solver.init
+  let c0 ← liftS (liftC (CellStore.fresh (.rat 0 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c0 })
+  let b ← liftS (mkIneqAtom ⟨.gt, [(MPoly.add x1 (MPoly.ofInt 2), false),
+    (MPoly.sub x0 oneM, false)]⟩)
+  let newL ← normalizeLit ⟨b, false⟩ 1
+  let st ← get
+  let s ← liftS get
+  return st.result == #[⟨2, true⟩]
+    && s.atoms[2]! == some (.ineq ⟨.lt, [(MPoly.sub x0 oneM, false)]⟩)
+    && newL == ⟨3, false⟩
+    && s.atoms[3]! == some (.ineq ⟨.lt, [(MPoly.add x1 (MPoly.ofInt 2), false)]⟩))
+
+-- same atom at x0 := 3: GT assumption, no flip (positive factor)
+#guard Explain.run' (do
+  Solver.init
+  let c3 ← liftS (liftC (CellStore.fresh (.rat 3 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c3 })
+  let b ← liftS (mkIneqAtom ⟨.gt, [(MPoly.add x1 (MPoly.ofInt 2), false),
+    (MPoly.sub x0 oneM, false)]⟩)
+  let newL ← normalizeLit ⟨b, false⟩ 1
+  let s ← liftS get
+  return (← get).result == #[⟨2, true⟩]
+    && s.atoms[2]! == some (.ineq ⟨.gt, [(MPoly.sub x0 oneM, false)]⟩)
+    && newL == ⟨3, false⟩
+    && s.atoms[3]! == some (.ineq ⟨.gt, [(MPoly.add x1 (MPoly.ofInt 2), false)]⟩))
+
+-- zero factor ⇒ false_literal (product is 0, GT is false)
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c1 })
+  let b ← liftS (mkIneqAtom ⟨.gt, [(MPoly.add x1 (MPoly.ofInt 2), false),
+    (MPoly.sub x0 oneM, false)]⟩)
+  let newL ← normalizeLit ⟨b, false⟩ 1
+  let s ← liftS get
+  return newL == ⟨0, true⟩
+    && (← get).result == #[⟨2, true⟩]
+    && s.atoms[2]! == some (.ineq ⟨.eq, [(MPoly.sub x0 oneM, false)]⟩))
+
+-- even factor eliminated with the p ≠ 0 assumption shape (positive EQ
+-- clause literal, add_simple_assumption sign=true)
+#guard Explain.run' (do
+  Solver.init
+  let c3 ← liftS (liftC (CellStore.fresh (.rat 3 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c3 })
+  let b ← liftS (mkIneqAtom ⟨.gt, [(MPoly.sub x0 oneM, true), (x1, false)]⟩)
+  let newL ← normalizeLit ⟨b, false⟩ 1
+  let s ← liftS get
+  return (← get).result == #[⟨2, false⟩]
+    && s.atoms[2]! == some (.ineq ⟨.eq, [(MPoly.sub x0 oneM, false)]⟩)
+    && newL == ⟨3, false⟩)
+
+-- all factors eliminated (ps empty): residual product is atom_sign —
+-- two positives ⇒ true_literal
+#guard Explain.run' (do
+  Solver.init
+  let c3 ← liftS (liftC (CellStore.fresh (.rat 3 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c3 })
+  let b ← liftS (mkIneqAtom ⟨.gt, [(MPoly.sub x0 oneM, false),
+    (MPoly.sub x0 (MPoly.ofInt 2), false)]⟩)
+  let newL ← normalizeLit ⟨b, false⟩ 1
+  return newL == ⟨0, false⟩ && (← get).result.size == 2)
+
+-- normalize(C): true_literal dropped, false_literal clears the core
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c1 })
+  let b1 ← liftS (mkIneqAtom ⟨.eq, [(MPoly.sub x0 oneM, false)]⟩)  -- resolves true
+  let b2 ← liftS (mkIneqAtom ⟨.gt, [(x1, false)]⟩)                 -- kept as-is
+  let out ← normalizeCore #[⟨b1, false⟩, ⟨b2, false⟩] 1
+  -- the assumption reuses b1's atom (hash-consed) — literal ⟨1, true⟩
+  return out == #[⟨b2, false⟩] && (← get).result == #[⟨1, true⟩])
+
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c1 })
+  let b1 ← liftS (mkIneqAtom ⟨.gt, [(MPoly.sub x0 oneM, false)]⟩)  -- resolves false
+  let b2 ← liftS (mkIneqAtom ⟨.gt, [(x1, false)]⟩)
+  let out ← normalizeCore #[⟨b1, false⟩, ⟨b2, false⟩] 1
+  return out == #[])
+
+-- root atoms are NOT normalized
+#guard Explain.run' (do
+  Solver.init
+  let b ← liftS (mkRootAtom ⟨.gt, 1, 1, p01⟩)
+  let newL ← normalizeLit ⟨b, true⟩ 1
+  return newL == ⟨b, true⟩ && (← get).result == #[])
+
 end LeanNonlinearArith.Nlsat.Tests

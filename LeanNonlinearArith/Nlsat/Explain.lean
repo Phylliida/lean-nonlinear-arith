@@ -238,6 +238,119 @@ def addZeroAssumption (p : MPoly) : ExplainM Unit := do
   let l ← liftS (Solver.mkIneqLiteral ⟨.eq, zeroFs⟩)
   addLiteral l.negate
 
+/-! ## elim_vanishing (:307/:363) -/
+
+/-- z3 `elim_vanishing(p)` (:307): strip leading coefficients that
+vanish under the current assignment. Vanishing NON-CONST leading
+coefficients become zero assumptions; a nonzero-const lc stops the
+walk (the reduct's lc does not vanish). The `k == 0` re-peek walks
+DOWN to the reduct's new max var (:318-322); the second `if (k ==
+0)` (:348-352, all coeffs vanished ⇒ p := 0) is defensive — the
+zero reduct is caught by the `is_const` check first. -/
+partial def elimVanishing (p : MPoly) : ExplainM MPoly :=
+  match p.maxVar with
+  | none => pure p   -- z3 SASSERTs non-const; callers maintain it
+  | some x => loop x (p.degreeIn x) p
+where
+  loop (x : Var) (k : Nat) (p : MPoly) : ExplainM MPoly := do
+    if p.asConst?.isSome then return p
+    let (x, k) := if k == 0 then
+      let x' := p.maxVar.get!
+      (x', p.degreeIn x')
+    else (x, k)
+    let cs := p.coeffsIn x
+    -- nonzero_const_coeff: a nonzero constant lc does not vanish
+    if (cs[k]!.asConst?.getD 0) != 0 then return p
+    let lc := cs[k]!
+    if !lc.isZero then
+      if (← sign lc) != 0 then return p
+      addZeroAssumption lc
+    if k == 0 then return []   -- defensive (see doc comment)
+    loop x (k - 1) (MPoly.sub p (MPoly.mul (MPoly.ofVarPow x k) lc))
+
+/-- z3 `elim_vanishing(ps)` (:363): per-poly; consts dropped
+(compacted in place upstream). -/
+def elimVanishingVec (ps : Array MPoly) : ExplainM (Array MPoly) := do
+  let mut out : Array MPoly := #[]
+  for p in ps do
+    let p' ← elimVanishing p
+    if !p'.asConst?.isSome then
+      out := out.push p'
+  return out
+
+/-! ## normalize (:403/:492) -/
+
+/-- z3 `normalize(literal, max)` (:403): eliminate vanishing leading
+coefficients (w.r.t. the core's max var) and lower-stage factors from
+an ineq literal; eliminated pieces become sign assumptions (negated
+clause literals, `add_simple_assumption` polarity). Sign flips
+accumulate only for negative ODD factors (:440-442); the rebuilt
+literal gets `atom::flip` when `atom_sign < 0` (:468-471) and is
+negated iff the original was signed (:472-473). Const-resolution
+returns z3's `true_literal ⟨0, false⟩` / `false_literal ⟨0, true⟩`.
+Root atoms are NOT normalized (:481). -/
+def normalizeLit (l : Literal) (max : Var) : ExplainM Literal := do
+  if l.bvar == 0 then return l   -- true_bool_var
+  let s ← liftS get
+  match s.atoms[l.bvar]? with
+  | some (some (.ineq a)) =>
+    let mut ps : List (MPoly × Bool) := []
+    let mut atomSign : Int := 1
+    let mut normalized := false
+    let mut ret : Option Literal := none
+    for (p0, isEven) in a.factors do
+      if ret.isNone then
+        let mut p := p0
+        if p.maxVar == some max then
+          p ← elimVanishing p
+        if p.asConst?.isSome || p.maxVar.getD max < max then
+          let sg ← sign p
+          if !p.asConst?.isSome then
+            -- lower-stage factor: justify the elimination
+            if sg == 0 then addSimpleAssumption .eq p
+            else if isEven then addSimpleAssumption .eq p true
+            else if sg < 0 then addSimpleAssumption .lt p
+            else addSimpleAssumption .gt p
+          if sg == 0 then
+            let atomVal := a.kind == .eq
+            let litVal := if l.neg then !atomVal else atomVal
+            ret := some (if litVal then ⟨0, false⟩ else ⟨0, true⟩)
+          else
+            if sg < 0 && !isEven then atomSign := -atomSign
+            normalized := true
+        else
+          if p != p0 then normalized := true
+          ps := ps ++ [(p, isEven)]
+    match ret with
+    | some r => return r
+    | none =>
+      if ps.isEmpty then
+        -- all factors eliminated: the residual product is atom_sign
+        let atomVal := match a.kind with
+          | .eq => false
+          | .lt => atomSign < 0
+          | .gt => atomSign > 0
+        let litVal := if l.neg then !atomVal else atomVal
+        return if litVal then ⟨0, false⟩ else ⟨0, true⟩
+      else if normalized then
+        let newK := if atomSign < 0 then a.kind.flip else a.kind
+        let newL ← liftS (Solver.mkIneqLiteral ⟨newK, ps⟩)
+        return if l.neg then newL.negate else newL
+      else return l
+  | _ => return l
+
+/-- z3 `normalize(C, max)` (:492): per-literal; `true_literal` is
+dropped; a `false_literal` CLEARS THE WHOLE CORE (:499-502 — the
+accumulated assumptions alone imply the conflict). -/
+def normalizeCore (C : Array Literal) (max : Var) : ExplainM (Array Literal) := do
+  let mut out : Array Literal := #[]
+  for l in C do
+    let newL ← normalizeLit l max
+    if newL == ⟨0, false⟩ then continue
+    if newL == falseLiteral then return #[]
+    out := out.push newL
+  return out
+
 end Explain
 
 end LeanNonlinearArith.Nlsat

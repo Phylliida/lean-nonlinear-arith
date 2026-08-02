@@ -228,6 +228,12 @@ end MPoly
 inductive IneqKind | eq | lt | gt
 deriving Repr, DecidableEq, Inhabited
 
+/-- z3 `atom::flip` (nlsat_types.h:69): negation of the sign condition. -/
+def IneqKind.flip : IneqKind → IneqKind
+  | .eq => .eq
+  | .lt => .gt
+  | .gt => .lt
+
 /-- `root_atom` kinds (`ROOT_EQ/LT/GT/LE/GE`). -/
 inductive RootKind | eq | lt | gt | le | ge
 deriving Repr, DecidableEq, Inhabited
