@@ -314,6 +314,109 @@ def pseudoRemainder (p q : MPoly) (x : Var) (mode : NumMode := none) : Nat × MP
   let (d, _, R) := pseudoDivisionCore p q x false false mode
   (d, R)
 
+/-! ## psc chains (`psc_chain_optimized` :5710-5783) -/
+
+/-- Floor log2 (z3's `log2(n)` for `n ≥ 1`) — local, the kernel idiom
+(mathlib-free zone). -/
+def floorLog2 : Nat → Nat
+  | 0 => 0
+  | 1 => 0
+  | n + 2 => 1 + floorLog2 ((n + 2) / 2)
+termination_by n => n
+decreasing_by exact Nat.div_lt_self (by omega) (by omega)
+
+/-- z3 `Se_Lazard` (:5618): "Dichotomous Lazard" for the optimized
+`S_e`. `lcSd` is `s` (lc of the current `S_d`), `Sd1` the current
+`S_{d−1}` poly. -/
+partial def SeLazard (d : Nat) (lcSd : MPoly) (Sd1 : MPoly) (x : Var) : MPoly :=
+  let e := Sd1.degreeIn x
+  let n := d - e - 1
+  if n == 0 then Sd1
+  else
+    let X := (Sd1.coeffsIn x)[e]!
+    let a0 := 1 <<< floorLog2 n   -- z3 `1 << log2(n)` (floor)
+    let (C, _) := loop X X lcSd a0 (n - a0)
+    (mulM none C Sd1).exactDiv lcSd
+where
+  /-- z3's `while (a != 1) { a /= 2; C = C²/Y; if (n ≥ a)
+  { C = C·X/Y; n −= a; } }` with entry `C = X`, `n = n − a0`. -/
+  loop (C X Y : MPoly) (a n : Nat) : MPoly × Nat :=
+    if a == 1 then (C, n)
+    else
+      let a' := a / 2
+      let C' := (mulM none C C).exactDiv Y
+      if n ≥ a' then
+        loop ((mulM none C' X).exactDiv Y) X Y a' (n - a')
+      else
+        loop C' X Y a' n
+
+/-- z3 `optimized_S_e_1` (:5650). -/
+partial def optimizedSE1 (d e : Nat) (A Sd1 Se s : MPoly) (x : Var) : MPoly :=
+  -- z3 `c_d_1 = lc(S_d_1, x)` — lc at the poly's OWN degree (defective
+  -- chains have deg S_{d−1} = e < d−1)
+  let c_d_1 := (Sd1.coeffsIn x)[Sd1.degreeIn x]!
+  let s_e := (Se.coeffsIn x)[e]!
+  -- H_j for j = 0 .. e: s_e·x^j; H_e = s_e·x^e − S_e
+  let H0 : Array MPoly := (List.range (e + 1)).toArray.map fun j =>
+    if j < e then mulM none (ofVarPow x j) s_e
+    else (mulM none (ofVarPow x e) s_e).subM none Se
+  -- H_j for j = e+1 .. d-1
+  let H : Array MPoly := Id.run do
+    let mut H := H0
+    for j in [e + 1 : d] do
+      let xH := mulM none (ofVarPow x 1) H[j - 1]!
+      let xHe := (xH.coeffsIn x)[e]!
+      let tmp := (mulM none xHe Sd1).exactDiv c_d_1
+      H := H.push (subM none xH tmp)
+    return H
+  -- D = (Σ coeff(A, j)·H[j]) / lc(A)
+  let csA := A.coeffsIn x
+  let D0 : MPoly := (List.range d).foldl (fun acc j =>
+    addM none acc (mulM none csA[j]! H[j]!)) []
+  let D := D0.exactDiv (csA[d]!)
+  let xH := mulM none (ofVarPow x 1) H[d - 1]!
+  let xHe := mulM none ((xH.coeffsIn x)[e]!) Sd1
+  let S1 := (mulM none c_d_1 (addM none xH D)).subM none xHe |>.exactDiv s
+  if (d - e + 1) % 2 == 1 then negM none S1 else S1
+
+/-- z3 `psc_chain_optimized_core` (:5710). Pre: `deg P ≥ deg Q > 0`. -/
+partial def pscChainCore (P Q : MPoly) (x : Var) : Array MPoly := Id.run do
+  let lcQ := (Q.coeffsIn x)[Q.degreeIn x]!
+  let s0 := pwM none lcQ (P.degreeIn x - Q.degreeIn x)
+  let B0 := P.exactPseudoRemainder (negM none Q) x
+  let mut S : Array MPoly := #[]
+  let mut A := Q
+  let mut B := B0
+  let mut s := s0
+  while true do
+    let d := A.degreeIn x
+    let e := B.degreeIn x
+    if B.isZero then break
+    let ps := (B.coeffsIn x).getD (d - 1) []
+    if !ps.isZero then S := S.push ps
+    let delta := d - e
+    let mut C := B
+    if delta > 1 then
+      C := SeLazard d s B x
+      let ps := (C.coeffsIn x)[e]!
+      if !ps.isZero then S := S.push ps
+    if e == 0 then break
+    B := optimizedSE1 d e A B C s x
+    A := C
+    s := (A.coeffsIn x)[A.degreeIn x]!
+  return S
+
+/-- z3 `psc_chain_optimized` (:5764): the psc chain of `P`, `Q` w.r.t.
+`x`, reversed (resultant LAST → first as explain consumes it: z3
+reverses so the chain is [psc₀, …]). Empty chain gets a zero (z3
+:5772-5773). -/
+def pscChain (P Q : MPoly) (x : Var) : Array MPoly :=
+  let S :=
+    if P.degreeIn x ≥ Q.degreeIn x then pscChainCore P Q x
+    else pscChainCore Q P x
+  let S := if S.isEmpty then #[MPoly.zero] else S
+  S.reverse
+
 /-- z3 `m_manager.is_perfect_square(a, sqrt_a)`: nonneg square root. -/
 def isPerfectSquareCoeff (a : Int) : Option Int :=
   if a < 0 then none

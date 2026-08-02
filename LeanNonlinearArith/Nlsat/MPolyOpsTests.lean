@@ -144,4 +144,20 @@ private def pQ : MPoly := MPoly.add (st 2 [] x0) one
 #guard MPoly.sqrt (c 9) == some (c 3)
 #guard MPoly.sqrt MPoly.zero == some MPoly.zero
 
+/-! ## psc chains (12d.5 engine) -/
+
+-- resultant = the reversed chain's head (z3 pushes then reverses);
+-- values verified by hand: Res(x²−2, 2x) = −8, Res(x³−2, 3x²) = 108,
+-- Res(x²+1, x²−1) = 4, Res(x⁴+1, x³+1) = 2 (chain [2, 1])
+#guard MPoly.pscChain (MPoly.sub (MPoly.mul x0 x0) (c 2)) (st 2 [] x0) 0
+    == #[c (-8)]
+#guard MPoly.pscChain (MPoly.sub (MPoly.pw x0 3) (c 2)) (st 3 [] (MPoly.mul x0 x0)) 0
+    == #[c 108]
+#guard MPoly.pscChain (MPoly.add (MPoly.mul x0 x0) one)
+    (MPoly.sub (MPoly.mul x0 x0) one) 0
+    == #[c 4]
+#guard MPoly.pscChain (MPoly.add (MPoly.pw x0 4) one)
+    (MPoly.add (MPoly.pw x0 3) one) 0
+    == #[c 2, one]
+
 end LeanNonlinearArith.Nlsat.Tests

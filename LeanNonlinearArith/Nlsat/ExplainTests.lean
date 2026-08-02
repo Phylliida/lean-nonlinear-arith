@@ -460,4 +460,162 @@ private def x1sqM2 : MPoly := MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2)
     && !allUniv #[MPoly.mul x0 x1] 1
     && !allUniv #[x0] 1
 
+/-! ## psc / add_lc / add_factors / project (12d.5) -/
+
+-- psc chain reaching a nonzero const ⇒ done immediately, no emissions
+#guard Explain.run' (do
+  Solver.init
+  psc (MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2)) (MPoly.smulTerm 2 [] x1) 1
+  let st ← get
+  return st.result == #[] && st.todo.empty)
+
+-- vanishing psc ⇒ zero assumption on the factor (content −4 dropped:
+-- factor of −4·x0 is [−x0])
+#guard Explain.run' (do
+  Solver.init
+  let c0 ← liftS (liftC (CellStore.fresh (.rat 0 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c0 })
+  psc (MPoly.sub (MPoly.mul x1 x1) x0) (MPoly.smulTerm 2 [] x1) 1
+  let st ← get
+  let s ← liftS get
+  return st.result == #[⟨1, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.eq, [(MPoly.neg x0, false)]⟩))
+
+-- surviving psc ⇒ add_factors into the todo (factor of −8·x0² = [x0])
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c1 })
+  psc (MPoly.sub (MPoly.mul x1 x1) (MPoly.smulTerm 2 [] (MPoly.mul x0 x0)))
+    (MPoly.smulTerm 2 [] x1) 1
+  let st ← get
+  return st.result == #[] && st.todo.polys == #[x0])
+
+-- add_lc: non-const lcs into the todo; const lcs skipped
+#guard Explain.run' (do
+  Solver.init
+  addLc #[MPoly.add (MPoly.smulTerm 1 [(1,2)] x0) x1,
+    MPoly.smulTerm 2 [] (MPoly.mul x1 x1)] 1
+  return (← get).todo.polys == #[x0])
+
+-- psc chain memoization
+#guard Explain.run' (do
+  Solver.init
+  let p := MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2)
+  let q := MPoly.smulTerm 2 [] x1
+  let S1 ← pscChainCached p q 1
+  let S2 ← pscChainCached p q 1
+  let s ← liftS get
+  return S1 == S2 && S1 == #[MPoly.ofInt (-8)]
+    && s.explainCache.pscChains.size == 1)
+
+-- project: two-stage projection of {x1² − x0} at x0 := 4 — psc work
+-- produces x0 for the lower stage, then cell lits bracket x0's value
+-- (4 > root₁(x0) = 0 ⇒ ¬(x0 > root₁(x0)) as a linear GT literal)
+#guard Explain.run' (do
+  Solver.init
+  let c4 ← liftS (liftC (CellStore.fresh (.rat 4 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c4 })
+  let c5 ← liftS (liftC (CellStore.fresh (.rat 5 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c5 })
+  let r ← project #[MPoly.sub (MPoly.mul x1 x1) x0] 1
+  let st ← get
+  let s ← liftS get
+  return r == some ()
+    && st.result == #[⟨1, true⟩]
+    && s.atoms[1]! == some (.ineq ⟨.gt, [(x0, false)]⟩))
+
+/-! ## the simplify cluster (12d.5) -/
+
+-- simplifyWithEq: rewrite by x1−x0, result drops below max with value
+-- false ⇒ emitted + replaced by true (dropped from the core)
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c1 })
+  let c5 ← liftS (liftC (CellStore.fresh (.rat 5 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c5 })
+  let b ← liftS (mkIneqAtom ⟨.gt, [(MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2), false)]⟩)
+  let (out, modified) ← simplifyWithEq #[⟨b, false⟩] (MPoly.sub x1 x0) 1
+  let st ← get
+  let s ← liftS get
+  return modified && out == #[]
+    && st.result == #[⟨2, false⟩]
+    && s.atoms[2]! == some (.ineq ⟨.gt,
+      [(MPoly.sub (MPoly.mul x0 x0) (MPoly.ofInt 2), false)]⟩))
+
+-- same rewrite with value true ⇒ the ORIGINAL literal is kept
+#guard Explain.run' (do
+  Solver.init
+  let c2 ← liftS (liftC (CellStore.fresh (.rat 2 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c2 })
+  let c5 ← liftS (liftC (CellStore.fresh (.rat 5 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c5 })
+  let b ← liftS (mkIneqAtom ⟨.gt, [(MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2), false)]⟩)
+  let (out, modified) ← simplifyWithEq #[⟨b, false⟩] (MPoly.sub x1 x0) 1
+  return !modified && out == #[⟨b, false⟩] && (← get).result == #[])
+
+-- non-const lc of the equation ⇒ lc diseq assumption (positive EQ
+-- literal, add_assumption sign=true)
+#guard Explain.run' (do
+  Solver.init
+  let cm1 ← liftS (liftC (CellStore.fresh (.rat (-1) : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 cm1 })
+  let c5 ← liftS (liftC (CellStore.fresh (.rat 5 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c5 })
+  let b ← liftS (mkIneqAtom ⟨.gt,
+    [(MPoly.smulTerm 1 [(1,2)] x0, false)]⟩)
+  let (out, _) ← simplifyWithEq #[⟨b, false⟩] (MPoly.sub (MPoly.mul x0 x1) oneM) 1
+  let st ← get
+  let s ← liftS get
+  return out == #[]
+    && st.result == #[⟨2, false⟩, ⟨3, false⟩]
+    && s.atoms[2]! == some (.ineq ⟨.gt, [(x0, false)]⟩)
+    && s.atoms[3]! == some (.ineq ⟨.eq, [(x0, false)]⟩))
+
+-- select_eq: minimal degree in max, degree-1 early break
+#guard Explain.run' (do
+  Solver.init
+  let b1 ← liftS (mkIneqAtom ⟨.gt, [(x1, false)]⟩)
+  let b2 ← liftS (mkIneqAtom ⟨.eq, [(MPoly.sub (MPoly.mul x1 x1) oneM, false)]⟩)
+  let b3 ← liftS (mkIneqAtom ⟨.eq, [(MPoly.sub x1 x0, false)]⟩)
+  let r ← selectEq #[⟨b1, false⟩, ⟨b2, false⟩, ⟨b3, false⟩] 1
+  return r == some (MPoly.sub x1 x0))
+
+-- simplifyCore: the eq rewrites the gt literal away (true via value
+-- false below max); the eq literal itself stays
+#guard Explain.run' (do
+  Solver.init
+  let c1 ← liftS (liftC (CellStore.fresh (.rat 1 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 0 c1 })
+  let c5 ← liftS (liftC (CellStore.fresh (.rat 5 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c5 })
+  let b1 ← liftS (mkIneqAtom ⟨.eq, [(MPoly.sub x1 x0, false)]⟩)
+  let b2 ← liftS (mkIneqAtom ⟨.gt, [(MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2), false)]⟩)
+  let out ← simplifyCore #[⟨b1, false⟩, ⟨b2, false⟩] 1
+  let st ← get
+  let s ← liftS get
+  return out == #[⟨b1, false⟩]
+    && st.result == #[⟨3, false⟩]
+    && s.atoms[3]! == some (.ineq ⟨.gt,
+      [(MPoly.sub (MPoly.mul x0 x0) (MPoly.ofInt 2), false)]⟩))
+
+-- select_lower_stage_eq + the lower-stage loop: x2eq equation on x0
+-- rewrites the core factor, equation emitted as a negated literal
+#guard Explain.run' (do
+  Solver.init
+  let b1 ← liftS (mkIneqAtom ⟨.eq, [(MPoly.sub x0 (MPoly.ofInt 2), false)]⟩)
+  let _ ← liftS (mkVar false)
+  let _ ← liftS (mkVar false)
+  liftS (modify fun s => { s with var2eq := s.var2eq.set! 0 (some b1) })
+  let c5 ← liftS (liftC (CellStore.fresh (.rat 5 : RAlg)))
+  liftS (modify fun s => { s with assignment := s.assignment.set 1 c5 })
+  let b2 ← liftS (mkIneqAtom ⟨.gt, [(MPoly.mul x0 x1, false)]⟩)
+  let out ← simplifyCore #[⟨b2, false⟩] 1
+  let st ← get
+  let s ← liftS get
+  return out == #[⟨3, false⟩]
+    && st.result == #[⟨1, true⟩]
+    && s.atoms[3]! == some (.ineq ⟨.gt, [(MPoly.smulTerm 2 [] x1, false)]⟩))
+
 end LeanNonlinearArith.Nlsat.Tests
