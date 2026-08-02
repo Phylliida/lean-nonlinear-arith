@@ -1087,49 +1087,54 @@ Slice plan (each lands compiling + pinned, small commits):
   shared by both modular gcds. The 231-prime table + balanced CRA idiom
   already exist (`Kernel/ZPoly.lean` bigPrimes/craCombineImages —
   univariate; multivariate CRA at :3700s lands in iii).
-  - **12d.1b-i ℤ-mode MPoly foundations** `todo`: graded-lex
-    argmax/argmin (graded_lex_max/min_pos), var_max_degrees +
-    get_min_degree_var (:6433), derivative (:4554), pw, ic (:3386 +
-    :3449), exact_div (scalar :5137; multivariate glex-max reduction
-    :5159), divides (:5197), pseudo_division_core family
-    (exact_pseudo_remainder/pseudo_remainder :5095 — 12d.5 consumes
-    the latter), is_perfect_square + monomial sqrt + sqrt (:5841,
-    the max-monomial-stripping loop). Differential pins vs naive
-    definitions.
-  - **12d.1b-ii gcd ladder ℤ-mode** `todo`: gcd_content (:3671),
-    gcd_prs (:3598 — exact_pseudo_remainder + g/h subresultant
-    bookkeeping + pp on exit, flip_sign_if_lm_neg), top-level gcd
-    (:4395) with the mod_gcd branch delegating to iii. Pins: known
-    gcds, sign normalization, content cases.
-  - **12d.1b-iii Zp-mode layer** `todo`: numeral-mode abstraction (ℤ
-    vs balanced Zp on the same MPoly repr — balanced reps per the
-    nla-27 p_normalize_core lesson), ZpX ops (iccp_ZpX :3919,
-    lc_glex_ZpX, primitive_ZpX, normalize, substitute, univ_eval,
-    euclid_gcd → gcd_prs in Zp mode, mk_glex_monic, Zp divides),
-    newton_interpolator (:2850), sparse_interpolator + skeleton
-    (:2960+), peek_fresh (fresh-value generator — reachable here;
-    nla-32's "unreachable" note was pre-12d), multivariate
-    CRA_combine_images (:3700s).
-  - **12d.1b-iv mod_gcd assembly** `todo`: mod_gcd_rec (:4119 —
-    min_deg_q reset semantics, skeleton save on success, dense-vs-
-    sparse interpolation dispatch, sparse_mgcd_failed → gcd_prs),
-    mod_gcd (:4300s — bad-prime skips, C_star accumulation with
-    glex-max discard rule, candidate normalize + lc_g divisibility +
-    divides checks, prime exhaustion → gcd_prs), uni_mod_gcd (:3812).
-    Pins: multivariate gcds incl. unlucky-prime paths.
-  - **12d.1b-v factor layer** `todo`: iccp (:3496 — the filter
-    optimization + gcd-of-coeffs), pp/is_primitive, factor_1/2/n_
-    sqf_pp (:6465/:6474/:6600 — deg-2 discriminant sqrt attempt with
-    flipped_coeffs sign bookkeeping; deg>2 multivariate pushed back
-    unfactored, z3's own TODO), factor_sqf_pp_univ (:6558 — bridge to
-    nla-27 factorSquareFree), factor_sqf_pp/factor_core (:6610/:6628 —
-    Yun loop, acc_constant + odd-multiplicity flip_sign into the
-    DROPPED constant), manager::factor (:6700). `factors` =
-    constant + (poly, mult) list; cache returns DISTINCT factors,
-    constant dropped. Then `Explain.factor` cache wrapper (:221) +
-    `add_zero_assumption` (:262 — zero-sign factors only, multi-factor
-    ¬EQ). Pins: iccp/Yun branches, deg-2 sqrt vs irreducible,
-    distinct-factor + constant-drop semantics, zero-assumption shapes.
+  - **12d.1b-i ℤ-mode MPoly foundations** `done` (2026-08-01,
+    `Nlsat/MPolyOps.lean`): all of the spec + NumMode (mpzzp mode
+    flag) generalization — exactDiv/divides/pseudoDivisionCore/
+    icStrip/exactDivScalar take `mode := none` defaults (the Zp
+    instances serve iii/iv). ModD declared non-port (x2d null on all
+    reachable paths). partials registered with nla-31. 40+ pins.
+  - **12d.1b-ii gcd ladder ℤ-mode** `done` (2026-08-01,
+    `Nlsat/MPolyGcd.lean`): gcdContentM, gcdPrsM (+prsLoop), top
+    gcdM with the var-search (zip-find + beyond-sz cases), const/eq/
+    zero cases with flip normalization. **QUIRK FOUND + ported
+    verbatim + pinned:** uniModGcd's constant-image branch returns
+    q = lc_g when d_a = 1 even when lc_g ≠ 1 (gcd(2x+1, 2x+3) = 2 —
+    an upstream edge-case bug, reachable when true gcd is 1 but lcs
+    share a factor).
+  - **12d.1b-iii Zp-mode layer** `done` (2026-08-01,
+    `Nlsat/MPolyZp.lean`): managerNormalize (:5781 — Zp balanced /
+    ℤ CONTENT-STRIP, both live in mod_gcd), univEval/substitute1/
+    mkGlexMonic/lcGlexZpX, NewtonInterpolator, Skeleton +
+    SparseInterpolator + LinearEqSolver (Gaussian elim over Zp —
+    **submul arg-order bug caught by pins**: ZpCtx.submul is
+    (a,b,out) = out−a·b vs z3's (a,b,c,out) = a−b·c), craCombineImagesM
+    (differential-pinned vs nla-27 univariate). **peek_fresh ported
+    counter-based, registered argument:** z3's rand()%p is libc-rand
+    with NO srand anywhere (platform-dependent sequence); every
+    sampled candidate is divides-verified before returning, so the
+    sample sequence is unobservable in outputs. 25 pins.
+  - **12d.1b-iv mod_gcd assembly** `done` (2026-08-01, with ii):
+    modGcdRec (min-degree-sorted vars, peek loop with lc_g-val filter,
+    dense/sparse InterpState, min_deg_q resets, skeleton save on dense
+    success, sparse failures → gcdPrsM via Option), modGcd (bad-prime
+    length checks, C_star CRA accumulation + glex-max discard,
+    candidate content-strip + lc divisibility + divides verification,
+    231-prime exhaustion → gcdPrsM). **mgcd_check differential pins:
+    modGcd ≡ gcdPrsM on shared inputs** (z3's own debug check made
+    external). Zero-exponent-monomial bucket bug (iccpZpXM emitting
+    [(x,0)]) caught by probe hangs. Note: euclid_gcd's univariate
+    SASSERT is documentation — called on multivariate contents.
+  - **12d.1b-v factor layer** `done` (2026-08-01,
+    `Nlsat/MPolyFactor.lean`): MFactors (constant + (poly,mult);
+    accConstant/flipSign/push), toZPoly?/ofZPoly conversions,
+    ppM/iccpM, factor2SqfPp (flipped_coeffs), factorSqfPpUniv (nla-27
+    bridge), dispatch, factorCore (Yun where-loop; the x-param
+    where-capture trap), factorM + factorDistinct (constant dropped).
+    Explain.factor memo wrapper + addZeroAssumption (zero-sign
+    factors only, negated multi-factor EQ). 15 pins incl. Yun
+    j-order (P₁ first), deg-2 split order (f1 = 2ax+b−√disc first),
+    (x+1)(y+1) content-first order, x³+y³ punt, cache memo shape.
+    **12d.1b CLOSED.**
 - **12d.1 residual note**: `m_cache.psc_chain` (:231-236) needs a
   MULTIVARIATE psc chain (psc in the top var with MPoly coefficients —
   QPoly.discChain/resChain are univariate-ℚ only); engine lands with
