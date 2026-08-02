@@ -618,4 +618,60 @@ private def x1sqM2 : MPoly := MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2)
     && st.result == #[⟨1, true⟩]
     && s.atoms[3]! == some (.ineq ⟨.gt, [(MPoly.smulTerm 2 [] x1, false)]⟩))
 
+/-! ## operator() pipeline + production explain (12d.6) -/
+
+-- ACCEPTANCE: x0² + x1² < 0 — a genuine two-var conflict refuted
+-- end-to-end by the real projection (zero assumption at x0 := 0,
+-- cell bounds at x0 := ±1, stage-0 core conflict ⇒ UNSAT)
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let b ← mkIneqLiteral ⟨.lt,
+    [(MPoly.add (MPoly.mul x0 x0) (MPoly.mul x1 x1), false)]⟩
+  let _ ← mkClause #[b] false
+  let r ← search (resolve explain)
+  return r == some .false)
+
+-- multivariate SAT still works with the real explain attached
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let b ← mkIneqLiteral ⟨.lt,
+    [(MPoly.sub (MPoly.add (MPoly.mul x0 x0) (MPoly.mul x1 x1))
+      (MPoly.ofInt 3), false)]⟩
+  let _ ← mkClause #[b] false
+  let r ← search (resolve explain)
+  return r == some .true)
+
+-- the mock's stage-0 pin re-green with the production explain (the
+-- projection has nothing below stage 0 to add)
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let g0 ← mkIneqLiteral ⟨.gt, [(x0, false)]⟩
+  let lt1 ← mkIneqLiteral ⟨.lt, [(MPoly.sub x0 oneM, false)]⟩
+  let _ ← mkClause #[⟨g0.bvar, true⟩] false -- x0 ≤ 0
+  let _ ← mkClause #[⟨lt1.bvar, true⟩] false -- x0 ≥ 1
+  let r ← search (resolve explain)
+  return r == some .false)
+
+-- remove_learned_roots: learned clauses with root atoms are deleted +
+-- deattached; everything else untouched
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let rb ← mkRootAtom ⟨.gt, 0, 1, x0⟩
+  let ib ← mkIneqAtom ⟨.gt, [(x0, false)]⟩
+  let c1 ← mkClause #[⟨rb, false⟩] true
+  let c2 ← mkClause #[⟨ib, false⟩] true
+  let c3 ← mkClause #[⟨ib, true⟩] false
+  removeLearnedRoots
+  let s ← get
+  return s.clauses[c1]!.deleted && !s.clauses[c2]!.deleted
+    && !s.clauses[c3]!.deleted
+    && !s.watches[0]!.contains c1
+    && s.watches[0]!.contains c2)
+
 end LeanNonlinearArith.Nlsat.Tests

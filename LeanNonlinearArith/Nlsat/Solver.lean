@@ -341,7 +341,7 @@ always null under the nra entry — declared non-port.) -/
 def mkClause (lits : Array Literal) (learned : Bool) : SolverM Nat := do
   let cid := (← get).clauses.size
   let sorted := lits.qsort (litLt (← get))
-  modify fun s => { s with clauses := s.clauses.push ⟨sorted, learned⟩ }
+  modify fun s => { s with clauses := s.clauses.push ⟨sorted, learned, false⟩ }
   attachClause cid
   return cid
 
@@ -1063,7 +1063,7 @@ def hasRootAtom (s : Solver) (c : Clause) : Bool :=
 /-- z3 `can_reorder` (`:2373`): no root atoms anywhere (`m_patch_var`
 is always empty under the nra entry). -/
 def canReorder (s : Solver) : Bool :=
-  !s.clauses.any (hasRootAtom s)
+  !s.clauses.any (fun c => !c.deleted && hasRootAtom s c)
 
 /-- z3 `var_info_collector` (`:2257`): (max degree, num occurrences)
 per var, over all clauses (z3 collects `m_clauses` + `m_learned` —
@@ -1073,6 +1073,7 @@ def collectVarInfo (s : Solver) : Array (Nat × Nat) := Id.run do
   let mut maxDeg := Array.replicate n 0
   let mut numOcc := Array.replicate n 0
   for c in s.clauses do
+    if c.deleted then continue
     for l in c.lits do
       match s.atoms[l.bvar]! with
       | some a =>
@@ -1108,20 +1109,38 @@ stay in `m_bwatches` and are not reattached, as z3. -/
 def reattachArithClauses : SolverM Unit := do
   for cid in [:(← get).clauses.size] do
     let c := (← get).clauses[cid]!
-    match maxVarClause (← get) c with
-    | some x =>
-      modify fun s => { s with watches := s.watches.modify x (·.push cid) }
-    | none => pure ()
+    if !c.deleted then
+      match maxVarClause (← get) c with
+      | some x =>
+        modify fun s => { s with watches := s.watches.modify x (·.push cid) }
+      | none => pure ()
 
-/-- z3 `remove_learned_roots` (`:2465`) as a NO-OP under the nra entry:
-with mock explain there are no root-atom learned clauses; with 12d's
-real explain they exist, but deletion is observable only under
-incremental reuse (ill-formed clauses persisting across checks), which
-the one-shot entry never does — the verdict and restored model are
-unaffected. **12d follow-up (boarded):** port real deletion (and the
-`del_clause` machinery) when the explain-produced root atoms arrive. -/
+/-- z3 `deattach_clause` (`:706`): remove from the watch lists (by
+max_var, else max_bvar). -/
+def deattachClause (cid : Nat) : SolverM Unit := do
+  let c := (← get).clauses[cid]!
+  match maxVarClause (← get) c with
+  | some x =>
+    modify fun s => { s with watches := s.watches.modify x (·.erase cid) }
+  | none =>
+    modify fun s => { s with bwatches := s.bwatches.modify (maxBvar c) (·.erase cid) }
+
+/-- z3 `del_clause` (`:724`): deattach + mark deleted. Ids stay stable
+(z3's `m_cid_gen.recycle` has no port — the append-only table never
+recycles, see the 12c representation note). -/
+def delClause (cid : Nat) : SolverM Unit := do
+  deattachClause cid
+  modify fun s => { s with
+    clauses := s.clauses.set! cid { s.clauses[cid]! with deleted := true } }
+
+/-- z3 `remove_learned_roots` (`:2465`): learned clauses containing
+root atoms are deleted (they would be ill-formed after the rename).
+Real deletion now that 12d's explain produces root atoms. -/
 def removeLearnedRoots : SolverM Unit := do
-  pure ()
+  for cid in [:(← get).clauses.size] do
+    let c := (← get).clauses[cid]!
+    if c.learned && !c.deleted && hasRootAtom (← get) c then
+      delClause cid
 
 /-- Rename every atom's polys by `σ` (z3 `m_pm.rename(sz, p)` — ALL
 variables, including a root atom's `x`; today unreachable since

@@ -297,11 +297,14 @@ def negate (l : Literal) : Literal := ⟨l.bvar, !l.neg⟩
 
 end Literal
 
-/-- Clause: literal array plus provenance (learned vs input). Justifies
-intervals and conflicts; the solver's clause table assigns ids. -/
+/-- Clause: literal array plus provenance (learned vs input) and the
+`deleted` marker (z3 `del_clause` — ids stay stable, no cid
+recycling). Justifies intervals and conflicts; the solver's clause
+table assigns ids. -/
 structure Clause where
   lits : Array Literal
   learned : Bool
+  deleted : Bool := false
 deriving Repr, Inhabited
 
 end LeanNonlinearArith.Nlsat

@@ -788,6 +788,57 @@ partial def simplifyCore (C : Array Literal) (max : Var) : ExplainM (Array Liter
       | _ => done := true
   return C
 
+/-! ## The operator() pipeline (:1375-1500) — 12d.6
+
+The fragment gate is NOT an explain-side abort: z3's projection is
+degree-generic, and out-of-fragment steps (the generic root-atom
+fallback, i.e. any root atom with degree ≥ 3 in its top var) only
+mark the resulting TRACE as S1-gated — the search itself stays fully
+z3-faithful. The gate therefore lands with trace emission (12d.6b ⇄
+19a); `Explain.explain` below is z3's projection verbatim. -/
+
+/-- z3 `main` (:1375): collect polys, `max_x` (const-poisoned ⇒
+`UINT_MAX`, z3's release behavior), elim_vanishing, project. -/
+def mainExplain (lits : Array Literal) : ExplainM (Option Unit) := do
+  if lits.isEmpty then return some ()
+  let ps ← collectPolys lits
+  let maxX := (maxVarPolys ps).getD 4294967295   -- null_var = UINT_MAX
+  let ps ← elimVanishingVec ps
+  project ps maxX
+
+/-- z3 `process2` (:1387): with `simplify_cores` (default true) the
+core is normalized and equation-simplified first (on a copy, as
+z3's `m_core2`). -/
+def process2 (lits : Array Literal) : ExplainM (Option Unit) := do
+  if (← liftS get).simplifyCores then
+    let maxV := (Solver.maxVarLits (← liftS get) lits).getD 4294967295
+    let C2 ← normalizeCore lits maxV
+    let C2 ← simplifyCore C2 maxV
+    mainExplain C2
+  else
+    mainExplain lits
+
+/-- z3 `process` (:1474): `minimize_cores` is false on the nra path
+(the minimize cluster is a registered non-port), so this is exactly
+`process2`. -/
+def process (lits : Array Literal) : ExplainM (Option Unit) := process2 lits
+
+/-- z3 `operator()` (:1486): the explain entry the solver calls from
+`resolve_lazy_justification`. `none` = the 29.5 abort image. -/
+def operator (lits : Array Literal) : ExplainM (Option (Array Literal)) := do
+  match (← process lits) with
+  | none => return none
+  | some () =>
+    resetAlreadyAdded
+    return some (← get).result
+
+/-- The production explain (12d.6): `explain::operator()` behind the
+`ExplainFn` boundary. `mockExplain` stays as the test mock for
+boolean + stage-0 conflicts. -/
+def explain : Solver.ExplainFn := fun lits => do
+  let (r, _) ← (operator lits).run {}
+  return r
+
 end Explain
 
 end LeanNonlinearArith.Nlsat
