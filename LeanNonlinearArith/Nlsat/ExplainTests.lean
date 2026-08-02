@@ -674,4 +674,11 @@ private def x1sqM2 : MPoly := MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2)
     && !s.watches[0]!.contains c1
     && s.watches[0]!.contains c2)
 
+-- unassigned y ⇒ the abort image, NOT a panic-default cell read
+-- (design review fix, 2026-08-01)
+#guard Explain.run' (do
+  Solver.init
+  let r ← addCellLits #[x1sqM2] 1
+  return r == none && (← get).result == #[])
+
 end LeanNonlinearArith.Nlsat.Tests

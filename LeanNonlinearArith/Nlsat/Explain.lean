@@ -431,7 +431,10 @@ root isolation (:922). `none` = the 29.5 abort image
 (isolate_roots throw: unassigned-var eval). -/
 def addCellLits (ps : Array MPoly) (y : Var) : ExplainM (Option Unit) := do
   let s ← liftS get
-  let yv := (s.assignment.get? y).get!   -- z3 SASSERTs y assigned
+  -- z3 SASSERTs y assigned; release would read an uninitialized anum
+  -- (no behavior to match) — the abort image, NOT a panic-default
+  -- cell-0 read (F7 class)
+  let some yv := s.assignment.get? y | return none
   let mut lowerInf := true
   let mut upperInf := true
   let mut lower : CellId := 0
