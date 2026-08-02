@@ -39,6 +39,8 @@ import LeanNonlinearArith.Nlsat.EvaluatorTable
 import LeanNonlinearArith.Nlsat.EvaluatorTests
 import LeanNonlinearArith.Nlsat.Solver
 import LeanNonlinearArith.Nlsat.SolverTests
+import LeanNonlinearArith.Nlsat.Explain
+import LeanNonlinearArith.Nlsat.ExplainTests
 import LeanNonlinearArith.Kernel.Zp
 import LeanNonlinearArith.Kernel.ZPoly
 import LeanNonlinearArith.Kernel.ZPolyTests

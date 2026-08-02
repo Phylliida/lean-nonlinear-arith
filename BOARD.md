@@ -1050,18 +1050,43 @@ sentinels in select_eq (:1272) and add_cell_lits (:910-912).
 
 Slice plan (each lands compiling + pinned, small commits):
 
-- **12d.1 scaffold** `todo`: explain state — todo_set (dedup keyed on
-  poly identity, canonicalized via mk_unique :67), result accumulation
-  (add_literal dedup + false_literal drop + reset_already_added bulk
-  clear :199), the m_cache wrappers (mk_unique; psc_chain :235 via
-  QPoly.discChain/resChain; factor :225 via nla-27 Factor),
-  assumption machinery (add_zero_assumption :262 — multi-factor ¬EQ
-  over the ZERO-SIGN factors only; add_simple_assumption/
-  add_assumption :286-297 with the `// TODO: factor` pass-through;
-  ensure_sign :822 active #else branch), collect_polys :241, max_var
-  family :510. Wire the reorder cache-reset hook (the Solver.lean:1124
-  seam). Pins: todo dedup/ordering, assumption emission shapes,
-  false_literal drop.
+- **12d.1 scaffold** `done` (2026-08-01): `Nlsat/Explain.lean` +
+  `ExplainTests.lean` — ExplainM monad (per-call state over SolverM;
+  z3's imp fields are all per-call scratch except the solver-owned
+  cache/flags), addLiteral (:183 — false_literal dropped, dedup by
+  index, release-kept true_literal), resetAlreadyAdded, sign (:211 via
+  AnumEval.evalSignAt), collectPolys (:241), maxVarPolys (:515 with
+  const-poison replication), todo_set (:49-117 — mkUnique = identity
+  on canonical MPoly, structural dedup), addSimpleAssumption/
+  addAssumption (:286/:294 with the negated-clause-literal polarity),
+  ensureSign (:822 active #else branch). Solver gained the
+  `ExplainCache` (pscChains/factors memo tables — engines land behind
+  them), the `factor` flag (default true), and the reorder
+  `m_cache.reset()` hook (:2408 program point; reinit_cache documented
+  no-op). 14 pins green, full build green. **Scope amendment:**
+  `add_zero_assumption` (:262) needs the factor engine, and the audit
+  found z3's `m_cache.factor` → `manager::factor` is a MULTIVARIATE
+  `factor_core` (iccp → Yun square-free via multivariate gcd/exact_div
+  → per-piece: deg-1 as-is / univariate via nla-27 upolynomial /
+  deg-2 discriminant-sqrt attempt / deg>2 multivariate pushed back
+  unfactored "TODO Dejan's procedure"), returning DISTINCT factors
+  with the constant (incl. sign flips) dropped — that engine is its
+  own slice:
+- **12d.1b multivariate factor_core** `todo`: MPoly gcd (check z3's
+  `manager::gcd` route at 4.12.5 before choosing — subresultant vs
+  heuristic), content/pp (`iccp` :3496), derivative, exact_div,
+  multivariate `sqrt` attempt, `get_min_degree_var` (:6433), the Yun
+  loop (:6628) and the four `factor_sqf_pp` branches (:6600-6624),
+  constant accumulation + odd-multiplicity sign flips into the
+  DROPPED constant. Then `add_zero_assumption` (:262 — zero-sign
+  factors only, multi-factor ¬EQ) and the cache wrapper with memo
+  (:221-226). Pins: iccp/Yun per-branch cases, deg-2 sqrt vs
+  irreducible, distinct-factor + constant-drop semantics, zero-
+  assumption shapes.
+- **12d.1 residual note**: `m_cache.psc_chain` (:231-236) needs a
+  MULTIVARIATE psc chain (psc in the top var with MPoly coefficients —
+  QPoly.discChain/resChain are univariate-ℚ only); engine lands with
+  12d.5 behind `ExplainCache.pscChains`.
 - **12d.2 elim_vanishing + normalize** `todo`: both elim_vanishing
   arities (:307/:363 — vanishing non-const lc → add_zero_assumption;
   all-coeffs-vanish → p := 0; early-outs at :334/:341; the variable

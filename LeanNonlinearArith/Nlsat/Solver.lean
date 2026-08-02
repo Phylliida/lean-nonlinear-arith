@@ -83,6 +83,21 @@ deriving Repr, BEq, Inhabited
 
 /-! ## The solver state (`imp` @ 4.12.5) -/
 
+/-- z3 `polynomial::cache` (solver field, `nlsat_solver.cpp:95`) —
+memoized `mk_unique`/`psc_chain`/`factor` for explain. Our MPoly is
+canonical (eager lex-sorted), so `mk_unique` is the identity and
+structural keys cover z3's pointer-identity keys; scans, not hash maps
+(atom-table idiom: creation-side, not hot). Reset at reorder (z3's
+`m_cache.reset()`, :2408); z3's `reinit_cache` re-priming is a no-op
+for us — identity `mk_unique` + on-demand max_var (parity argument:
+reinit only re-inserts polys into the unique table and recomputes
+cached atom max_vars, both already handled). Engines behind the
+tables land in 12d.1b (factor) and 12d.5 (psc_chain). -/
+structure ExplainCache where
+  pscChains : Array ((MPoly × MPoly × Var) × Array MPoly) := #[]
+  factors : Array (MPoly × Array MPoly) := #[]
+deriving Inhabited
+
 structure Solver where
   store : CellStore := #[]
   assignment : Assignment := #[]
@@ -114,6 +129,10 @@ structure Solver where
   lazyMode : Nat := 0              -- `lazy` param default 0
   simplifyCores : Bool := true     -- `simplify_conflicts` default true
   fullDimensional : Bool := false  -- set by `check()` for 12d's explain
+  factor : Bool := true            -- nlsat_params `factor` default true (12d's
+                                   -- explain; z3's m_factor is never ctor-
+                                   -- initialized — updt_params always sets it)
+  explainCache : ExplainCache := {}
 deriving Inhabited
 
 abbrev SolverM := StateM Solver
@@ -1121,9 +1140,10 @@ def renameAtoms (σ : Var → Var) : SolverM Unit := do
 
 /-- z3 `reorder(sz, p)` (`:2387`): `p` maps internal vars to their new
 positions. Verbatim order: reset watches, build the permuted
-assignment BEFORE undoing, undo to the null stage (the explain-cache
-reset hooks are 12d no-ops), remap perms and is_int, rename polys,
-swap the assignment in, reattach. -/
+assignment BEFORE undoing, undo to the null stage, reset the explain
+cache (`m_cache.reset()` :2408 — z3's post-rename `reinit_cache`
+re-priming is a no-op for us, see `ExplainCache`), remap perms and
+is_int, rename polys, swap the assignment in, reattach. -/
 def reorder (p : Array Var) : SolverM Unit := do
   removeLearnedRoots
   resetWatches
@@ -1135,6 +1155,7 @@ def reorder (p : Array Var) : SolverM Unit := do
     | some c => newAsn := newAsn.set p[x]! c
     | none => pure ()
   undoUntilStage none
+  modify fun s => { s with explainCache := {} }
   -- m_perm / m_inv_perm update (z3's exact remapping)
   let mut newInv := Array.replicate n 0
   for extX in [:n] do
