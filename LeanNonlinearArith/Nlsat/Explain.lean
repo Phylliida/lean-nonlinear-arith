@@ -410,9 +410,9 @@ def mkQuadraticRoot (k : RootKind) (y : Var) (i : Nat) (p : MPoly) : ExplainM Bo
   let sa ← ensureSign A
   if sa == 0 then
     return ← mkPlinearRoot k y ((B.mul (MPoly.ofVar y)).add C)
-  let _ ← ensureSign pDiff
-  if sq > 0 then
-    let _ ← ensureSign p
+  let spd ← ensureSign pDiff
+  let sp ← if sq > 0 then ensureSign p else pure 0
+  liftS (Solver.emitTrace (.thomQuadratic k y i p sq sa spd sp))
   return true
 
 /-- z3 `add_root_literal` (:725): linear encoding, then quadratic,
@@ -460,6 +460,7 @@ def addCellLits (ps : Array MPoly) (y : Var) : ExplainM (Option Unit) := do
             match (← liftS (liftC (CellStore.compareC yv roots[i]!))) with
             | .eq =>
               addRootLiteral .eq y (i + 1) p
+              liftS (Solver.emitTrace (.cellBound .exact .eq y (i + 1) p))
               done := true
             | .lt =>
               let better ← if upperInf then pure true
@@ -481,8 +482,10 @@ def addCellLits (ps : Array MPoly) (y : Var) : ExplainM (Option Unit) := do
   let fd := (← liftS get).fullDimensional
   if !lowerInf then
     addRootLiteral (if fd then .ge else .gt) y iLower pLower
+    liftS (Solver.emitTrace (.cellBound .lower (if fd then .ge else .gt) y iLower pLower))
   if !upperInf then
     addRootLiteral (if fd then .le else .lt) y iUpper pUpper
+    liftS (Solver.emitTrace (.cellBound .upper (if fd then .le else .lt) y iUpper pUpper))
   return some ()
 
 /-- z3 `all_univ` (:975): every poly is univariate in `x` with `x` its
