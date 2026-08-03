@@ -242,6 +242,7 @@ def addZeroAssumption (p : MPoly) : ExplainM Unit := do
       zeroFs := zeroFs ++ [(f, false)]
   let l ← liftS (Solver.mkIneqLiteral ⟨.eq, zeroFs⟩)
   addLiteral l.negate
+  liftS (Solver.emitTrace (.factorSplit p fs (zeroFs.map (·.1)).toArray))
 
 /-! ## elim_vanishing (:307/:363) -/
 
@@ -503,6 +504,7 @@ def addFactors (p : MPoly) : ExplainM Unit := do
   if p.asConst?.isSome then return
   if (← liftS get).factor then
     let fs ← factor p
+    liftS (Solver.emitTrace (.factorSplit p fs #[]))
     for f in fs do
       let f ← elimVanishing f
       if !f.asConst?.isSome then
@@ -642,6 +644,8 @@ def simplifyLit (l : Literal) (info : EqInfo) (max : Var) : ExplainM (Literal ×
         else
           modified := true
           let (d, newFactor) := f.pseudoRemainder info.eq info.x
+          liftS (Solver.emitTrace (.pseudoDivision f info.eq info.x d newFactor
+            info.lcSign isEven))
           if d % 2 == 1 && !isEven && info.lcSign < 0 then
             atomSign := -atomSign
           if newFactor.asConst?.isSome then
