@@ -1,6 +1,7 @@
 import LeanNonlinearArith.Nlsat.IntervalSet
 import LeanNonlinearArith.Nlsat.Evaluator
 import LeanNonlinearArith.Nlsat.EvaluatorTable
+import LeanNonlinearArith.Nlsat.Trace
 
 /-!
 # nla-12c — the solver loop (z3 `nlsat_solver.cpp` @ **4.12.5**)
@@ -133,6 +134,27 @@ structure Solver where
                                    -- explain; z3's m_factor is never ctor-
                                    -- initialized — updt_params always sets it)
   explainCache : ExplainCache := {}
+  -- nla-12d.6b trace egress (F1 of the 2026-08-03 design review):
+  -- append-only observation — no control flow ever reads these fields,
+  -- which is the parity argument (all 12c/12d behavior unchanged).
+  /-- The current resolve round's steps; cleared at each `start:` reset
+  (z3's `m_lemma`/`numMarks` reset boundary is the bundling boundary). -/
+  pendingTrace : Array TraceStep := #[]
+  /-- Per-learned-clause bundles, PARALLEL to `clauses` (the
+  `justifications` precedent; `none` for input clauses). Survives
+  `delClause` (append-only table — DRAT-style references to
+  later-deleted clauses still resolve). -/
+  traceBundles : Array (Option TraceBundle) := #[]
+  /-- The refutation root: the final round's bundle at the empty-lemma
+  UNSAT exit (`resolve`, :993 — no clause is created there). -/
+  finalRefutation : Option TraceBundle := none
+  /-- F2 extraction-seam snapshot: (atom table, clause table, bundles,
+  final bundle) captured in INTERNAL variable order between
+  `searchCheck` and `restoreOrder` in `check()` — after `restoreOrder`
+  the atom table is renamed back and the solver-level payloads would no
+  longer align with it. -/
+  refutation : Option (Array (Option Atom) × Array Clause ×
+    Array (Option TraceBundle) × TraceBundle) := none
 deriving Inhabited
 
 abbrev SolverM := StateM Solver
@@ -337,13 +359,30 @@ def attachClause (cid : Nat) : SolverM Unit := do
 
 /-- z3 `mk_clause(num, lits, learned, a)`: fresh id, `lit_lt` sort,
 append to the table, attach to watches. (z3's assumption argument is
-always null under the nra entry — declared non-port.) -/
+always null under the nra entry — declared non-port.) The trace bundle
+array grows in parallel (`none` placeholder; `resolve` flushes the
+round's bundle over it at the learned-clause sites). -/
 def mkClause (lits : Array Literal) (learned : Bool) : SolverM Nat := do
   let cid := (← get).clauses.size
   let sorted := lits.qsort (litLt (← get))
-  modify fun s => { s with clauses := s.clauses.push ⟨sorted, learned, false⟩ }
+  modify fun s => { s with clauses := s.clauses.push ⟨sorted, learned, false⟩
+                         , traceBundles := s.traceBundles.push none }
   attachClause cid
   return cid
+
+/-! ### Trace egress (nla-12d.6b, F1) -/
+
+/-- Append a trace step. Pure observation: nothing in the search reads
+`pendingTrace`, so behavior is byte-identical (the parity argument). -/
+def emitTrace (step : TraceStep) : SolverM Unit :=
+  modify fun s => { s with pendingTrace := s.pendingTrace.push step }
+
+/-- Flush the round's steps into clause `cid`'s bundle (called right
+after the learned-clause `mkClause` sites in `resolve`). -/
+def flushTrace (cid : Nat) (lemma : Array Literal) : SolverM Unit :=
+  modify fun s => { s with
+    traceBundles := s.traceBundles.set! cid (some ⟨s.pendingTrace, lemma⟩)
+    pendingTrace := #[] }
 
 /-- z3 `mk_true_bvar`: bvar 0 is the true constant, asserted by a unit
 input clause. -/
@@ -866,12 +905,16 @@ def resolveClause (b : Option Nat) (lits : Array Literal) : SolverM Unit := do
     if some l.bvar != b then processAntecedent l
 
 /-- z3 `resolve_lazy_justification` (`:1813`): explain the core, append
-the negated core, resolve. -/
+the negated core, resolve. The `resolution (.arith …)` marker is
+emitted AFTER the explain call so the arith lemma's projection steps
+immediately precede it in the round's trace (the 19b consumption
+contract). -/
 def resolveLazyJustification (explain : ExplainFn) (b : Nat)
     (lits : Array Literal) : SolverM (Option Unit) := do
   match (← explain lits) with
   | none => return none
   | some proj =>
+    emitTrace (.resolution (.arith lits proj))
     let mut lazyClause := proj
     for l in lits do
       lazyClause := lazyClause.push l.negate
@@ -942,9 +985,12 @@ def resolve (explain : ExplainFn) (conflictCid : Nat) : SolverM (Option Bool) :=
   let mut result : Option Bool := none
   let mut done := false
   while !done do
-    -- z3 `start:` — fresh conflict analysis round
-    modify fun s => { s with conflicts := s.conflicts + 1, numMarks := 0, lemma := #[] }
+    -- z3 `start:` — fresh conflict analysis round (z3's `m_lemma` reset
+    -- is also the trace bundling boundary: aborted rounds self-discard)
+    modify fun s => { s with conflicts := s.conflicts + 1, numMarks := 0, lemma := #[]
+                           , pendingTrace := #[] }
     resolveClause none (← get).clauses[conflictCid]!.lits
+    emitTrace (.resolution (.clause conflictCid))
     let mut top := (← get).trail.size
     let mut foundDecision := false
     let mut aborted := false
@@ -964,6 +1010,7 @@ def resolve (explain : ExplainFn) (conflictCid : Nat) : SolverM (Option Bool) :=
               unmark b
               match (← get).justifications[b]! with
               | .clause cid =>
+                emitTrace (.resolution (.clause cid))
                 resolveClause (some b) (← get).clauses[cid]!.lits
               | .lazy lits _ =>
                 match (← resolveLazyJustification explain b lits) with
@@ -974,6 +1021,7 @@ def resolve (explain : ExplainFn) (conflictCid : Nat) : SolverM (Option Bool) :=
                 foundDecision := true
                 let v := (← get).bvalues[b]!
                 modify fun s => { s with lemma := s.lemma.push ⟨b, v == .true⟩ }
+                emitTrace (.resolution (.decision ⟨b, v == .true⟩))
               | .null => pure () -- z3 UNREACHABLE
           | _ => pure ()
           top := top - 1
@@ -991,7 +1039,11 @@ def resolve (explain : ExplainFn) (conflictCid : Nat) : SolverM (Option Bool) :=
       result := none
       done := true
     else if (← get).lemma.isEmpty then
-      result := some false -- empty clause derived: UNSAT
+      -- empty clause derived: UNSAT — capture the refutation root (F1;
+      -- no clause is created here, so the bundle gets a designated field)
+      modify fun s => { s with finalRefutation := some ⟨s.pendingTrace, #[]⟩
+                             , pendingTrace := #[] }
+      result := some false
       done := true
     else
       resetMarksLemma
@@ -1000,6 +1052,7 @@ def resolve (explain : ExplainFn) (conflictCid : Nat) : SolverM (Option Bool) :=
         let newMaxVar := maxVarLits (← get) (← get).lemma
         undoUntilStage newMaxVar
         let newCid ← mkClause (← get).lemma true
+        flushTrace newCid (← get).clauses[newCid]!.lits
         match (← processClause newCid true) with
         | none => result := none; done := true
         | some false => conflictCid := newCid -- z3 `goto start`
@@ -1017,6 +1070,7 @@ def resolve (explain : ExplainFn) (conflictCid : Nat) : SolverM (Option Bool) :=
           | some _ => result := some true; done := true -- z3 VERIFY(...)
         else
           let newCid ← mkClause (← get).lemma true
+          flushTrace newCid (← get).clauses[newCid]!.lits
           match (← processClause newCid true) with
           | none => result := none; done := true
           | some false => conflictCid := newCid -- z3 `goto start`
@@ -1243,6 +1297,12 @@ def check (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBool) := 
     reordered := true
   sortWatchedClauses
   let r ← searchCheck resolve
+  -- F2 extraction seam: snapshot the refutation in INTERNAL variable
+  -- order before `restoreOrder` renames the atom table back.
+  if r == some LBool.false then
+    modify fun s => { s with
+      refutation := s.finalRefutation.map fun fin =>
+        (s.atoms, s.clauses, s.traceBundles, fin) }
   if reordered then
     restoreOrder
   -- z3 SASSERT(r != l_true || check_satisfied(m_clauses)) — the pins

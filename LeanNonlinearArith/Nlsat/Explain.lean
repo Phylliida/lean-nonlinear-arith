@@ -359,10 +359,14 @@ def normalizeCore (C : Array Literal) (max : Var) : ExplainM (Array Literal) := 
 /-! ## add_root_literal family (:717-878) — 12d.4 -/
 
 /-- z3 `mk_linear_root(k, y, i, p, mk_neg)` (:861): a linear root atom
-becomes a plain ineq atom on the (possibly negated) poly. -/
-def mkLinearRoot5 (k : RootKind) (p : MPoly) (mkNeg : Bool) : ExplainM Unit := do
+becomes a plain ineq atom on the (possibly negated) poly. Emits the
+`linearRoot` trace step (12d.6b): `lcFact` carries the
+`mk_plinear_root` variant's non-const lc + its ensured sign. -/
+def mkLinearRoot5 (k : RootKind) (y : Var) (p : MPoly) (mkNeg : Bool)
+    (lcFact : Option (MPoly × Int)) : ExplainM Unit := do
   let (k', lsign) := k.toIneqSign
   addSimpleAssumption k' (if mkNeg then p.neg else p) lsign
+  liftS (Solver.emitTrace (.linearRoot k y p mkNeg lcFact))
 
 /-- z3 `mk_linear_root(k, y, i, p)` (:742): deg-1 with CONSTANT leading
 coefficient (deg-1 polys have a single root; `i` is unused, as
@@ -373,7 +377,7 @@ def mkLinearRoot (k : RootKind) (y : Var) (p : MPoly) : ExplainM Bool := do
   | none => return false
   | some c =>
     if c == 0 then return false   -- z3 SASSERTs; defensive
-    mkLinearRoot5 k p (c < 0)
+    mkLinearRoot5 k y p (c < 0) none
     return true
 
 /-- z3 `mk_plinear_root` (:756): deg-1 with non-const lc — the lc's
@@ -385,7 +389,7 @@ def mkPlinearRoot (k : RootKind) (y : Var) (p : MPoly) : ExplainM Bool := do
   let s ← sign c
   if s == 0 then return false
   let _ ← ensureSign c
-  mkLinearRoot5 k p (s < 0)
+  mkLinearRoot5 k y p (s < 0) (some (c, s))
   return true
 
 /-- z3 `mk_quadratic_root` (:787): Thom encoding — the root condition
@@ -414,11 +418,13 @@ def mkQuadraticRoot (k : RootKind) (y : Var) (i : Nat) (p : MPoly) : ExplainM Bo
 /-- z3 `add_root_literal` (:725): linear encoding, then quadratic,
 then the generic root atom via `Solver.mkRootAtom` — always emitted
 NEGATED (:733). (`mk_plinear_root` is NOT in this chain upstream —
-only reachable via the quadratic degenerate.) -/
+only reachable via the quadratic degenerate.) The generic fallback
+emits the `rootGeneric` trace step (12d.6b — the S1-gate carrier). -/
 def addRootLiteral (k : RootKind) (y : Var) (i : Nat) (p : MPoly) : ExplainM Unit := do
   if !(← mkLinearRoot k y p) && !(← mkQuadraticRoot k y i p) then
     let b ← liftS (Solver.mkRootAtom ⟨k, y, i, p⟩)
     addLiteral ⟨b, true⟩
+    liftS (Solver.emitTrace (.rootGeneric k y i p))
 
 /-! ## add_cell_lits / all_univ (:899/:975) — 12d.3 -/
 
