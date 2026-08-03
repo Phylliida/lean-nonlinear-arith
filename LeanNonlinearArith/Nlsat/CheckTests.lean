@@ -178,4 +178,53 @@ example : quadRootVal 2 (1 : ℝ) 0 (-2) = Real.sqrt 2 := by
   field_simp
   ring
 
+
+/-! ## cellBound slice pins -/
+
+/-- cellBound over a linear encoding: from the emitted literal failing
+(`2y + x < 0` holding) to the ordering `ρ 1 < rootVal` — which computes
+to `-(ρ 0)/2`. -/
+example (ρ : Nat → ℝ) (hfails : IneqAtom.Holds ρ ⟨.lt, [(pLin, false)]⟩) :
+    rootCmp .lt (ρ 1) (rootVal ρ 1 1 pLin) := by
+  have hA : evalP ρ ((coeffsOf pLin 1)[1]!) = 2 := by
+    have : (coeffsOf pLin 1)[1]! = [(2, [])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  exact cellBound_linear ρ .lt 1 1 pLin false (by native_decide) pLin_canon
+    (by rw [hA]; norm_num)
+    (by simpa [linearRootEmitted, RootKind.toIneqSign, SHolds] using hfails)
+
+/-- The same ordering through `rootVal`: the value is `-C/A`. -/
+example (ρ : Nat → ℝ) :
+    rootVal ρ 1 1 pLin = -ρ 0 / 2 := by
+  have hA : evalP ρ ((coeffsOf pLin 1)[1]!) = 2 := by
+    have : (coeffsOf pLin 1)[1]! = [(2, [])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  have hC : evalP ρ ((coeffsOf pLin 1)[0]!) = ρ 0 := by
+    have : (coeffsOf pLin 1)[0]! = [(1, [(0, 1)])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  rw [rootVal_eq_linear ρ 1 1 pLin (by native_decide), hA, hC]
+
+/-- cellBound over a Thom encoding: the region formula `p > 0 ∧
+pDiff > 0` gives `ρ 1 > root₂(y² − 2)`. -/
+example (ρ : Nat → ℝ)
+    (hform : thomFormula .gt 2
+      (leadSgn (evalP ρ ((coeffsOf pQuad 1)[2]!)) * evalP ρ pQuad)
+      (leadSgn (evalP ρ ((coeffsOf pQuad 1)[2]!)) *
+        (2 * evalP ρ ((coeffsOf pQuad 1)[2]!) * ρ 1 + evalP ρ ((coeffsOf pQuad 1)[1]!)))) :
+    rootCmp .gt (ρ 1) (rootVal ρ 1 2 pQuad) := by
+  have hA : evalP ρ ((coeffsOf pQuad 1)[2]!) = 1 := by
+    have : (coeffsOf pQuad 1)[2]! = [(1, [])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  have hB : evalP ρ ((coeffsOf pQuad 1)[1]!) = 0 := by
+    have : (coeffsOf pQuad 1)[1]! = [] := by native_decide
+    rw [this]; simp [evalP]
+  have hC : evalP ρ ((coeffsOf pQuad 1)[0]!) = -2 := by
+    have : (coeffsOf pQuad 1)[0]! = [(-2, [])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  exact cellBound_thom ρ .gt 1 2 pQuad 1 1 (by native_decide) (Or.inr rfl)
+    pQuad_canon (by decide)
+    (by rw [hA]; exact Or.inr (Or.inr ⟨rfl, by norm_num⟩)) (Or.inr rfl)
+    (by rw [hB, hA, hC]; exact Or.inr (Or.inr ⟨rfl, by norm_num⟩))
+    hform
+
 end LeanNonlinearArith.Nlsat

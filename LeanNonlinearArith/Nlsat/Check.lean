@@ -1224,6 +1224,65 @@ theorem evalP_pDiffPolyOf_sign (ρ : Nat → ℝ) (y : Var) (p : MPoly) (s : Int
       ((coeffsOf p y)[1]!)) from rfl]
   rw [signMatches_managerNormalize ρ s _ hcs, hev]
 
+
+/-! ## The cellBound discharge
+
+By the two-step emission design (Trace.lean header), every cellBound
+step follows its ENCODING step (linearRoot / thomQuadratic / rootGeneric
+— and `addRootLiteral` is only ever called from `addCellLits`). The
+mathematical content is entirely in the encoding discharges; the
+cellBound wrappers here repackage them at the `rootVal` level: the
+encoding step's iff + the sign facts (from the emitted literals
+failing) + the formula's truth give the ordering fact the composition
+collects. -/
+
+theorem rootVal_eq_linear (ρ : Nat → ℝ) (y : Var) (i : Nat) (p : MPoly)
+    (hdeg : p.degreeIn y = 1) :
+    rootVal ρ y i p =
+      -evalP ρ ((coeffsOf p y)[0]!) / evalP ρ ((coeffsOf p y)[1]!) := by
+  unfold rootVal
+  rw [if_pos hdeg]
+
+theorem rootVal_eq_quad (ρ : Nat → ℝ) (y : Var) (i : Nat) (p : MPoly)
+    (hdeg : p.degreeIn y = 2) :
+    rootVal ρ y i p =
+      quadRootVal i (evalP ρ ((coeffsOf p y)[2]!)) (evalP ρ ((coeffsOf p y)[1]!))
+        (evalP ρ ((coeffsOf p y)[0]!)) := by
+  unfold rootVal
+  rw [if_neg (by rw [hdeg]; decide)]
+
+/-- cellBound over a linear encoding: the ordering is the
+`linearRoot_discharge` conclusion itself (the discharged literal's
+failure IS the root comparison). -/
+theorem cellBound_linear (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : Nat)
+    (p : MPoly) (mkNeg : Bool)
+    (hdeg : p.degreeIn y = 1) (hcan : ∀ t ∈ p, Monomial.Canon t.2)
+    (hAq : 0 < (if mkNeg then (-1 : ℝ) else 1) * evalP ρ ((coeffsOf p y)[1]!))
+    (hfails : ¬ SHolds ρ (linearRootEmitted k p mkNeg).1
+      (linearRootEmitted k p mkNeg).2) :
+    rootCmp k (ρ y) (rootVal ρ y i p) := by
+  rw [rootVal_eq_linear ρ y i p hdeg]
+  exact (linearRoot_discharge ρ k y p mkNeg hdeg hcan hAq).mp hfails
+
+/-- cellBound over a Thom encoding: the encoding iff + the region
+formula's truth (from the sign facts) give the ordering. -/
+theorem cellBound_thom (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : Nat)
+    (p : MPoly) (sq sa : Int)
+    (hdeg : p.degreeIn y = 2) (hi : i = 1 ∨ i = 2)
+    (hcan : ∀ t ∈ p, Monomial.Canon t.2)
+    (hsa : sa ≠ 0) (hAm : signMatches sa (evalP ρ ((coeffsOf p y)[2]!)))
+    (hsq : sq = 0 ∨ sq = 1)
+    (hdm : signMatches sq
+      (evalP ρ ((coeffsOf p y)[1]!) ^ 2 -
+        4 * evalP ρ ((coeffsOf p y)[2]!) * evalP ρ ((coeffsOf p y)[0]!)))
+    (hform : thomFormula k i
+      (leadSgn (evalP ρ ((coeffsOf p y)[2]!)) * evalP ρ p)
+      (leadSgn (evalP ρ ((coeffsOf p y)[2]!)) *
+        (2 * evalP ρ ((coeffsOf p y)[2]!) * ρ y + evalP ρ ((coeffsOf p y)[1]!)))) :
+    rootCmp k (ρ y) (rootVal ρ y i p) := by
+  rw [rootVal_eq_quad ρ y i p hdeg]
+  exact (thom_discharge ρ k y i p sq sa hdeg hi hcan hsa hAm hsq hdm).mpr hform
+
 end Check
 
 end LeanNonlinearArith.Nlsat
