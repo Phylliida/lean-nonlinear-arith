@@ -377,6 +377,167 @@ theorem evalP_quadratic_form (ρ : Nat → ℝ) (y : Var) (p : MPoly)
   simp [evalCoeffs]
   ring
 
+
+/-! ## Atom semantics (z3's sign semantics for `ineq_atom`) -/
+
+/-- Product of the ODD factors' values (even factors are sign-absorbed
+— that is all the parity bit means). -/
+def oddProd (ρ : Nat → ℝ) : List (MPoly × Bool) → ℝ
+  | [] => 1
+  | (f, false) :: fs => evalP ρ f * oddProd ρ fs
+  | (_, true) :: fs => oddProd ρ fs
+
+namespace IneqAtom
+
+/-- z3 `ineq_atom` semantics: `eq` ⟺ some factor vanishes (zero
+product, any multiplicity); `lt`/`gt` ⟺ NO factor vanishes and the
+odd-factor product has the sign (even exponents contribute only their
+square's sign). -/
+def Holds (ρ : Nat → ℝ) (a : IneqAtom) : Prop :=
+  match a.kind with
+  | .eq => ∃ f ∈ a.factors, evalP ρ f.1 = 0
+  | .lt => (∀ f ∈ a.factors, evalP ρ f.1 ≠ 0) ∧ oddProd ρ a.factors < 0
+  | .gt => (∀ f ∈ a.factors, evalP ρ f.1 ≠ 0) ∧ 0 < oddProd ρ a.factors
+
+end IneqAtom
+
+/-- A semantic literal: an atom with polarity (`neg = true` negates). -/
+def SHolds (ρ : Nat → ℝ) (a : IneqAtom) (neg : Bool) : Prop :=
+  if neg then ¬ IneqAtom.Holds ρ a else IneqAtom.Holds ρ a
+
+/-- Single-factor collapses (the linearRoot/Thom emissions are all
+single-factor atoms). -/
+theorem holds_single_eq (ρ : Nat → ℝ) (q : MPoly) :
+    IneqAtom.Holds ρ ⟨.eq, [(q, false)]⟩ ↔ evalP ρ q = 0 := by
+  simp [IneqAtom.Holds]
+
+theorem holds_single_lt (ρ : Nat → ℝ) (q : MPoly) :
+    IneqAtom.Holds ρ ⟨.lt, [(q, false)]⟩ ↔ evalP ρ q < 0 := by
+  simp [IneqAtom.Holds, oddProd]
+  exact ne_of_lt
+
+theorem holds_single_gt (ρ : Nat → ℝ) (q : MPoly) :
+    IneqAtom.Holds ρ ⟨.gt, [(q, false)]⟩ ↔ 0 < evalP ρ q := by
+  simp [IneqAtom.Holds, oddProd]
+  exact ne_of_gt
+
+/-! ## The linearRoot discharge (z3 `mk_linear_root` :861-878) -/
+
+/-- The atom + polarity a `linearRoot` step emits (the F4
+reconstruction): `add_simple_assumption k' q lsign` with
+`(k', lsign) = k.toIneqSign`, `q = mkNeg ? -p : p`. -/
+def linearRootEmitted (k : RootKind) (p : MPoly) (mkNeg : Bool) : IneqAtom × Bool :=
+  let (k', lsign) := k.toIneqSign
+  (⟨k', [(if mkNeg then p.neg else p, false)]⟩, !lsign)
+
+/-- Root of `a·Y + c`: the point is the root iff the value vanishes. -/
+theorem lin_root_eq {A C : ℝ} (hA : A ≠ 0) (Y : ℝ) :
+    A * Y + C = 0 ↔ Y = -C / A := by
+  rw [eq_div_iff hA]
+  constructor <;> intro h <;> linarith
+
+/-- Positive lead: the value is negative left of the root. -/
+theorem lin_root_lt {A C : ℝ} (hA : 0 < A) (Y : ℝ) :
+    A * Y + C < 0 ↔ Y < -C / A := by
+  constructor
+  · intro h
+    rw [lt_div_iff₀ hA]
+    linarith
+  · intro h
+    rw [lt_div_iff₀ hA] at h
+    linarith
+
+/-- Positive lead: the value is positive right of the root. -/
+theorem lin_root_gt {A C : ℝ} (hA : 0 < A) (Y : ℝ) :
+    0 < A * Y + C ↔ -C / A < Y := by
+  constructor
+  · intro h
+    rw [div_lt_iff₀ hA]
+    linarith
+  · intro h
+    rw [div_lt_iff₀ hA] at h
+    linarith
+
+theorem lin_root_le {A C : ℝ} (hA : 0 < A) (Y : ℝ) :
+    A * Y + C ≤ 0 ↔ Y ≤ -C / A := by
+  rw [← not_lt, lin_root_gt hA Y, not_lt]
+
+theorem lin_root_ge {A C : ℝ} (hA : 0 < A) (Y : ℝ) :
+    0 ≤ A * Y + C ↔ -C / A ≤ Y := by
+  rw [← not_lt, lin_root_lt hA Y, not_lt]
+
+/-- The comparison a root kind asks for: `y ⋈_k r`. -/
+def rootCmp (k : RootKind) (Y r : ℝ) : Prop :=
+  match k with
+  | .eq => Y = r
+  | .lt => Y < r
+  | .gt => r < Y
+  | .le => Y ≤ r
+  | .ge => r ≤ Y
+
+/-- The discharge: the emitted literal FAILS at `ρ` exactly when `ρ y`
+bears the root comparison to `-C/A` (the root of `p` in `y`). `hAq` is
+the leading-coefficient positivity evidence (const-lc variant: by
+`decide` on the const value + the `mkNeg` fold; `mk_plinear_root`
+variant: from the `lcFact` sign literal failing at `ρ`). -/
+theorem linearRoot_discharge (ρ : Nat → ℝ) (k : RootKind) (y : Var) (p : MPoly)
+    (mkNeg : Bool)
+    (hdeg : p.degreeIn y = 1) (hcan : ∀ t ∈ p, Monomial.Canon t.2)
+    (hAq : 0 < (if mkNeg then (-1 : ℝ) else 1) * evalP ρ ((coeffsOf p y)[1]!)) :
+    ¬ SHolds ρ (linearRootEmitted k p mkNeg).1 (linearRootEmitted k p mkNeg).2 ↔
+      rootCmp k (ρ y)
+        (-evalP ρ ((coeffsOf p y)[0]!) / evalP ρ ((coeffsOf p y)[1]!)) := by
+  have hform := evalP_linear_form ρ y p hdeg hcan
+  set A := evalP ρ ((coeffsOf p y)[1]!)
+  set C := evalP ρ ((coeffsOf p y)[0]!)
+  set s : ℝ := if mkNeg then (-1 : ℝ) else 1
+  have hsA : (0 : ℝ) < s * A := by exact_mod_cast hAq
+  have hsAne : s * A ≠ 0 := ne_of_gt hsA
+  have hq : evalP ρ (if mkNeg then p.neg else p) = (s * A) * ρ y + (s * C) := by
+    cases mkNeg <;> simp [s, evalP_neg, hform] <;> ring
+  have hroot : -(s * C) / (s * A) = -C / A := by
+    have hsne : s ≠ 0 := by
+      intro h; rw [h, zero_mul] at hsA; exact (lt_irrefl 0) hsA
+    have hAne : A ≠ 0 := by
+      intro h; rw [h, mul_zero] at hsA; exact (lt_irrefl 0) hsA
+    cases mkNeg <;> simp [s] <;> field_simp <;> ring
+  cases k with
+  | eq =>
+    have he : linearRootEmitted .eq p mkNeg =
+        (⟨.eq, [(if mkNeg then p.neg else p, false)]⟩, true) := rfl
+    rw [he]
+    show (¬ ¬ IneqAtom.Holds ρ ⟨.eq, [(if mkNeg then p.neg else p, false)]⟩) ↔ _
+    rw [not_not, holds_single_eq, hq, lin_root_eq hsAne (ρ y), hroot]
+    exact Iff.rfl
+  | lt =>
+    have he : linearRootEmitted .lt p mkNeg =
+        (⟨.lt, [(if mkNeg then p.neg else p, false)]⟩, true) := rfl
+    rw [he]
+    show (¬ ¬ IneqAtom.Holds ρ ⟨.lt, [(if mkNeg then p.neg else p, false)]⟩) ↔ _
+    rw [not_not, holds_single_lt, hq, lin_root_lt hsA (ρ y), hroot]
+    exact Iff.rfl
+  | gt =>
+    have he : linearRootEmitted .gt p mkNeg =
+        (⟨.gt, [(if mkNeg then p.neg else p, false)]⟩, true) := rfl
+    rw [he]
+    show (¬ ¬ IneqAtom.Holds ρ ⟨.gt, [(if mkNeg then p.neg else p, false)]⟩) ↔ _
+    rw [not_not, holds_single_gt, hq, lin_root_gt hsA (ρ y), hroot]
+    exact Iff.rfl
+  | le =>
+    have he : linearRootEmitted .le p mkNeg =
+        (⟨.gt, [(if mkNeg then p.neg else p, false)]⟩, false) := rfl
+    rw [he]
+    show (¬ IneqAtom.Holds ρ ⟨.gt, [(if mkNeg then p.neg else p, false)]⟩) ↔ _
+    rw [holds_single_gt, not_lt, hq, lin_root_le hsA (ρ y), hroot]
+    exact Iff.rfl
+  | ge =>
+    have he : linearRootEmitted .ge p mkNeg =
+        (⟨.lt, [(if mkNeg then p.neg else p, false)]⟩, false) := rfl
+    rw [he]
+    show (¬ IneqAtom.Holds ρ ⟨.lt, [(if mkNeg then p.neg else p, false)]⟩) ↔ _
+    rw [holds_single_lt, not_lt, hq, lin_root_ge hsA (ρ y), hroot]
+    exact Iff.rfl
+
 end Check
 
 end LeanNonlinearArith.Nlsat
