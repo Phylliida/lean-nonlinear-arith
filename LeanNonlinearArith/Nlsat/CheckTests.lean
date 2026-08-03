@@ -227,4 +227,34 @@ example (ρ : Nat → ℝ)
     (by rw [hB, hA, hC]; exact Or.inr (Or.inr ⟨rfl, by norm_num⟩))
     hform
 
+
+/-! ## leafNumeric slice pins -/
+
+def pX : MPoly := [(1, [(0, 1)])]
+def pXsq : MPoly := [(1, [(0, 2)])]
+
+/-- The stage-1 leaf of the x²+y²<0 refutation (the actual final
+conflict from the search): the learned clause `x₀ < 0 ∨ x₀² = 0 ∨
+x₀ > 0` is valid over ℝ — the v0 glue-level discharge (trichotomy +
+atom semantics). Higher-degree leaves discharge via `CertGen`
+certificates at check time (Slice F). -/
+example (ρ : Nat → ℝ) :
+    IneqAtom.Holds ρ ⟨.lt, [(pX, false)]⟩ ∨
+    IneqAtom.Holds ρ ⟨.eq, [(pXsq, false)]⟩ ∨
+    IneqAtom.Holds ρ ⟨.gt, [(pX, false)]⟩ := by
+  have e1 : evalP ρ pX = ρ 0 := by simp [pX, evalP, evalM]
+  have e2 : evalP ρ pXsq = (ρ 0)^2 := by simp [pXsq, evalP, evalM]
+  rcases lt_trichotomy (ρ 0) 0 with h | h | h
+  · exact Or.inl ((holds_single_lt ρ pX).mpr (by rw [e1]; exact h))
+  · exact Or.inr (Or.inl ((holds_single_eq ρ pXsq).mpr (by rw [e2, h]; simp)))
+  · exact Or.inr (Or.inr ((holds_single_gt ρ pX).mpr (by rw [e1]; exact h)))
+
+/-- The full learned-clause-as-iff form: `(x₀² = 0) ↔ (x₀ = 0)` makes
+the disjunction exactly trichotomy. -/
+example (ρ : Nat → ℝ) :
+    IneqAtom.Holds ρ ⟨.eq, [(pXsq, false)]⟩ ↔ IneqAtom.Holds ρ ⟨.eq, [(pX, false)]⟩ := by
+  have e1 : evalP ρ pX = ρ 0 := by simp [pX, evalP, evalM]
+  have e2 : evalP ρ pXsq = (ρ 0)^2 := by simp [pXsq, evalP, evalM]
+  rw [holds_single_eq, holds_single_eq, e1, e2, sq_eq_zero_iff]
+
 end LeanNonlinearArith.Nlsat

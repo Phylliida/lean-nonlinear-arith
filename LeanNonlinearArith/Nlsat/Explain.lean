@@ -836,13 +836,22 @@ def process2 (lits : Array Literal) : ExplainM (Option Unit) := do
 def process (lits : Array Literal) : ExplainM (Option Unit) := process2 lits
 
 /-- z3 `operator()` (:1486): the explain entry the solver calls from
-`resolve_lazy_justification`. `none` = the 29.5 abort image. -/
+`resolve_lazy_justification`. `none` = the 29.5 abort image.
+
+12d.6b leafNumeric emission: when the whole learned clause
+(`result ++ ¬core`) is univariate-with-constant-coefficients in var 0
+(the stage-1 leaf — all its polys' max var is `some 0` or `none`), mark
+the trace. Emission is append-only; z3's result is unchanged. -/
 def operator (lits : Array Literal) : ExplainM (Option (Array Literal)) := do
   match (← process lits) with
   | none => return none
   | some () =>
     resetAlreadyAdded
-    return some (← get).result
+    let result := (← get).result
+    let ps ← collectPolys (result ++ lits.map Literal.negate)
+    if ps.all (fun p => p.maxVar == some 0 || p.maxVar.isNone) then
+      liftS (Solver.emitTrace (.leafNumeric 0))
+    return some result
 
 /-- The production explain (12d.6): `explain::operator()` behind the
 `ExplainFn` boundary. `mockExplain` stays as the test mock for

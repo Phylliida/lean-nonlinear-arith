@@ -54,19 +54,15 @@ namespace LeanNonlinearArith.Nlsat
 
 open LeanNonlinearArith.Kernel LeanNonlinearArith.Certificates
 
-/-! ## Stage-1 univariate leaves -/
+/-! ## Stage-1 univariate leaves
 
-/-- The nla-09 certificate claim shapes (`Certificates/Defs.lean`).
-`cs` on the `leafNumeric` step is the ℤ-scaled coefficient list of the
-univariate poly (the `evalZ` reflection domain); `a`, `b` are the
-rational interval endpoints (`PairQ`, positive denominators checked by
-the wrappers). -/
-inductive LeafClaim
-  | noRoot (a b : PairQ) (c : Cert)
-  | uniqueRoot (a b : PairQ) (dc : Cert)
-  | posOn (a b : PairQ) (c : Cert)
-  | negOn (a b : PairQ) (c : Cert)
-deriving Repr
+The nla-09 certificate machinery (`Certificates/Defs.lean` —
+`checkNoRoot`/`checkUniqueRoot`/`checkPosOn`/`checkNegOn` over
+ℤ-scaled coefficient lists with rational interval endpoints) is the
+discharge kit for stage-1 leaves. The step itself is a MARKER (F3:
+the checker recomputes the univariate-leaf property from the arith
+lemma's polys, and generates certificates at check time via the nla-09
+`CertGen` bisection — nothing search-asserted is trusted). -/
 
 /-! ## Cell bounds -/
 
@@ -95,11 +91,14 @@ deriving Repr
 /-! ## The trace step language -/
 
 inductive TraceStep
-  /-- Stage-1 univariate leaf: a numeric certificate claim about the
-  ℚ[x] poly whose ℤ-scaled coefficients are `cs`. Discharge (v0):
-  `checkNoRoot_sound` / `checkUniqueRoot_sound` / `checkPosOn_sound` /
-  `checkNegOn_sound (by decide)` (Certificates/Sound.lean:286/313/376/393). -/
-  | leafNumeric (x : Var) (cs : List Int) (claim : LeafClaim)
+  /-- Stage-1 univariate leaf (marker, F3): the arith lemma this step
+  precedes (the `resolution (.arith …)` marker in the same bundle) is a
+  univariate-in-`x` (constant-coefficient) conflict — its disjunction
+  is valid over ℝ. The checker recomputes the property from the
+  lemma's polys and discharges by the nla-09 sweep (v0: direct
+  trichotomy/`nlinarith` glue; higher-degree: `CertGen` certificates +
+  `check*_sound (by decide)`). -/
+  | leafNumeric (x : Var)
   /-- Degree-1 root-atom encoding (z3 `mk_linear_root` :861 /
   `mk_plinear_root` :756): `y ⋈_k root(p)` with `p` linear in `y`.
   `mkNeg` = the lc-sign fold (negate the poly when the leading
@@ -256,10 +255,11 @@ inductive Grammar : TraceStep → Prop
        | .upper => k = .lt ∨ k = .le) →
       1 ≤ i → 1 ≤ p.degreeIn y →
       Grammar (.cellBound side k y i p)
-  /-- Stage-1 leaves: univariate data — the coefficient list is the
-  poly's (no shape constraint on degree; nla-09 is degree-generic). -/
-  | leafNumeric {x : Var} {cs : List Int} {claim : LeafClaim} :
-      Grammar (.leafNumeric x cs claim)
+  /-- Stage-1 leaves: the marker carries no shape constraint (the
+  univariate-leaf property is checker-recomputed from the arith
+  lemma's polys — F3; nla-09 is degree-generic). -/
+  | leafNumeric {x : Var} :
+      Grammar (.leafNumeric x)
   /-- 19b shapes: emission-side grammar only (consumption pins in 19b). -/
   | pseudoDivision {f eq : MPoly} {x : Var} {d : Nat} {r : MPoly}
       {lcSign : Int} {isEven : Bool} :
