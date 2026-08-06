@@ -202,12 +202,14 @@ def ofQPoly (q : QPoly) (x : Var) : MPoly := Id.run do
 
 /-- Rename variables by a permutation `σ` (z3 `pm::rename`, used by the
 solver's variable reorder). Each monomial's powers are re-sorted into
-ascending-var storage and the terms re-sorted by `lexCompare`; no
-coefficient merging is needed because `σ` is injective. -/
+ascending-var storage and the terms re-sorted into the canonical
+DESCENDING `lexCompare` storage (z3's `m_lex_sorted` invariant —
+`SASSERT(lex_compare(m_ms[i], m_ms[i+1]) > 0)`); no coefficient merging
+is needed because `σ` is injective. -/
 def renameVars (p : MPoly) (σ : Var → Var) : MPoly :=
   let p := p.map fun (a, m) =>
     (a, (m.map (fun (x, e) => (σ x, e))).mergeSort (fun (x, _) (y, _) => x < y))
-  p.mergeSort (fun (_, m1) (_, m2) => Monomial.lexCompare m1 m2 == .lt)
+  p.mergeSort (fun (_, m1) (_, m2) => Monomial.lexCompare m1 m2 == .gt)
 
 /-- z3 `flip_sign_if_lm_neg`: negate when the graded-lex-maximal
 monomial's coefficient is negative (roots unchanged; z3 normalizes

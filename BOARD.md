@@ -1757,21 +1757,27 @@ mentioning context fvars must run inside the CURRENT mvar's
 Build green 7608 jobs.
 
 **KERNEL-REDUCTION TRAP (new class, load-bearing for the next
-slices):** `Monomial.cmp`/`Monomial.mul` (and everything built on
-them: `MPoly.add`/`mul`/`smulTerm`) are WF-compiled — they do NOT
-reduce under kernel whnf/rfl/decide. Every existing pin passed because
+slices):** `Monomial.mul`/`MPoly.add` (and everything built on them:
+`MPoly.mul`/`smulTerm`/`sub`) are WF-compiled — they do NOT reduce
+under kernel whnf/rfl/decide. Every existing pin passed because
 `#guard` evaluates via COMPILATION; kernel defeq was never exercised.
 Consequences: (a) atom tables/polys in checker-facing goals must be
 LITERAL-LIST form (what nla-14 will quote from the native snapshot
-anyway) — never `MPoly`-op consts; (b) `MPoly.Canon` (Pairwise over
-`Monomial.cmp`) is kernel-undecidable — Coverage consumption needs a
-REDUCIBLE structural mirror `cmpB` + once-proved bridge
-`cmpB m n = cmp m n` (nla-09 Bool-checker style; WF defs still have
-induction principles, so the bridge is provable generically);
-(c) `coeffsIn` reduces only when every degree class is a singleton
-(multi-term degree classes hit `MPoly.add` on two non-singletons);
-(d) the RUP walk's `upRefutes … by decide` is SAFE (Nat/Bool only).
-Next slice starts with (b).
+anyway) — never `MPoly`-op consts; (b) **`Monomial.cmp`/`lexCompare`
+DO kernel-reduce** (corrected after probing — the WF set is only the
+mul family), so `MPoly.Canon` is assemblable in meta: Pairwise via
+List lemmas with rfl-grade cmp facts + per-term decides (Canon has NO
+Decidable instance — never did); no cmpB bridge needed; (c) `coeffsIn`
+reduces only when every degree class is a singleton (multi-term degree
+classes hit `MPoly.add` on two non-singletons — e.g. coeff of y² in
+x1·y²+x2·y²); (d) decoder reconstructions of WF-built polys (disc =
+B²−4AC via `B.mul B`, pDiff, reduct q) must NOT go through kernel
+decide — match natively and bridge at the evalP level with the hom
+suite (evalP_mul/sub/ofInt + evalP_discPolyOf), which needs no op
+reduction; (e) the RUP walk's `upRefutes … by decide` is SAFE
+(Nat/Bool only). Grammar-witness conditions (degreeIn equalities,
+sign ranges, coeffsIn-singleton facts) are all rfl/decide-grade on
+literal polys.
 
 ## nla-19a design review 4 `done` (2026-08-06, pre-F2; R-i–R-viii Danielle-approved same day)
 

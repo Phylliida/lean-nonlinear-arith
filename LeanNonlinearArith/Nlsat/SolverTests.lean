@@ -798,6 +798,12 @@ private def x1cube : MPoly := MPoly.mul (MPoly.mul x1 x1) x1
   let s ← get
   return s.watches[0]! == #[2, 1]) -- deg-1 clause (cid 2) before deg-2 (cid 1)
 
+-- renameVars re-sort direction (F2 groundwork catch, 2026-08-06):
+-- renamed terms keep the canonical DESCENDING lexCompare storage
+-- (z3's m_lex_sorted invariant), matching MPoly.add/Canon
+#guard (MPoly.renameVars [(1, [(0, 2)]), (1, [(1, 1)])] (fun v => 1 - v))
+  == [(1, [(1, 2)]), (1, [(0, 1)])]
+
 -- is_full_dimensional flag
 #guard Solver.run' (do
   Solver.init
