@@ -1654,6 +1654,91 @@ any point = sound rejection.
   Semantics/Discharge; unify discharge hypotheses on full
   `MPoly.Canon`.
 
+## nla-19a design review 3 (2026-08-06, mid-F/G arc — parity + regret lenses)
+
+Method: adversarial re-read of the day's three landing sites
+(Trace.lean grammar finalization, Coverage.lean, Assemble.lean +
+the F0 isV0 change) against `git show z3-4.12.5:src/nlsat/
+{nlsat_explain,nlsat_solver}.cpp` and the live x0²+x1²<0 dump, with
+two explicit lenses: (a) z3 parity, (b) decisions we'd regret.
+
+**VERIFIED CLEAN:**
+- **V1 (flush fidelity):** `flushTrace` records
+  `clauses[newCid]!.lits` — the SORTED array itself
+  (Solver.lean:1055/:1073) — so `bundle.lemma` is byte-identical to
+  the learned clause's lits; the walk asserts exact equality by
+  `decide`. Sorting is semantically irrelevant anyway: the RUP
+  engine is order-insensitive.
+- **V2 (unique UNSAT witness):** the empty-lemma exit
+  (`finalRefutation`) is the ONLY way UNSAT is witnessed: both
+  mkClause sites are guarded by the non-empty check (:1041 precedes
+  :1054/:1073), so no empty clause can ever sit in the table for the
+  `lemmaIsClause` shortcut (:1066) to match an empty lemma. The
+  shortcut path can therefore never steal the refutation (which would
+  have been a silent completeness hole — `refutation = none` →
+  sound rejection, but a lost proof).
+- **V3 (orphan steps):** rounds ending via the lemmaIsClause shortcut
+  never flush — their pendingTrace steps self-discard at the next
+  round reset (:991), z3's own m_lemma boundary. No cross-round
+  leakage into later bundles.
+- **V4 (degenerate-path literals all present):** `ensure_sign(q)`
+  (:805) and `ensure_sign(A)` (:809) fire BEFORE the `sa == 0`
+  reroute (:810), so the disc and A sign literals are always in proj
+  when the plinear degenerate runs — `cellBound_plinear`'s `hA0` is
+  always sourceable from the clause. Const-zero B then fails plinear
+  → generic root atom on the original quadratic; rootCount (A=0,B=0)
+  = 0 → atom false by the no-roots rule (R2 machinery covers it).
+- **V5 (const-lcFact fix is exact):** the port's `sign c` on a const
+  `c` is assignment-independent (evalSignAt evaluates consts) and
+  equals `Int.sign` — matches the relaxed grammar condition; const-
+  zero lc gives `s = 0` → generic fallback, mirrored by the grammar's
+  `s ≠ 0`. The mkNeg pins read off :746/:767 (port :381/:393); the
+  `sp` placeholder pin reads off port :415. None of the E1
+  tightenings can reject a real emission.
+- **V6 (UP engine junk audit):** every junk path fails toward
+  rejection (out-of-range bvar = unassignable, fuel exhaustion =
+  false, dropped units = smaller closure). Fuel `sz + 1` is exactly
+  sufficient: each sweep conflicts, fixpoints, or assigns one NEW
+  bvar (unit literals are unassigned by definition), and sz covers
+  every bvar in F ∪ target by construction, so the out-of-range
+  no-op loop is dead code.
+
+**PARITY NOTES (not divergences):**
+- **P-a:** RUP replaces trail-scan replay (R1) and is order-free, so
+  the mkClause literal sort, marker order, and duplicate-antecedent
+  rounds are all non-issues for the checker.
+- **P-b (escape hatch, accepted):** resolution markers carry no
+  pivots — UP doesn't need them. If UP ever stalls on a real trace
+  (F4 / nla-16 would show it), the fix is to add the pivot bvar to
+  the resolution marker payload (the data exists at emit time).
+- **P-c:** UP-completeness for the port's resolve chains rests on the
+  chain invariant (every antecedent literal lands in the final lemma
+  or pivots exactly once). Re-derived the reverse-induction RUP
+  argument; it holds for the mark discipline INCLUDING
+  `removeLitsFromLvl` (pull-backs re-enter as later pivots).
+  Soundness never depends on this — stalls reject.
+
+**REGRET LENSES (decisions):**
+- **R1' (recommend yes, at F5):** the Nat.cast-0 defaulting means
+  Check.lean's discharge hypotheses carry `↑0` forms; every consumer
+  must bridge with goal-directed `exact_mod_cast` (today's trap).
+  Normalize statements to `(0 : ℝ)` annotations at the F5 split —
+  Check.lean is being touched anyway; mechanical and contained.
+- **R2' (recommend leave + monitor):** `clauseStatus` does not
+  propagate through duplicate unassigned literals (`[l, l]` →
+  `.other`). z3's processAntecedent has no dedup in the mark path,
+  so duplicates in learned clauses are possible in principle. Stalls
+  are sound rejections; nla-16 catches real occurrences. Cheap
+  hardening available if ever needed: dedup literals at decode
+  (semantically identity).
+- **R3' (watch item, no action):** Coverage.lean's theorem shapes are
+  unconsumed until F2 — standing rule 3 (shapes validate at
+  consumption); adjust Coverage.lean, not the call sites, if F2
+  finds a mismatch.
+- **R4' (F4 note):** the E1 mkNeg/sp tightenings give new corruption
+  surface — F4's negative probes should include a corrupted-mkNeg
+  and a corrupted-sp step to confirm parse-level rejection.
+
 ## nla-12c design review `done` (2026-07-31, Danielle-requested, post-close)
 
 Method: the standing one — adversarial re-read of
