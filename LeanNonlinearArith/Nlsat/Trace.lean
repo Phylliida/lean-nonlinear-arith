@@ -144,14 +144,19 @@ inductive TraceStep
   /-- Factor split (z3 `add_zero_assumption` :262 / `add_factors` :578
   with `factor=true`): `p` factors as the distinct `fs`;
   `vanished` = the factors with sign 0 at the sample (the emitted
-  multi-factor ¬EQ literal's factors). 19b discharge: per-instance
-  ring identity + zero-product cases. -/
+  multi-factor ¬EQ literal's factors). v0 IGNORES the step (R6: the
+  factored poly never appears in any clause literal — only its factors
+  do — so ignoring is sound AND loses zero z3-coverage). The
+  per-instance ring identity + zero-product cases remain available for
+  19b-grade completeness insurance. -/
   | factorSplit (p : MPoly) (fs vanished : Array MPoly)
   /-- Integer branch-and-bound split `x ≤ ⌊v⌋ ∨ x ≥ ⌈v⌉` (12e seam —
   `search_check`; not yet emitted). Discharge: omega-trivial. -/
   | intBranch (x : Var) (v : Rat)
   /-- Boolean resolution glue: one antecedent of the round, in
-  processing order. 19b discharge: propositional composition. -/
+  processing order. v0 discharge (R1 — came forward from 19b):
+  propositional composition (tauto-grade DAG walk from
+  `finalRefutation` to the empty clause), NOT a z3 trail-scan. -/
   | resolution (ant : ResolutionAntecedent)
 deriving Repr
 
@@ -199,13 +204,19 @@ namespace TraceBundle
 /-- A bundle is S1-gated (advisory mark) iff some step is. -/
 def isS1Gated (b : TraceBundle) : Bool := b.steps.any TraceStep.isS1Gated
 
-/-- A bundle is v0-checkable iff every step is in-fragment AND in one of
-the four v0 shapes (the pseudoDivision/factorSplit/resolution/intBranch
-shapes discharge in 19b — the registered v0 scope tension). -/
+/-- A bundle is v0-checkable iff every step is in-fragment AND no step
+is `pseudoDivision` or `intBranch` (19b/12e shapes — a pseudoDivision
+rewrite can be load-bearing, R7, so its presence means sound
+rejection). `resolution` markers are v0 (R1 — the propositional replay
+came forward) and `factorSplit` steps are always safe to ignore (R6 —
+the factored poly never appears in any clause literal, so ignoring
+loses zero z3-coverage). Every real bundle carries both (the live
+x²+y²<0 dump), so the four-shapes-only reading of v0 rejected
+everything — reconciled 2026-08-06 (F0). -/
 def isV0 (b : TraceBundle) : Bool :=
   !b.isS1Gated && b.steps.all fun
-    | .leafNumeric .. | .thomQuadratic .. | .linearRoot .. | .cellBound .. => true
-    | _ => false
+    | .pseudoDivision .. | .intBranch .. => false
+    | _ => true
 
 end TraceBundle
 
