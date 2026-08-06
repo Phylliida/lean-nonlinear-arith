@@ -32,6 +32,8 @@ import LeanNonlinearArith.Nlsat.Types
 import LeanNonlinearArith.Nlsat.Trace
 import LeanNonlinearArith.Nlsat.Check
 import LeanNonlinearArith.Nlsat.Coverage
+import LeanNonlinearArith.Nlsat.Assemble
+import LeanNonlinearArith.Nlsat.AssembleTests
 import LeanNonlinearArith.Nlsat.CheckTests
 import LeanNonlinearArith.Nlsat.TypesOrder
 import LeanNonlinearArith.Nlsat.IntervalSet
