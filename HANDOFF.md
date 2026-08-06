@@ -1,13 +1,14 @@
-# HANDOFF — 2026-08-06 (12d.6b⇄19a: Q1 coverage + F0/F1/F3-engine DONE; F2 elaborator next)
+# HANDOFF — 2026-08-06 (12d.6b⇄19a: E + F0/F1/F3-engine + design review 3 DONE; F2 elaborator next, recipe below)
 
 Read first: `DESIGN-endgame.md` (master plan — §0 finish line, §2
 critical path, §6 decisions + divergence register, §8 standing
-directives), then `BOARD.md` (execution units; **nla-19a entry has the
-F1–F5 design-review decisions, the R1–R9 design-review-2 decisions,
-and the session-1 progress log**), then `WRITEUP.md` (explain-port
-narrative). Memory file `verus-cad/memory/project_tactus_nonlinear_port.md`
-has the session history. Build: Nix `lake` on PATH (not elan);
-`lake build` green (7603 jobs) at commit `4d3b69f`.
+directives), then `BOARD.md` (execution units; **the nla-19a entry has
+the F1–F5 and R1–R9 design-review decisions, design review 3
+(V1–V6/R1'–R4'), the Slice E/F sub-slice plan, and the F2-groundwork
+dump analysis**), then `WRITEUP.md` (explain-port narrative). Memory
+file `verus-cad/memory/project_tactus_nonlinear_port.md` has the
+session history. Build: Nix `lake` on PATH (not elan); `lake build`
+green (7606 jobs) at commit `772e3d1`.
 
 **Source-of-truth rule (unchanged): all ports cite
 `git show z3-4.12.5:<path>`, never the working tree.**
@@ -99,47 +100,75 @@ empty clause. (Reproduce: the /tmp/dump_trace.lean recipe from the
 memory file — search `search (resolve Explain.explain)` on the unit
 clause, print `finalRefutation`/`traceBundles`.)
 
-## Next: Slice F/G (assembly + acceptance)
+## Next: the F2 elaborator (per-bundle arith-lemma validity) — full recipe
 
-**Slice F/G progress (2026-08-06 pm):** F0 (`isV0` reconciled with
-R1/R6), F1 (decode layer) and the F3 ENGINE are DONE in
-`Nlsat/Assemble.lean`: `litHolds`/`clauseHolds` over the atom-table
-snapshot (junk = not-holding = sound direction), the
-`litSatI`/`clauseSatI` interpretation form + `interp` bridge
-(decodability hypotheses — the forms disagree on negated junk by
-design), `arithClause` (proj ++ ¬core), and the verified
-unit-propagation/RUP engine: `upRefutes_sound` is the whole trusted
-content of the R1 replay. Pins in `AssembleTests.lean`. The live
-x0²+x1²<0 dump is reproduced through the F2 seam and the F2
-elaborator pattern is concrete (BOARD 19a entry: per-arith-marker
-fact collection through the Coverage theorems + nlinarith glue; the
-walk is a per-cid fold with RUP per node, final bundle closes on the
-empty target). **Remaining: the F2 elaborator (per-bundle arith-lemma
-validity), the DAG walk, F4 acceptance (√2-grade goal shape:
-`x0 ≥ 0 ∧ x0² ≥ 2 ∧ x0 ≤ 1`), F5 (R8 split).** The dump recipe and
-the load-bearing-cellBound caveat (this example's arith lemmas are
-all trivially valid) are in the BOARD entry.
+F0/F1/F3-engine landed (Assemble.lean); design review 3 done
+(V1–V6 clean, R1'/R2' approved, P-b escape hatch recorded — all in
+BOARD's 19a entry). **F2 is the arc's biggest remaining piece — a
+term-producing elaborator (nla-09 house style), estimated ~1 session
+with iteration risk in the nlinarith glue.** Suggested home: a new
+`Nlsat/Refute.lean` (meta/elaborator code is untrusted; every produced
+term is kernel-checked against the trusted lemmas).
 
-**Slice F/G — `Nlsat/Check.lean` assembly.** The pieces exist; the work
-is composition:
-1. **F2-seam decode**: solver-level refutation snapshot → semantic
-   clauses/bundles (atom table inlined; `ALitHolds` is the literal
-   semantics). Untrusted extraction; everything re-verified.
-2. **Per-bundle arith-lemma validity**: from the bundle's steps
-   (encoding discharges + cellBound orderings + sign-assumption
-   literals + leafNumeric) prove the arith lemma
-   `proj ++ ¬core` valid — assume all disjuncts fail, derive False by
-   linarith/nlinarith over the per-step facts (confirmed tractable by
-   the live dump: mid bundles are definite-disc/Thom-grade, the final
-   is trichotomy-grade). factorSplit steps: ignored (R6);
-   pseudoDivision steps: ignored, derivation may fail (R7).
-3. **Propositional DAG walk (R1)**: each bundle's learned lemma from
-   its antecedent cids + arith lemma (tauto-grade); walk from
-   `finalRefutation` to the empty clause ⇒ `Γ ⊢ False` with Γ the
-   input literals over a `Nat → ℝ` valuation.
-4. **Acceptance**: end-to-end on hand goals with algebraic cells
-   (√2-grade, factorSplit-bearing traces included per R6), negative
-   probes (corrupted trace rejected), 12c/12d pins re-green.
+**The snapshot (input to the elaborator).** Run
+`Solver.run' (do Solver.init; mkVar …; mkIneqLiteral …; mkClause …;
+Solver.check (Solver.resolve Explain.explain))`; on `some .false`,
+`s.refutation = some (atoms, clauses, bundles, fin)`. Meta-side
+evaluation of the pure solver run (unsafe/native eval) is fine —
+untrusted. Dump recipe for x0²+x1²<0 is in the BOARD entry ("F2
+groundwork"); `lean --run` a scratch file, print `s.refutation`.
+
+**Per-bundle validity (the F2 core).** For each `.arith core proj`
+marker in a bundle, produce
+`clauseSatI (interp ρ atoms) (arithClause core proj)` — note
+`arithClause` = `proj ++ ¬core` (List forms). Pattern per marker:
+1. Assume every literal of the arith clause fails; unfold
+   `litSatI`/`interp`/`Atom.Holds`/`IneqAtom.Holds` to evalP-level ℝ
+   facts (the `holds_single_*` collapses for single-factor atoms).
+2. Collect per-step facts from the bundle's projection steps via
+   Coverage.lean: `coverage_linearRoot` / `coverage_thomQuadratic`
+   (give `rootCmp` iffs at `rootVal`), cellBound facts via
+   `cellBound_linear` / `cellBound_thom` / `cellBound_plinear` /
+   `cellBound_generic`. Grammar witnesses are elaborator-built from
+   payload data (all conditions are decidable-by-construction);
+   `MPoly.Canon` of payload polys by `decide`; sign facts
+   (`signMatches`) come from the corresponding proj literals failing.
+   factorSplit steps: skip (R6). pseudoDivision present ⇒ reject
+   (R7). leafNumeric: recompute the univariate-const-in-var-0
+   property from the arith clause's polys (F3), then it's
+   trichotomy/nlinarith glue (R4).
+3. Close `False` by nlinarith/linarith over the collected facts.
+   `quadRootVal`/`rootVal` values are opaque ℝ constants to the
+   solver; order facts come from `quad_roots_order`/`quadRoot_le`
+   when needed. Failure anywhere = sound rejection.
+CAVEAT (from the dump): x0²+x1²<0's arith lemmas are all trivially
+valid — the discharge chain is only really exercised by the √2-grade
+acceptance goal (shape `x0 ≥ 0 ∧ x0² ≥ 2 ∧ x0 ≤ 1`).
+
+**The walk (F3 — engine done, this is the assembly).** Per learned
+cid, in increasing order: F-set = antecedent clauses (cids from
+`.clause` markers — always smaller cids; input clauses from the Γ
+hypotheses, learned ones from earlier fold steps) ∪ the bundle's
+arith clauses (from step 2); target = `bundle.lemma.toList`
+(byte-identical to `clauses[cid].lits` — V1; assert by `decide`);
+skip `.decision` markers (their literal is already in the target).
+Apply `upRefutes_sound` with the RUP check discharged `by decide`
+(native_decide is NOT allowed in the trusted layer; pins may use
+it). Final bundle: same with target `[]` ⇒ `False`. The theorem
+produced: `∀ ρ, (∀ input clause C, clauseHolds ρ atoms C) → False`,
+bridged via `clauseSatI_interp` (needs per-literal decodability
+`∃ a, atoms[l.bvar]? = some (some a)` — decidable checks, reject on
+failure).
+
+**F4 acceptance:** √2-grade hand goal above; a factorSplit-bearing
+trace (x²+2x+1 — may pull the 19b identity forward, accepted risk);
+negative probes: corrupted trace rejected — per R4' include a
+corrupted-mkNeg and a corrupted-sp step (the E1 pins make those
+parse-level rejections); all 12c/12d pins re-green.
+
+**F5 (R8 + R1'):** split Check.lean into Semantics/Discharge; unify
+discharge hypotheses on full `MPoly.Canon`; normalize `↑0`-form
+hypotheses to `(0 : ℝ)` annotations (R1').
 
 **After this arc:** 19b (identities → M3; `ordering_139` standing
 target if its trace stays in fragment), 12e (integer branching), 14
