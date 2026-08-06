@@ -1652,7 +1652,8 @@ any point = sound rejection.
   pins re-green.
 - **F5** R8 housekeeping at the boundary: split Check.lean into
   Semantics/Discharge; unify discharge hypotheses on full
-  `MPoly.Canon`.
+  `MPoly.Canon`; normalize `↑0`-form hypotheses to `(0 : ℝ)`
+  annotations (R1', approved).
 
 ## nla-19a design review 3 `done` (2026-08-06, mid-F/G arc — parity + regret lenses; R1'/R2' Danielle-approved same day)
 
