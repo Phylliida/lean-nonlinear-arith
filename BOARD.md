@@ -1475,6 +1475,54 @@ contradiction is linarith/nlinarith glue over the per-step facts
 (confirmed by the dump: mid-search bundles are definite-disc/Thom
 arguments, the final bundle is trichotomy-grade).
 
+## nla-19a Slice E/F sub-slice plan (2026-08-06, planning session)
+
+Sub-slice breakdown of the NEXT block above.
+
+**Slice E — Q1 coverage lemma:**
+- **E1** finalize `Trace.Grammar` (currently DRAFT, Trace.lean:220):
+  line-by-line audit of each constructor vs
+  `git show z3-4.12.5:src/nlsat/nlsat_explain.cpp` at the cited lines,
+  RULES.md provenance style. Open point: the Q1 enumeration's A1–A5
+  INEQ-LITERAL shapes (:280/:289/:471/:1194/:1259/:1261) are clause-
+  literal shapes, not step shapes — decide where that contract lives
+  (candidate: the F2 clause-decode contract, not `TraceStep.Grammar`)
+  and record the decision here.
+- **E2** prove coverage as ONE consumable theorem, not a paper claim:
+  `Grammar s → s.inFragment → (step obligation)` per constructor,
+  shaped so the F assembly calls it directly (linearRoot →
+  `linearRoot_discharge`; thomQuadratic → `thom_discharge`; cellBound →
+  wrappers; rootGeneric deg ≤ 2 → `rootGeneric_discharge` + no-roots
+  rule; leafNumeric → glue/CertGen). If any constructor's obligation
+  outruns the S3 family, extend the family first (standing rule).
+- **E3** drop the DRAFT marker; update BOARD/HANDOFF.
+
+**Slice F/G — assembly + acceptance:**
+- **F0** reconcile `TraceBundle.isV0` (Trace.lean:203) with R1/R6: it
+  currently rejects bundles carrying `resolution`/`factorSplit` steps,
+  but the live dump shows every real bundle has both, R1 pulled
+  resolution replay into v0, and R6 makes factorSplit always ignorable.
+  v0-checkable := in-fragment ∧ no `pseudoDivision`/`intBranch`. The
+  "scope tension" docstring note is stale post-R1/R6.
+- **F1** F2-seam decode: solver snapshot → semantic clauses/bundles
+  (atom table inlined; `ALitHolds` is the literal semantics).
+- **F2** per-bundle arith-lemma validity: `proj ++ ¬core` valid by
+  linarith/nlinarith over the per-step facts; factorSplit ignored (R6);
+  pseudoDivision ignored with sound failure (R7). THE risk item: if
+  glue proves insufficient, fall back to per-shape composition lemmas
+  (more code, same trust).
+- **F3** propositional DAG walk (R1): antecedent cids + arith lemma →
+  learned lemma per bundle (tauto-grade); walk from `finalRefutation`
+  to the empty clause ⇒ `Γ ⊢ False` over a `Nat → ℝ` valuation.
+- **F4** acceptance: √2-grade hand goals (x²−2 square-free, in-fragment
+  per F5's mitigation), one factorSplit-bearing trace (x²+2x+1 — the
+  knob that may pull the factorSplit discharge forward from 19b,
+  accepted risk), negative probes (corrupted trace rejected), 12c/12d
+  pins re-green.
+- **F5** R8 housekeeping at the boundary: split Check.lean into
+  Semantics/Discharge; unify discharge hypotheses on full
+  `MPoly.Canon`.
+
 ## nla-12c design review `done` (2026-07-31, Danielle-requested, post-close)
 
 Method: the standing one — adversarial re-read of
