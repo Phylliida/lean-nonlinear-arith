@@ -1497,6 +1497,51 @@ Sub-slice breakdown of the NEXT block above.
   outruns the S3 family, extend the family first (standing rule).
 - **E3** drop the DRAFT marker; update BOARD/HANDOFF.
 
+**E1 audit DONE (2026-08-06).** Method: full re-read of the
+4.12.5 explain source (:211-:1368 — sign/ensure_sign, add_zero_
+assumption, elim_vanishing, normalize, add_root_literal chain,
+add_cell_lits, simplify cluster) against every `TraceStep.Grammar`
+constructor. Findings, all FIXED in Trace.lean same day:
+1. **const-lcFact gap (the real one):** `mk_plinear_root` is reachable
+   ONLY via the quadratic degenerate (:811-812; `add_root_literal`'s
+   chain :730-731 never tries it), and its lc is the parent
+   quadratic's `B` — which CAN be a nonzero constant (then
+   `ensure_sign` adds no literal, :845 `is_const` skip, and
+   `s = Int.sign B`). The grammar's `c.asConst?.isNone` condition
+   rejected those legitimate emissions = contract completeness bug.
+   Fixed: lcFact condition is now `c = lc ∧ s ≠ 0 ∧ (c const →
+   s = Int.sign c)`. The discharge needed NO change —
+   `linearRoot_discharge`'s `hAq` is parametric in the lc-sign
+   evidence (const → decide; non-const → the sign literal failing).
+2. **thomQuadratic `sp` placeholder:** source computes `sp` only when
+   `sq > 0` (:815-817); emission writes `sp = 0` when `sq = 0`.
+   Grammar tightened with `sq = 0 → sp = 0` (exact emission range;
+   better corruption detection, F4).
+3. **linearRoot none-variant tightened** to nonzero const
+   (`∃ v, asConst? = some v ∧ v ≠ 0` — :745 SASSERT, port's
+   defensive `c == 0` reject).
+4. Line-ref drift fixed (:784 → :763-765).
+Verified clean (conditions match source exactly): rootGeneric
+(`1 ≤ i`, negated literal :733), cellBound (kind/side agreement, both
+bounds may emit, ROOT_EQ early-return, :917 max_var filter ⇒
+`1 ≤ degreeIn y p`), leafNumeric (marker), the 19b shapes.
+**A-tier decision (the E1 open point):** the A1–A5 literal shapes are
+CLAUSE-literal provenance, not step well-formedness — they do NOT
+belong in `TraceStep.Grammar`. They pin as a per-literal inductive
+consumed by the F2-seam decoder (F1 sub-slice; rule 3 — pin when
+consumed). Enumeration for that contract (all sites audited): core
+literals; A1 zero assumption (:280, also via elim_vanishing :345) —
+multi-factor ¬EQ, all is_even=false; A2 sign assumption (:289 via
+:427-433/:847/:878) — single-factor, is_even=false, k ∈ {EQ,LT,GT},
+incl. the even-factor diseq variant (:429); A3 rebuilt literal
+(:471/:1194, kind-flip + neg fold — may collapse to true/false
+literal, :435-438/:465/:1248-1251, and false_literal RESETS the core);
+A4 lc ineq (:1259); A5 lc diseq (:1261); lower-stage eq assumption
+(:1368); root literal (:733); simplify-direct add (:1204). Each is
+reconstructible from step payloads + the atom table (factorSplit → A1;
+linearRoot/thom signs → A2; pseudoDivision → A3/A4/A5; rootGeneric →
+root literal), matching the F4 payload principle.
+
 **Slice F/G — assembly + acceptance:**
 - **F0** reconcile `TraceBundle.isV0` (Trace.lean:203) with R1/R6: it
   currently rejects bundles carrying `resolution`/`factorSplit` steps,

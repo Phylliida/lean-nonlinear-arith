@@ -103,9 +103,11 @@ inductive TraceStep
   `mk_plinear_root` :756): `y ⋈_k root(p)` with `p` linear in `y`.
   `mkNeg` = the lc-sign fold (negate the poly when the leading
   coefficient is negative). `lcFact` = the `mk_plinear_root` variant:
-  the non-const lc and its `ensure_sign`'d sign (the lc-sign assumption
-  is part of the encoding's hypotheses); `none` = the const-lc variant
-  (sign decidable). Discharge (v0): plain inequality lemmas incl. the
+  the lc and its `ensure_sign`'d sign (when the lc is non-const the
+  lc-sign assumption is part of the encoding's hypotheses; a CONST lc
+  is reachable via the quadratic degenerate :811-812 and needs none —
+  its sign is decidable). `none` = the const-lc variant (sign
+  decidable). Discharge (v0): plain inequality lemmas incl. the
   LE/GE kind remap + negation fold (:869-878). -/
   | linearRoot (k : RootKind) (y : Var) (p : MPoly) (mkNeg : Bool)
       (lcFact : Option (MPoly × Int))
@@ -219,19 +221,29 @@ rejection (the sound failure mode). -/
 
 inductive Grammar : TraceStep → Prop
   /-- B-tier linear (:742/:756/:861): the guard is `degreeIn y p = 1`;
-  the const-lc variant has `(coeffsIn y)[1]` constant nonzero;
-  `lcFact = some (c, s)` requires `c` that lc, non-const, `s ≠ 0`
-  (:784 — vanishing lc ⇒ generic fallback). -/
+  the const-lc variant has `(coeffsIn y)[1]` constant NONZERO (:745
+  SASSERT; the port rejects `c == 0` defensively). `lcFact = some (c, s)`
+  requires `c` that lc and `s ≠ 0` (:763-765 — vanishing lc ⇒ generic
+  fallback). The plinear path is reachable ONLY via the quadratic
+  degenerate (:811-812 — `add_root_literal`'s chain :730-731 does not
+  try it), where the lc is the parent quadratic's `B` and CAN be a
+  nonzero constant; then `s = Int.sign c` and `ensure_sign` adds no
+  literal (:845 `is_const` skip). E1 audit 2026-08-06: the original
+  `c.asConst?.isNone` condition rejected those legitimate emissions. -/
   | linearRoot {k : RootKind} {y : Var} {p : MPoly} {mkNeg : Bool}
       {lcFact : Option (MPoly × Int)} :
       p.degreeIn y = 1 →
       (match lcFact with
-       | none => ((p.coeffsIn y)[1]!.asConst?).isSome
-       | some (c, s) => c = (p.coeffsIn y)[1]! ∧ c.asConst?.isNone ∧ s ≠ 0) →
+       | none => ∃ v, ((p.coeffsIn y)[1]!).asConst? = some v ∧ v ≠ 0
+       | some (c, s) => c = (p.coeffsIn y)[1]! ∧ s ≠ 0 ∧
+           ∀ v, c.asConst? = some v → s = Int.sign v) →
       Grammar (.linearRoot k y p mkNeg lcFact)
   /-- B-tier Thom (:787-820): `degreeIn y p = 2`, 1-based `i ∈ {1, 2}`,
   disc sign `sq ≥ 0` (:806 rejects negative), `sa ≠ 0` (the degenerate
-  reroutes to `linearRoot` :811-812), signs in {−1, 0, 1}. -/
+  reroutes to `linearRoot` :811-812), signs in {−1, 0, 1}. `sp` is only
+  computed when `sq > 0` (:815-817); emission writes the placeholder
+  `sp = 0` when `sq = 0`, and the contract requires exactly that (E1
+  audit 2026-08-06 — tightens corruption detection, F4). -/
   | thomQuadratic {k : RootKind} {y : Var} {i : Nat} {p : MPoly}
       {sq sa spd sp : Int} :
       p.degreeIn y = 2 → (i = 1 ∨ i = 2) →
@@ -239,6 +251,7 @@ inductive Grammar : TraceStep → Prop
       (sa = -1 ∨ sa = 1) →
       (spd = -1 ∨ spd = 0 ∨ spd = 1) →
       (sp = -1 ∨ sp = 0 ∨ sp = 1) →
+      (sq = 0 → sp = 0) →
       Grammar (.thomQuadratic k y i p sq sa spd sp)
   /-- B-tier generic (:731-733): no shape constraint beyond data —
   fragment membership is the `inFragment` gate, not the grammar. -/
