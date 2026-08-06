@@ -1572,6 +1572,33 @@ Check.lean's cast-zero hypotheses with goal-directed
 `exact_mod_cast`; use `Int.cast_lt_zero.mpr`/`Int.cast_pos.mpr`,
 never `exact_mod_cast` in argument position.**
 
+**F0 + F1 + F3-engine DONE (2026-08-06 pm).** F0: `isV0`
+reconciled with R1/R6 (rejects only pseudoDivision/intBranch; the
+four-shapes reading rejected every real bundle). F1 + the F3 engine:
+`Nlsat/Assemble.lean` — decode layer (`litHolds`/`clauseHolds` over the
+atom-table snapshot, junk = not-holding = sound direction;
+`litSatI`/`clauseSatI` interpretation form + `interp` bridge, with
+DECODABILITY hypotheses — the two forms disagree on negated junk
+literals by design); `arithClause` (proj ++ ¬core); and the verified
+unit-propagation/RUP engine (`upLoop`/`upRefutes`, structural
+recursion over literal lists — connective lemmas are plain
+inductions): `upRefutes_sound` is the whole trusted content of the R1
+replay (completeness for z3's resolution chains = the reverse-
+induction RUP argument; stalls reject soundly). Pins in
+`AssembleTests.lean` (incl. a negative probe and an end-to-end
+soundness application). Build green 7606 jobs, axioms clean.
+**Traps:** `List.getElem?_set` is the if-form
+`(l.set i a)[j]? = if i = j then (if i < l.length then some a else
+none) else l[j]?` — one rewrite covers both self and ne cases;
+`_set_self`/`_set_ne` have side conditions/argument orders that make
+them worse. `split` on a 2-arm match with a wildcard arm yields 2
+goals; it does NOT recurse into nested matches — `revert h; split <;>
+intro h <;> simp at h` handles the nested case robustly.
+**NEXT: F2** (per-bundle arith-lemma validity — the elaborator that
+discharges `arithClause core proj` from the bundle's steps via the
+Coverage theorems + linarith/nlinarith glue), then the DAG walk
+(per-cid fold + final-bundle close), then F4 acceptance.
+
 **Slice F/G — assembly + acceptance:**
 - **F0** reconcile `TraceBundle.isV0` (Trace.lean:203) with R1/R6: it
   currently rejects bundles carrying `resolution`/`factorSplit` steps,
