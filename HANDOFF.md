@@ -1,184 +1,162 @@
-# HANDOFF — 2026-08-01 (12d.6a close: explain OPERATIONAL; 12d.6b ⇄ 19a arc opens)
+# HANDOFF — 2026-08-03 (12d.6b⇄19a: all four v0 shapes done; Q1 + checker assembly next)
 
-Read first: `DESIGN-endgame.md` (the master plan — §0 finish line, §2
+Read first: `DESIGN-endgame.md` (master plan — §0 finish line, §2
 critical path, §6 decisions + divergence register, §8 standing
-directives), then `BOARD.md` (execution units; the **nla-12d** entry
-has the full slice log), then `WRITEUP.md` (the explain-port
-narrative: architecture, decisions, quirks, catches). Memory file
-`verus-cad/memory/project_tactus_nonlinear_port.md` has the session
-history. Build: Nix `lake` on PATH (not elan); `lake build` green
-(7600 jobs) at commit `1e2ff57`.
-
-## Where we are
-
-Critical path `28 → 27 → 12b-ii → 29 → 32 → 12c → 12d.0–12d.6a` is
-DONE. **The projection engine is ported and operational**: z3's
-`nlsat_explain.cpp` @ 4.12.5 in full — the operator() pipeline
-(process/process2/normalize/simplify/main/project), elim_vanishing,
-the psc-chain engine, cell machinery, root-atom creation (linear /
-quadratic-Thom / generic), the pseudo-division simplify cluster, and
-the multivariate factor_core behind it (iccp + Yun + full `mod_gcd`
-with Zp evaluation, Newton/sparse interpolation, skeletons, CRA).
-`Explain.explain : ExplainFn` is the production explain behind the
-solver's boundary; `mockExplain` stays as the test mock for boolean +
-stage-0 conflicts.
-
-**Acceptance evidence:** `x² + y² < 0` refuted end-to-end by the real
-projection (zero assumption at `x := 0`, cell bounds at `x := ±1`,
-stage-0 core conflict ⇒ UNSAT); multivariate SAT green; all 12c pins
-re-green; ~150 new pins this arc; build 7600 jobs, sorry-free.
-Trusted layer unchanged (all new code is untrusted search-side).
+directives), then `BOARD.md` (execution units; **nla-19a entry has the
+F1–F5 design-review decisions, the R1–R9 design-review-2 decisions,
+and the session-1 progress log**), then `WRITEUP.md` (explain-port
+narrative). Memory file `verus-cad/memory/project_tactus_nonlinear_port.md`
+has the session history. Build: Nix `lake` on PATH (not elan);
+`lake build` green (7603 jobs) at commit `4d3b69f`.
 
 **Source-of-truth rule (unchanged): all ports cite
 `git show z3-4.12.5:<path>`, never the working tree.**
 
-## Next: 12d.6b ⇄ 19a — Trace emission + Checker v0 (one arc, 2–3 sessions)
+## Where we are
 
-These are one arc (standing rule 3: trace payloads pin only when the
-checker consumes them). BOARD.md has the 12d.6b + 19a entries.
+Critical path `… → 12d.0–12d.6a` (projection engine, see previous
+HANDOFF) is done; the **12d.6b ⇄ 19a arc (trace emission + checker
+v0) has landed its core**: the 8-shape trace language, the egress,
+emission for all 8 shapes, and trusted discharges + pins for the four
+v0 shapes. Remaining in the arc: **Q1 coverage lemma (Slice E)** and
+**checker assembly + acceptance (Slice F/G)** — then 19b (now just
+pseudoDivision/factorSplit identities → M3), 12e, 14, 15, 16.
 
-**12d.6b — `Nlsat/Trace.lean` + emission.** The 8-shape language
-(DESIGN-nlsat-quadratic §2):
+### The trace layer (12d.6b, untrusted search-side)
 
-```
-leafNumeric | thomQuadratic | linearRoot | cellBound |
-pseudoDivision | factorSplit | intBranch | resolution
-```
+- `Nlsat/Trace.lean`: 8-shape `TraceStep` (leafNumeric | thomQuadratic |
+  linearRoot | cellBound | pseudoDivision | factorSplit | intBranch |
+  resolution) + `rootGeneric` (B-tier fallback spelled out; the
+  fragment gate is **checker-computed** — F3). `TraceBundle` per
+  learned clause. Emission grammar DRAFT (inductive, per-constructor
+  source refs — finalizes with Q1).
+- Egress (F1): `Solver.pendingTrace` buffer (cleared at each resolve
+  round reset — z3's `m_lemma` boundary), flushed into
+  `traceBundles : Array (Option TraceBundle)` parallel to `clauses` at
+  the two `mkClause … true` sites; `finalRefutation` at the empty-lemma
+  UNSAT exit; F2 extraction seam in `check()` snapshots
+  `(atoms, clauses, bundles, final)` in internal var order BEFORE
+  `restoreOrder`. Resolution markers at every antecedent
+  (clause / arith / decision). Append-only — all 12c/12d pins stayed
+  byte-green.
+- Emission points: `mkLinearRoot5` (linearRoot, `lcFact` for the
+  plinear variant), `mkQuadraticRoot` (thomQuadratic with sq/sa/spd/sp
+  sign payloads), `addRootLiteral` generic fallback (rootGeneric),
+  `addCellLits` (cellBound after each encoding step, exact/lower/upper),
+  `simplifyLit` (pseudoDivision), `addZeroAssumption` + `addFactors`
+  (factorSplit), `operator()` (leafNumeric marker when the whole output
+  clause is univariate-const in var 0), resolve (resolution markers).
 
-- **Emission points** (map trace steps to explain's mechanism):
-  `ensure_sign`/`add_simple_assumption` → cellBound-adjacent sign
-  facts; `mk_linear_root*` → linearRoot; `mk_quadratic_root` →
-  thomQuadratic; `add_cell_lits` → cellBound; `simplifyLit`'s
-  pseudo-division → pseudoDivision; `add_zero_assumption` /
-  `add_factors` factoring → factorSplit; stage-1 univariate leaves →
-  leafNumeric; the solver's resolve → resolution.
-- **Fragment gate (DECIDED, registered):** NOT an explain-side abort.
-  z3's projection is degree-generic; the gate marks trace steps where
-  the top-variable degree exceeds 2 (concretely: the generic
-  root-atom fallback in `add_root_literal`) as **S1-gated**. The
-  search stays z3-faithful; gated traces are deferred to the S1 path
-  (nla-11/13).
-- **Trace egress design question (pins HERE, first task):** how the
-  trace leaves `SolverM` — (a) a `trace : Array TraceStep` field on
-  the solver state that explain/solver append to, vs (b) `ExplainFn`
-  returning `(literals × steps)`. (a) matches z3's "explain emits
-  into shared state" shape and carries solver-side resolution steps
-  without plumbing; (b) is more explicit but forces the signature
-  change through `resolve`. Pick (a) unless a reason emerges; record
-  in the 19a board entry.
-- **Checker theorem shape (pins with 19a):** per-step discharge
-  lemmas composing into "the learned clause is implied" — v0 keeps
-  the four checkable shapes; pseudoDivision/factorSplit/resolution
-  steps are marked and discharged in 19b.
+### The checker layer (19a, TRUSTED — no sorry/admit/external_body)
 
-**19a — `Nlsat/Check.lean` v0 (TRUSTED layer: no
-assume/admit/external_body).** Discharge map:
+`Nlsat/Check.lean` (~1400 lines): `evalM`/`evalP` semantics over ℝ +
+hom suite (add/neg/sub/smulTerm/mul); checker-side `coeffsOf`
+(structural mirror of `coeffsIn` — **bridge theorem proved**:
+`coeffsOf_eq_coeffsIn_toList`, R3); `coeffsOf_canon`; linear/quadratic
+form bridges; `IneqAtom.Holds` sign semantics (**verified = z3
+`eval_ineq` exactly**); `RootAtom.Holds`/`Atom.Holds`/`ALitHolds` with
+the **no-roots rule** (`rootCount`, R2); discharges per shape:
+`linearRoot_discharge` (lin_root_* + `rootCmp`, LE/GE remap + negation
+fold), S3 extension (`Templates/Quadratic.lean`: sqrt `quadRoot` + full
+point-vs-root dictionary), `thom_iff` (master equivalence),
+`thom_discharge` (leadSgn/quadRootVal flip), `cellBound_linear/thom`
+wrappers, `rootGeneric_discharge`, leafNumeric stage-1 glue (v0 leaves
+are trichotomy/nlinarith-grade — R4; CertGen reserved for deg ≥ 3).
+`Nlsat/CheckTests.lean`: pins per slice incl. live-emission
+reconstruction checks and `root₂(y²−2) = √2`.
 
-| trace step | trusted machinery | where |
-|---|---|---|
-| `leafNumeric` | `checkNoRoot_sound` / `checkUniqueRoot_sound` / `checkPosOn_sound` / `checkNegOn_sound (by decide)` | `Certificates/Sound.lean:286/313/376/393` |
-| `thomQuadratic` | S3 kit (12 lemmas: `quad_key`, sign-dictionary iffs both lead signs, definite-disc cases) | `Templates/Quadratic.lean` |
-| `linearRoot` | plain inequality lemmas (the exact mk_linear_root arithmetic incl. LE/GE remap) | new, same style |
-| `cellBound` | S3 ordering family (`quad_{left,right}_of_{inside,root}` + `quad_roots_order`) + linarith glue | `Templates/Quadratic.lean:137-199` |
+### Design reviews (both in BOARD.md, Danielle-approved)
 
-**Q1 (grammar-first, prove-over-empiricism):** the emission grammar
-is ALREADY enumerated from source (BOARD nla-19a: ineq shapes A1–A5,
-root tiers B, cell literals C with 1-based indices and openness).
-Formalize that grammar in Lean and prove the S3-coverage lemma
-against it; if the grammar exceeds the current S3 family, extend the
-family first (same Templates/Quadratic style).
+- **F1–F5 (2026-08-03, pre-implementation):** egress = buffer +
+  per-clause bundles (NOT a flat log — resolve has multiple rounds,
+  aborted rounds self-discard, UNSAT exit has no clause); extraction
+  seam pre-restoreOrder; fragment gate checker-computed; grammar→S3 is
+  the proved direction (explain→grammar stays source-fidelity + pins);
+  emit all occurring shapes now, discharge later.
+- **R1–R9 (2026-08-03, post-session-1):** R1 resolution replay is
+  propositional-per-bundle (tauto-grade DAG walk, NOT z3 trail-scan)
+  and comes forward into v0 — **19b shrinks to pseudoDivision/
+  factorSplit identities**. R4 leafNumeric v0 = glue for all deg ≤ 2
+  univariate leaves. R6 **factorSplit steps are ALWAYS safe to ignore**
+  (the factored poly never appears in any clause literal — only its
+  factors do — zero coverage loss). R7 pseudoDivision NOT always
+  ignorable (rewrites can be load-bearing — v0 ignores the step,
+  derivation may fail = sound rejection). R5 cellBound redundancy
+  intentional. R8 Check.lean splits at assembly. R9 duplicate
+  factorSplit steps benign.
 
-**Acceptance (arc):** end-to-end on hand goals with algebraic cells
-(√2-grade), negative probes (corrupted trace rejected), the first
-search→trace→checked-theorem round trip, 12c/12d pins re-green.
+### Live trace evidence
 
-**After this arc:** 19b (full checker glue — pseudoDivision/
-factorSplit/resolution → **M3**; `ordering_139` is the standing
-target if its trace stays in fragment), 12e (integer branching — the
-search_check B&B seam is marked), 14 (the `nonlinear_arith` tactic,
-`withLayerHeartbeats` budgets), 15 (tactus wiring — ½ session), 16
-(parity harness, zero Z3-closes-we-don't).
-Parallel lanes: S1 (11a ∥ 11c, Q7 open — 11a doubles as
-resultantElim's semantic proof), L1 hardening (21/22/07b/06), nla-30
-(deferred resultant generality), **nla-31 (termination proofs —
-`refineNzBound` elementary, do first; the MPolyOps/MPolyGcd/
-MPolyFactor partials are registered).**
+`x²+y²<0` refutation dumps coherently: three mid-search bundles (zero
+assumption `x₀≠0`, cell bounds `x₀≥0`, `x₀≤0` — each = conflict-clause
+marker + factorSplit + linearRoot + cellBound + arith marker) + final
+bundle (`leafNumeric 0` + trichotomy clause `x₀<0 ∨ x₀=0 ∨ x₀>0`) →
+empty clause. (Reproduce: the /tmp/dump_trace.lean recipe from the
+memory file — search `search (resolve Explain.explain)` on the unit
+clause, print `finalRefutation`/`traceBundles`.)
 
-## Key architecture (don't re-derive)
+## Next: Slice E (Q1) then Slice F/G (assembly + acceptance)
 
-- **ExplainM** (`Nlsat/Explain.lean`): `StateT ExplainState SolverM`;
-  per-call state = z3's per-call scratch (result, dedup, todo);
-  solver-owned = `ExplainCache` (pscChains/factors memos) + flags.
-  `liftS` lifts `SolverM` into `ExplainM`. Production entry:
-  `Explain.explain : ExplainFn := fun lits => (operator lits).run {}`.
-- **NumMode** (`Nlsat/MPolyOps.lean`): `Option ZpCtx` = z3's mpzzp
-  mode flag; numeral-touching ops take `mode := none` defaults.
-  `managerNormalize`: Zp balanced / **ℤ content-strip** (both live).
-- **Canonical MPoly ⇒ `mk_unique = identity`**; memo tables are
-  structural scans (atom-table idiom).
-- **Clause polarity (load-bearing):** explain's output is a theory-
-  lemma CLAUSE — every assumption appears NEGATED
-  (`add_simple_assumption` emits `⟨b, !sign⟩`); the exception is
-  `mk_linear_root`, which folds negation into the kind/lsign remap.
-- **Const-poison = concrete `UINT_MAX`** (4294967295) in max_var
-  computations (z3's release semantics; SASSERTs are debug-only).
-- **CellStore** (`Kernel/CellStore.lean`): ids dangle outside their
-  store; build scenarios in ONE computation; `fresh` in the
-  `let n := (← get).size; modify (·.push c); return n` form.
-- **Solver** (`Nlsat/Solver.lean`): `Solver.empty` (`{}`), never
-  `default` (the derived `Inhabited` ignores field defaults);
-  `Clause.deleted` exists (del_clause port — skip-deleted at
-  canReorder/collectVarInfo/reattach).
+**Slice E — Q1 coverage lemma.** Prove `Trace.Grammar` is covered by
+the (extended) S3 family + the discharge map: per grammar constructor,
+the discharge theorem that covers it exists and applies (linearRoot →
+`linearRoot_discharge`; thomQuadratic → `thom_discharge`; cellBound →
+the wrappers; rootGeneric deg ≤ 2 → `rootGeneric_discharge` + no-roots
+rule; leafNumeric → glue/CertGen). R2/R3 were the two gaps; both now
+closed. If the grammar exceeds the S3 family, extend the family first
+(BOARD rule).
 
-## Standing directives (Danielle)
+**Slice F/G — `Nlsat/Check.lean` assembly.** The pieces exist; the work
+is composition:
+1. **F2-seam decode**: solver-level refutation snapshot → semantic
+   clauses/bundles (atom table inlined; `ALitHolds` is the literal
+   semantics). Untrusted extraction; everything re-verified.
+2. **Per-bundle arith-lemma validity**: from the bundle's steps
+   (encoding discharges + cellBound orderings + sign-assumption
+   literals + leafNumeric) prove the arith lemma
+   `proj ++ ¬core` valid — assume all disjuncts fail, derive False by
+   linarith/nlinarith over the per-step facts (confirmed tractable by
+   the live dump: mid bundles are definite-disc/Thom-grade, the final
+   is trichotomy-grade). factorSplit steps: ignored (R6);
+   pseudoDivision steps: ignored, derivation may fail (R7).
+3. **Propositional DAG walk (R1)**: each bundle's learned lemma from
+   its antecedent cids + arith lemma (tauto-grade); walk from
+   `finalRefutation` to the empty clause ⇒ `Γ ⊢ False` with Γ the
+   input literals over a `Nat → ℝ` valuation.
+4. **Acceptance**: end-to-end on hand goals with algebraic cells
+   (√2-grade, factorSplit-bearing traces included per R6), negative
+   probes (corrupted trace rejected), 12c/12d pins re-green.
 
-1. Do things the right way first; prove over empiricism; follow z3 as
-   closely as possible — every divergence is bad unless signed off
-   (register in DESIGN-endgame §6).
-2. **"Nearly unreachable" still needs fixing** — docstrings are never
-   a fallback: behavior identical in practice. Cover all cases.
-3. Source-fidelity over equivalent-engine + empirical check: port the
-   mechanism (the review method that works: re-read z3 against the
-   port).
-4. Parity directive: schedulers only select from the closure; every
-   change states its parity argument.
-5. No assume/admit/external_body in the trusted layer.
-6. Budgets: `withLayerHeartbeats`, never fraction-of-remaining.
-7. Implement in this window's style — no coder agents for code;
-   commit freely, small commits.
+**After this arc:** 19b (identities → M3; `ordering_139` standing
+target if its trace stays in fragment), 12e (integer branching), 14
+(the `nonlinear_arith` tactic, `withLayerHeartbeats`), 15 (tactus
+wiring, ½ session), 16 (parity harness).
 
-## Lean traps (all recorded in memory)
+## Traps / lessons (new this arc — also in memory file)
 
-- **The derived `Inhabited` ignores structure field defaults** — use
-  `{}` (`Solver.empty`), never `default`.
-- **where-defs capture the parent's BINDERS, not let-bound locals** —
-  pass those as explicit params (the factorCore x-param trap).
-  `partial` propagates to where-defs.
-- **`partial` needs `Inhabited` on the return type** (`deriving
-  Inhabited`); an `inductive` can't mix into a `mutual` def block.
-- Dot-notation helper defs must live in the TYPE's namespace
-  (`IneqKind.flip`, `RootKind.toIneqSign` moved to Types.lean).
-- `Nat.log`/`Nat.log2` are not available here — local `floorLog2`
-  (kernel is mathlib-free; mathlib's `!![` notation breaks
-  `x[i]![j]!` downstream — keep it out of Kernel/Nlsat).
-- `Array.swap!`/`Array.mergeSort` don't exist — manual set!-swap,
-  `Array.qsort`, `List.mergeSort`.
-- **`ZpCtx.submul` arg order**: `(a,b,out) = out − a·b` vs z3's
-  `(a,b,c,out) = a − b·c` — check at every call site.
-- **Never emit zero-exponent monomials `[(x, 0)]`** — use `ofVarPow`
-  (two hangs from this).
-- **`lc` is at the poly's OWN degree** — defective subresultant
-  chains have `deg S_{d−1} < d−1` (out-of-bounds → panic-default →
-  div-by-zero loop).
-- Structure update is `{ si with ... }`, not `{ si.sk with ... }`;
-  anonymous `⟨…⟩` ctors ignore field defaults — give all fields.
-- `from` is reserved; same-named `let rec` in different branches of
-  one def collide; do-notation `return` needs the value on its own
-  line; `Array.back` needs a nonempty proof — `back!`.
-- omega only sees literal `Nat`/`Int`-headed comparisons (Nat-binder
-  helper lemmas); verify lemma names and import scope before typing;
-  probe `.induct` shapes before writing case lists; `command grep`
-  on this box; check `uptime` before trusting timings.
-- #guard evaluates `partial` defs fine — but a looping one hangs the
-  build: probe suspicious computations with standalone `#eval` files
-  first (the psc hang was isolated this way).
+- `variable (ρ)` + equation-style defs: the recursive reference needs
+  explicit ρ — make ρ an explicit parameter instead.
+- Var-abbrev omega rule (standing directive 8): omega sees only
+  literal Nat/Int-headed comparisons — Nat-binder helper lemmas +
+  explicit `Nat.*` term lemmas; record projections need a typed `have`
+  before omega sees them.
+- `eq_or_lt_of_le` gives `0 = x` FIRST (branch order bit me twice).
+- `∀ (a, m) ∈ l` tuple binders unsupported — use atomic binders +
+  obtain.
+- `simp only [List.set]` doesn't fire at hypotheses — use rfl-have + rw.
+- `Array.set!` IS `setIfInBounds` (matches `List.set` unconditionally);
+  `(l.toArray).toList = l` is rfl; `Array.toList_inj`,
+  `List.getElem!_toArray`, `Array.toList_setIfInBounds`,
+  `List.toArray_replicate` exist; `List.forIn_cons` exists; use
+  `Id.run_bind`/`Id.run_pure` (Id.bind_eq/pure_eq deprecated).
+- `fun_induction` cases for defs with `have c := a+b` carry an EXTRA
+  binder; the `let` in `MPoly.add`'s eq-branch gets inlined in goals —
+  match `a + b`, not `c`.
+- `set` can introduce `↑0`/`↑4` casts in folded hypotheses — sidestep
+  with a named def (leadSgn precedent) or exact_mod_cast.
+- `rw`'s trailing rfl is reducible-only — close match-def iffs with
+  `exact Iff.rfl`.
+- For `for`-loop↔foldl bridges: one simulation lemma
+  (`forIn_coeffs` pattern) + `List.forIn_cons` + Id-run simp set.
+- `Int.gcd` returns Nat (coerce); `Int.gcd_dvd_left/right`,
+  `Int.natCast_nonneg`, `eq_zero_of_zero_dvd` for the ic lemmas.
