@@ -1654,7 +1654,7 @@ any point = sound rejection.
   Semantics/Discharge; unify discharge hypotheses on full
   `MPoly.Canon`.
 
-## nla-19a design review 3 (2026-08-06, mid-F/G arc — parity + regret lenses)
+## nla-19a design review 3 `done` (2026-08-06, mid-F/G arc — parity + regret lenses; R1'/R2' Danielle-approved same day)
 
 Method: adversarial re-read of the day's three landing sites
 (Trace.lean grammar finalization, Coverage.lean, Assemble.lean +
@@ -1719,12 +1719,12 @@ two explicit lenses: (a) z3 parity, (b) decisions we'd regret.
   Soundness never depends on this — stalls reject.
 
 **REGRET LENSES (decisions):**
-- **R1' (recommend yes, at F5):** the Nat.cast-0 defaulting means
+- **R1' (APPROVED, lands at F5):** the Nat.cast-0 defaulting means
   Check.lean's discharge hypotheses carry `↑0` forms; every consumer
   must bridge with goal-directed `exact_mod_cast` (today's trap).
   Normalize statements to `(0 : ℝ)` annotations at the F5 split —
   Check.lean is being touched anyway; mechanical and contained.
-- **R2' (recommend leave + monitor):** `clauseStatus` does not
+- **R2' (APPROVED — leave + monitor):** `clauseStatus` does not
   propagate through duplicate unassigned literals (`[l, l]` →
   `.other`). z3's processAntecedent has no dedup in the mark path,
   so duplicates in learned clauses are possible in principle. Stalls
