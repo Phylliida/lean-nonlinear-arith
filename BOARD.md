@@ -1740,6 +1740,39 @@ two explicit lenses: (a) z3 parity, (b) decisions we'd regret.
   surface — F4's negative probes should include a corrupted-mkNeg
   and a corrupted-sp step to confirm parse-level rejection.
 
+**F2 skeleton DONE (2026-08-06 eve).** `Nlsat/Refute.lean` +
+`RefuteTests.lean`: the `nlsat_arith_valid` elaborator closes all four
+arith lemmas of the live x0²+x1²<0 refutation (bundles 2/3/4/final,
+snapshot data embedded literal-form from the reproduced dump) and
+rejects an invalid clause (`#guard_msgs (drop error)` probe).
+Mechanism: byContradiction → per-literal `¬ litSatI I l` (explicit
+∃-motive — HOU-uninferable; `Membership.mem` decide — the instance is
+keyed on `Membership.mem`, NOT raw `List.Mem`) → `holds_single_*`
+collapses (negated-atom polarity via `Classical.not_not` — supply the
+proposition by `mkAppOptM`, mkAppM-with-0-args returns the bare const)
+→ `evalP`/`evalM` simp unfold → `sq_nonneg` hints per var → linarith
+(R-i workhorse) / nlinarith backup. ALL meta ops that typecheck terms
+mentioning context fvars must run inside the CURRENT mvar's
+`withContext` (hFvar/h_i leak otherwise — "unknown free variable").
+Build green 7608 jobs.
+
+**KERNEL-REDUCTION TRAP (new class, load-bearing for the next
+slices):** `Monomial.cmp`/`Monomial.mul` (and everything built on
+them: `MPoly.add`/`mul`/`smulTerm`) are WF-compiled — they do NOT
+reduce under kernel whnf/rfl/decide. Every existing pin passed because
+`#guard` evaluates via COMPILATION; kernel defeq was never exercised.
+Consequences: (a) atom tables/polys in checker-facing goals must be
+LITERAL-LIST form (what nla-14 will quote from the native snapshot
+anyway) — never `MPoly`-op consts; (b) `MPoly.Canon` (Pairwise over
+`Monomial.cmp`) is kernel-undecidable — Coverage consumption needs a
+REDUCIBLE structural mirror `cmpB` + once-proved bridge
+`cmpB m n = cmp m n` (nla-09 Bool-checker style; WF defs still have
+induction principles, so the bridge is provable generically);
+(c) `coeffsIn` reduces only when every degree class is a singleton
+(multi-term degree classes hit `MPoly.add` on two non-singletons);
+(d) the RUP walk's `upRefutes … by decide` is SAFE (Nat/Bool only).
+Next slice starts with (b).
+
 ## nla-19a design review 4 `done` (2026-08-06, pre-F2; R-i–R-viii Danielle-approved same day)
 
 Method: adversarial trace of the F2 recipe (HANDOFF + F2-groundwork
