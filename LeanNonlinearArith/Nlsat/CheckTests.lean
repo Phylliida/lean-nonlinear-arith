@@ -257,4 +257,72 @@ example (ρ : Nat → ℝ) :
   have e2 : evalP ρ pXsq = (ρ 0)^2 := by simp [pXsq, evalP, evalM]
   rw [holds_single_eq, holds_single_eq, e1, e2, sq_eq_zero_iff]
 
+
+/-! ## R2/R3 pins (design review 2) -/
+
+/-- R3: the coeffsOf↔coeffsIn bridge, applied. -/
+example : coeffsOf pQuad2 1 = (pQuad2.coeffsIn 1).toList :=
+  coeffsOf_eq_coeffsIn_toList pQuad2 1
+example : coeffsOf pLin 1 = (pLin.coeffsIn 1).toList :=
+  coeffsOf_eq_coeffsIn_toList pLin 1
+
+/-- p = y² + 1 (var 1): disc = −4 < 0 ⇒ no roots ⇒ atom false. -/
+def pNoRoots : MPoly := [(1, [(1, 2)]), (1, [])]
+
+example (ρ : Nat → ℝ) : ¬ RootAtom.Holds ρ ⟨.gt, 1, 1, pNoRoots⟩ := by
+  have hB : evalP ρ ((coeffsOf pNoRoots 1)[1]!) = 0 := by
+    have : (coeffsOf pNoRoots 1)[1]! = [] := by native_decide
+    rw [this]; simp [evalP]
+  have hA : evalP ρ ((coeffsOf pNoRoots 1)[2]!) = 1 := by
+    have : (coeffsOf pNoRoots 1)[2]! = [(1, [])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  have hC : evalP ρ ((coeffsOf pNoRoots 1)[0]!) = 1 := by
+    have : (coeffsOf pNoRoots 1)[0]! = [(1, [])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  have hdisc : evalP ρ ((coeffsOf pNoRoots 1)[1]!)^2 -
+      4 * evalP ρ ((coeffsOf pNoRoots 1)[2]!) * evalP ρ ((coeffsOf pNoRoots 1)[0]!)
+      < 0 := by
+    rw [hB, hA, hC]; norm_num
+  exact rootAtom_false_of_index_lt ρ .gt 1 1 pNoRoots
+    (by rw [rootCount_zero_of_neg_disc ρ 1 pNoRoots (by native_decide) hdisc]
+        decide)
+
+/-- i = 3 exceeds the root count (2) of y² − 2 ⇒ atom false (z3's
+`i > roots.size()` rule). -/
+example (ρ : Nat → ℝ) : ¬ RootAtom.Holds ρ ⟨.lt, 1, 3, pQuad⟩ := by
+  have hB : evalP ρ ((coeffsOf pQuad 1)[1]!) = 0 := by
+    have : (coeffsOf pQuad 1)[1]! = [] := by native_decide
+    rw [this]; simp [evalP]
+  have hA : evalP ρ ((coeffsOf pQuad 1)[2]!) = 1 := by
+    have : (coeffsOf pQuad 1)[2]! = [(1, [])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  have hC : evalP ρ ((coeffsOf pQuad 1)[0]!) = -2 := by
+    have : (coeffsOf pQuad 1)[0]! = [(-2, [])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  have hcount : rootCount ρ 1 pQuad = 2 := by
+    unfold rootCount
+    rw [if_neg (by native_decide : ¬(pQuad.degreeIn 1 = 1)),
+        if_pos (by rw [hA]; norm_num), hB, hA, hC]
+    norm_num
+  exact rootAtom_false_of_index_lt ρ .lt 1 3 pQuad (by rw [hcount]; decide)
+
+/-- deg-1 root atom semantics: `root₁(2y + x)` exists (lc ≠ 0) and
+`y > root₁` ⟺ `ρ 1 > -(ρ 0)/2`. -/
+example (ρ : Nat → ℝ) :
+    RootAtom.Holds ρ ⟨.gt, 1, 1, pLin⟩ ↔ -ρ 0 / 2 < ρ 1 := by
+  have hA : evalP ρ ((coeffsOf pLin 1)[1]!) = 2 := by
+    have : (coeffsOf pLin 1)[1]! = [(2, [])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  have hC : evalP ρ ((coeffsOf pLin 1)[0]!) = ρ 0 := by
+    have : (coeffsOf pLin 1)[0]! = [(1, [(0, 1)])] := by native_decide
+    rw [this]; simp [evalP, evalM]
+  have hcount : rootCount ρ 1 pLin = 1 := by
+    unfold rootCount
+    rw [if_pos (by native_decide : pLin.degreeIn 1 = 1), hA]
+    norm_num
+  rw [RootAtom.Holds, hcount, rootVal_eq_linear ρ 1 1 pLin (by native_decide), hC, hA]
+  constructor
+  · intro h; exact h.2
+  · intro h; exact ⟨Nat.le_refl 1, h⟩
+
 end LeanNonlinearArith.Nlsat

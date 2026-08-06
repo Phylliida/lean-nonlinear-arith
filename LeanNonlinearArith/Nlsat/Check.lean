@@ -873,13 +873,18 @@ noncomputable def quadRootVal (i : Nat) (A B C : ℝ) : ℝ :=
   quadRoot i (leadSgn A * A) (leadSgn A * B) (leadSgn A * C)
 
 /-- Root value of `p` in `y` (deg ≤ 2 fragment, z3 increasing order):
-linear ⇒ `-C/A`; quadratic ⇒ sign-normalized `quadRoot`. -/
+linear ⇒ `-C/A`; quadratic ⇒ sign-normalized `quadRoot` when `A ≠ 0`
+at `ρ`, else the degenerate linear root `-C/B` (z3 isolates at the
+CURRENT values, `eval_root` :417-437). -/
 noncomputable def rootVal (ρ : Nat → ℝ) (y : Var) (i : Nat) (p : MPoly) : ℝ :=
   if p.degreeIn y = 1 then
     -evalP ρ ((coeffsOf p y)[0]!) / evalP ρ ((coeffsOf p y)[1]!)
   else
-    quadRootVal i (evalP ρ ((coeffsOf p y)[2]!)) (evalP ρ ((coeffsOf p y)[1]!))
-      (evalP ρ ((coeffsOf p y)[0]!))
+    let A := evalP ρ ((coeffsOf p y)[2]!)
+    if A ≠ 0 then
+      quadRootVal i A (evalP ρ ((coeffsOf p y)[1]!)) (evalP ρ ((coeffsOf p y)[0]!))
+    else
+      -evalP ρ ((coeffsOf p y)[0]!) / evalP ρ ((coeffsOf p y)[1]!)
 
 /-- The Thom discharge (z3 `mk_quadratic_root` :787-820): the sign
 literals on {disc, A, 2Ay+B, p} encode the root atom — the comparison
@@ -1244,12 +1249,12 @@ theorem rootVal_eq_linear (ρ : Nat → ℝ) (y : Var) (i : Nat) (p : MPoly)
   rw [if_pos hdeg]
 
 theorem rootVal_eq_quad (ρ : Nat → ℝ) (y : Var) (i : Nat) (p : MPoly)
-    (hdeg : p.degreeIn y = 2) :
+    (hdeg : p.degreeIn y = 2) (hA : evalP ρ ((coeffsOf p y)[2]!) ≠ 0) :
     rootVal ρ y i p =
       quadRootVal i (evalP ρ ((coeffsOf p y)[2]!)) (evalP ρ ((coeffsOf p y)[1]!))
         (evalP ρ ((coeffsOf p y)[0]!)) := by
   unfold rootVal
-  rw [if_neg (by rw [hdeg]; decide)]
+  rw [if_neg (by rw [hdeg]; decide), if_pos hA]
 
 /-- cellBound over a linear encoding: the ordering is the
 `linearRoot_discharge` conclusion itself (the discharged literal's
@@ -1280,8 +1285,177 @@ theorem cellBound_thom (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : Nat)
       (leadSgn (evalP ρ ((coeffsOf p y)[2]!)) *
         (2 * evalP ρ ((coeffsOf p y)[2]!) * ρ y + evalP ρ ((coeffsOf p y)[1]!)))) :
     rootCmp k (ρ y) (rootVal ρ y i p) := by
-  rw [rootVal_eq_quad ρ y i p hdeg]
+  rw [rootVal_eq_quad ρ y i p hdeg (hAm.ne_zero hsa)]
   exact (thom_discharge ρ k y i p sq sa hdeg hi hcan hsa hAm hsq hdm).mpr hform
+
+
+/-! ## The coeffsOf↔coeffsIn bridge (R3 of design review 2)
+
+Soundness never needed this (literal matching is by value, mismatch =
+sound rejection) — the COVERAGE claim does: the checker's structural
+extraction agrees with the solver's `coeffsIn` on every input. -/
+
+theorem forIn_coeffs (l : MPoly) (y : Var) (init : Array MPoly) :
+    (forIn l init (fun x r => pure (ForInStep.yield
+      (Array.set! r (x.2.degreeIn y) (MPoly.add r[x.2.degreeIn y]! [(x.1, x.2.erase y)])))) :
+        Id (Array MPoly)).run =
+      l.foldl (fun out (a, m) => Array.set! out (m.degreeIn y)
+        (MPoly.add out[m.degreeIn y]! [(a, m.erase y)])) init := by
+  induction l generalizing init with
+  | nil => simp [forIn]
+  | cons t ts ih =>
+    obtain ⟨a, m⟩ := t
+    rw [List.forIn_cons]
+    simp [ih, List.foldl_cons]
+
+theorem coeffsIn_eq_foldl (p : MPoly) (y : Var) :
+    p.coeffsIn y = p.foldl (fun out (a, m) => Array.set! out (m.degreeIn y)
+        (MPoly.add out[m.degreeIn y]! [(a, m.erase y)]))
+        (Array.replicate (p.degreeIn y + 1) []) := by
+  unfold MPoly.coeffsIn
+  simp only [Id.run]
+  show ((forIn p (Array.replicate (p.degreeIn y + 1) []) (fun x r => do
+      pure PUnit.unit
+      pure (ForInStep.yield (Array.set! r (x.2.degreeIn y)
+        (MPoly.add r[x.2.degreeIn y]! [(x.1, x.2.erase y)])))) : Id (Array MPoly)) >>= fun out => pure out).run = _
+  simp only [Id.run_bind, Id.run_pure]
+  show (forIn p (Array.replicate (p.degreeIn y + 1) []) (fun x r =>
+      pure (ForInStep.yield (Array.set! r (x.2.degreeIn y)
+        (MPoly.add r[x.2.degreeIn y]! [(x.1, x.2.erase y)])))) : Id (Array MPoly)).run = _
+  exact forIn_coeffs p y _
+
+theorem coeffsOf_eq_coeffsIn_toList (p : MPoly) (y : Var) :
+    coeffsOf p y = (p.coeffsIn y).toList := by
+  rw [coeffsIn_eq_foldl]
+  have key : ∀ (l : MPoly) (init : List MPoly),
+      coeffsOf.go y init l =
+        (l.foldl (fun out (a, m) => Array.set! out (m.degreeIn y)
+          (MPoly.add out[m.degreeIn y]! [(a, m.erase y)])) init.toArray).toList := by
+    intro l
+    induction l with
+    | nil => intro init; simp [coeffsOf.go]
+    | cons t ts ih =>
+      obtain ⟨a, m⟩ := t
+      intro init
+      rw [List.foldl_cons]
+      show coeffsOf.go y (init.set (m.degreeIn y)
+          (MPoly.add init[m.degreeIn y]! [(a, m.erase y)])) ts =
+        ((ts.foldl (fun out (a, m) => Array.set! out (m.degreeIn y)
+          (MPoly.add out[m.degreeIn y]! [(a, m.erase y)]))
+          (Array.set! init.toArray (m.degreeIn y)
+            (MPoly.add init.toArray[m.degreeIn y]! [(a, m.erase y)]))).toList)
+      rw [Array.set!]
+      have hset : (init.toArray.setIfInBounds (m.degreeIn y)
+          (MPoly.add init.toArray[m.degreeIn y]! [(a, m.erase y)])) =
+        (init.set (m.degreeIn y) (MPoly.add init[m.degreeIn y]! [(a, m.erase y)])).toArray := by
+        have h2 : (init.set (m.degreeIn y)
+            (MPoly.add init[m.degreeIn y]! [(a, m.erase y)])) =
+          (init.toArray.setIfInBounds (m.degreeIn y)
+            (MPoly.add init.toArray[m.degreeIn y]! [(a, m.erase y)])).toList := by
+          have hr : init.toArray.toList = init := rfl
+          rw [Array.toList_setIfInBounds, hr, List.getElem!_toArray]
+        exact Array.toList_inj.mp h2.symm
+      rw [hset]
+      exact ih (init.set (m.degreeIn y) (MPoly.add init[m.degreeIn y]! [(a, m.erase y)]))
+  unfold coeffsOf
+  rw [key p _, List.toArray_replicate]
+
+
+/-! ## Root-atom semantics with the no-roots rule (R2 of design review 2)
+
+z3's `eval_root` (`nlsat_evaluator.cpp:417-437`): the atom
+`y ⋈_k root_i(p)` evaluates FALSE when `i > roots.size()` (the
+isolation is at the CURRENT values, so root count is determined by the
+degree and the disc/lead signs at `ρ`). This is the semantics the
+`rootGeneric` fallback's clause literals get; for deg ≤ 2 it stays
+first-order via the same Thom machinery. -/
+
+/-- Root count of `p` as univariate in `y` under `ρ` (deg ≤ 2 fragment):
+linear ⇒ 1 if the lc is nonzero else 0; quadratic ⇒ 0/1/2 by the disc
+sign when `A ≠ 0`, else the degenerate-linear count (1 if `B ≠ 0`). -/
+noncomputable def rootCount (ρ : Nat → ℝ) (y : Var) (p : MPoly) : Nat :=
+  if p.degreeIn y = 1 then
+    (if evalP ρ ((coeffsOf p y)[1]!) ≠ 0 then 1 else 0)
+  else
+    let A := evalP ρ ((coeffsOf p y)[2]!)
+    let B := evalP ρ ((coeffsOf p y)[1]!)
+    let C := evalP ρ ((coeffsOf p y)[0]!)
+    if A ≠ 0 then
+      (if B^2 - 4*A*C < 0 then 0 else if B^2 - 4*A*C = 0 then 1 else 2)
+    else if B ≠ 0 then 1
+    else 0
+
+namespace RootAtom
+
+/-- z3 `eval_root` semantics: the atom is FALSE when `i` exceeds the
+root count; otherwise the comparison against the i-th root (z3
+increasing order). -/
+def Holds (ρ : Nat → ℝ) (a : RootAtom) : Prop :=
+  a.i ≤ rootCount ρ a.x a.p ∧ rootCmp a.kind (ρ a.x) (rootVal ρ a.x a.i a.p)
+
+end RootAtom
+
+namespace Atom
+
+/-- Full atom semantics: ineq atoms by sign semantics, root atoms by
+`RootAtom.Holds` (no-roots rule included). -/
+def Holds (ρ : Nat → ℝ) : Atom → Prop
+  | .ineq a => IneqAtom.Holds ρ a
+  | .root a => RootAtom.Holds ρ a
+
+end Atom
+
+/-- Semantic literal over the full atom type (the F2 extraction's
+literal form). -/
+def ALitHolds (ρ : Nat → ℝ) (a : Atom) (neg : Bool) : Prop :=
+  if neg then ¬ Atom.Holds ρ a else Atom.Holds ρ a
+
+/-- `rootGeneric` discharge: the step's clause literal (`¬atom`)
+failing unfolds to root count + comparison — definitional, but the
+fragment content (deg ≤ 2 ⇒ first-order) is what makes it checkable. -/
+theorem rootGeneric_discharge (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : Nat)
+    (p : MPoly) :
+    (¬ ALitHolds ρ (.root ⟨k, y, i, p⟩) true) ↔
+      (i ≤ rootCount ρ y p ∧ rootCmp k (ρ y) (rootVal ρ y i p)) := by
+  show (¬ ¬ RootAtom.Holds ρ ⟨k, y, i, p⟩) ↔ _
+  rw [not_not]
+  exact Iff.rfl
+
+/-- Deg-2 negative disc ⇒ no roots ⇒ the atom is false. -/
+theorem rootCount_zero_of_neg_disc (ρ : Nat → ℝ) (y : Var) (p : MPoly)
+    (hdeg : p.degreeIn y = 2)
+    (hd : evalP ρ ((coeffsOf p y)[1]!)^2 -
+      4 * evalP ρ ((coeffsOf p y)[2]!) * evalP ρ ((coeffsOf p y)[0]!) < 0) :
+    rootCount ρ y p = 0 := by
+  unfold rootCount
+  rw [if_neg (by rw [hdeg]; decide)]
+  set A := evalP ρ ((coeffsOf p y)[2]!)
+  set B := evalP ρ ((coeffsOf p y)[1]!)
+  set C := evalP ρ ((coeffsOf p y)[0]!)
+  by_cases hA : A = 0
+  · simp [hA]
+    by_cases hB : B = 0
+    · simp [hB]
+    · simp only [hB, if_true]
+      -- A = 0, B ≠ 0: count 1 — but disc = B² < 0 is impossible
+      exfalso
+      rw [hA] at hd
+      simp at hd
+      exact absurd hd (by have := sq_nonneg B; linarith)
+  · rw [if_pos hA]
+    split_ifs with h1 h2
+    · rfl
+    · exact h1 hd
+    · exact h1 hd
+
+/-- Index beyond the root count ⇒ the atom is false (z3 :435-437). -/
+theorem rootAtom_false_of_index_lt (ρ : Nat → ℝ) (k : RootKind) (y : Var)
+    (i : Nat) (p : MPoly) (hi : rootCount ρ y p < i) :
+    ¬ RootAtom.Holds ρ ⟨k, y, i, p⟩ := by
+  intro h
+  obtain ⟨h1, _⟩ := h
+  have hle : i ≤ rootCount ρ y p := h1
+  omega
 
 end Check
 
