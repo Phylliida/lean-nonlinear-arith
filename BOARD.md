@@ -1599,6 +1599,35 @@ discharges `arithClause core proj` from the bundle's steps via the
 Coverage theorems + linarith/nlinarith glue), then the DAG walk
 (per-cid fold + final-bundle close), then F4 acceptance.
 
+**F2 groundwork (2026-08-06 pm, live dump reproduced):** the
+x0²+x1²<0 refutation dumps through the F2 seam exactly as the HANDOFF
+described (recipe: `Solver.run' (Solver.init; mkVar × 2; mkIneqLiteral
+⟨.lt, [(x0²+x1², false)]⟩; mkClause; check (resolve Explain.explain))`,
+print `s.refutation`). Read off the dump, the assembly pattern is now
+CONCRETE: per bundle, the RUP target is `bundle.lemma`, the F set is
+{antecedent clause cids} ∪ {`arithClause core proj` per arith marker};
+the walk is a per-cid fold (antecedent cids are always smaller —
+creation order), input clauses come from hypotheses, learned from
+their bundles, the final bundle's empty lemma closes via
+`upRefutes_sound` with target `[]`. Bundle 2 of the dump is the
+minimal case (no projection steps — factorSplit ignored per R6): the
+arith clause `¬(x0=0) ∨ ¬(x0²+x1²<0)` is nlinarith-grade directly
+from the two atoms' `IneqAtom.Holds` unfoldings. Note this example's
+arith lemmas are ALL trivially valid (x0²+x1²<0 is unsat by itself),
+so the discharge chain (linearRoot/cellBound facts feeding the glue)
+is only exercised by the √2-grade acceptance goal — shape:
+`x0 ≥ 0 ∧ x0² ≥ 2 ∧ x0 ≤ 1` (the √2 cell bound is load-bearing).
+Elaborator pattern per arith marker: (1) compute `arithClause core
+proj`; (2) intro all-literals-fail, unfold `litHolds`/`IneqAtom.Holds`
+to evalP-level ℝ facts; (3) collect per-step facts from the preceding
+projection steps through the Coverage theorems (`rootCmp`-facts are
+ℝ-comparisons of `ρ y` with `rootVal` values — sqrt-valued constants
+are opaque atoms to linarith, with `quad_roots_order`/`quadRoot_le`
+supplying the order facts); (4) close by nlinarith/linarith. Grammar
+witnesses for the Coverage theorems are elaborator-built from the
+payload data (all conditions decidable-by-construction). Failure at
+any point = sound rejection.
+
 **Slice F/G — assembly + acceptance:**
 - **F0** reconcile `TraceBundle.isV0` (Trace.lean:203) with R1/R6: it
   currently rejects bundles carrying `resolution`/`factorSplit` steps,
