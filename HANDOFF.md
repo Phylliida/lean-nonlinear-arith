@@ -1,4 +1,4 @@
-# HANDOFF — 2026-08-06 (12d.6b⇄19a: Q1 coverage DONE — grammar finalized + Coverage.lean; checker assembly next)
+# HANDOFF — 2026-08-06 (12d.6b⇄19a: Q1 coverage + F0/F1/F3-engine DONE; F2 elaborator next)
 
 Read first: `DESIGN-endgame.md` (master plan — §0 finish line, §2
 critical path, §6 decisions + divergence register, §8 standing
@@ -101,14 +101,24 @@ clause, print `finalRefutation`/`traceBundles`.)
 
 ## Next: Slice F/G (assembly + acceptance)
 
-**Slice E (Q1) is DONE (2026-08-06).** The grammar in `Trace.lean`
-is finalized (E1 audit vs the 4.12.5 text: the const-lcFact
-completeness fix, `sp`-placeholder and `mkNeg`-fold pinings) and
-`Nlsat/Coverage.lean` proves per-constructor coverage
-(`coverage_linearRoot` / `coverage_thomQuadratic` / `cellBound_plinear`
-(new — the degenerate pairing) / `cellBound_generic`; build green 7604
-jobs, axiom-clean). The sub-slice plan for what remains is in BOARD's
-19a entry (F0–F5):
+**Slice F/G progress (2026-08-06 pm):** F0 (`isV0` reconciled with
+R1/R6), F1 (decode layer) and the F3 ENGINE are DONE in
+`Nlsat/Assemble.lean`: `litHolds`/`clauseHolds` over the atom-table
+snapshot (junk = not-holding = sound direction), the
+`litSatI`/`clauseSatI` interpretation form + `interp` bridge
+(decodability hypotheses — the forms disagree on negated junk by
+design), `arithClause` (proj ++ ¬core), and the verified
+unit-propagation/RUP engine: `upRefutes_sound` is the whole trusted
+content of the R1 replay. Pins in `AssembleTests.lean`. The live
+x0²+x1²<0 dump is reproduced through the F2 seam and the F2
+elaborator pattern is concrete (BOARD 19a entry: per-arith-marker
+fact collection through the Coverage theorems + nlinarith glue; the
+walk is a per-cid fold with RUP per node, final bundle closes on the
+empty target). **Remaining: the F2 elaborator (per-bundle arith-lemma
+validity), the DAG walk, F4 acceptance (√2-grade goal shape:
+`x0 ≥ 0 ∧ x0² ≥ 2 ∧ x0 ≤ 1`), F5 (R8 split).** The dump recipe and
+the load-bearing-cellBound caveat (this example's arith lemmas are
+all trivially valid) are in the BOARD entry.
 
 **Slice F/G — `Nlsat/Check.lean` assembly.** The pieces exist; the work
 is composition:
