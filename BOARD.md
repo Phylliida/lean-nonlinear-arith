@@ -1542,6 +1542,36 @@ reconstructible from step payloads + the atom table (factorSplit → A1;
 linearRoot/thom signs → A2; pseudoDivision → A3/A4/A5; rootGeneric →
 root literal), matching the F4 payload principle.
 
+**E2 DONE (2026-08-06): `Nlsat/Coverage.lean`, build green 7604
+jobs, axiom-clean (propext/choice/Quot.sound only).** The coverage
+theorems, shaped for direct F-assembly consumption:
+`coverage_linearRoot` (grammar + Canon + the lc sign fact ⇒ emitted-
+literal failure ⟺ `rootCmp` at `rootVal`; the lc-sign evidence `hAq`
+is DERIVED inside — `linearRoot_hAq` — by decide-grade reasoning in
+both const cases via the grammar's new `mkNeg` folds, and from the
+sign literal failing in the non-const plinear case);
+`coverage_thomQuadratic` (grammar + Canon + A/disc sign facts ⇒
+`rootCmp` ⟺ Thom region formula at `rootVal`; formula evaluation from
+the `spd`/`sp` facts is F2 case work, per plan); `cellBound_plinear`
+(the quadratic-degenerate pairing — NEW wrapper closing the gap where
+the paired linearRoot is on the reduct `q = B·y+C`; transports along
+coefficient links the F1 decoder supplies by value) and
+`cellBound_generic` (the fact is the negated root atom failing);
+`rootVal_eq_degenerate` (the `A = 0` rootVal unfold). Helpers:
+`evalP_eq_of_asConst`, `coeffsOf_getElem!_eq`. No S3-family extension
+was needed — the grammar is fully inside the existing kit. Deferred to
+F by design: per-`(k,i)` `thomFormula` evaluation, by-value decode
+matching, bundle-level pairing decode. **Trap (new class, cost ~1h):
+in the `LeanNonlinearArith.Nlsat` namespace context, a standalone
+`0` in a statement Prop position can elaborate as `Nat.cast 0`
+(OfNat defaulting beats unification — triggered by `[1]!` subterms);
+the goal shows `↑0`, which is NOT defeq to `(0:ℝ)` at default
+transparency (exact/application mismatch, linarith blind to Int
+hyps). Discipline: annotate `(0 : ℝ)` in statements; bridge to
+Check.lean's cast-zero hypotheses with goal-directed
+`exact_mod_cast`; use `Int.cast_lt_zero.mpr`/`Int.cast_pos.mpr`,
+never `exact_mod_cast` in argument position.**
+
 **Slice F/G — assembly + acceptance:**
 - **F0** reconcile `TraceBundle.isV0` (Trace.lean:203) with R1/R6: it
   currently rejects bundles carrying `resolution`/`factorSplit` steps,

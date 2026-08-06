@@ -1,4 +1,4 @@
-# HANDOFF — 2026-08-03 (12d.6b⇄19a: all four v0 shapes done; Q1 + checker assembly next)
+# HANDOFF — 2026-08-06 (12d.6b⇄19a: Q1 coverage DONE — grammar finalized + Coverage.lean; checker assembly next)
 
 Read first: `DESIGN-endgame.md` (master plan — §0 finish line, §2
 critical path, §6 decisions + divergence register, §8 standing
@@ -16,11 +16,15 @@ has the session history. Build: Nix `lake` on PATH (not elan);
 
 Critical path `… → 12d.0–12d.6a` (projection engine, see previous
 HANDOFF) is done; the **12d.6b ⇄ 19a arc (trace emission + checker
-v0) has landed its core**: the 8-shape trace language, the egress,
-emission for all 8 shapes, and trusted discharges + pins for the four
-v0 shapes. Remaining in the arc: **Q1 coverage lemma (Slice E)** and
-**checker assembly + acceptance (Slice F/G)** — then 19b (now just
-pseudoDivision/factorSplit identities → M3), 12e, 14, 15, 16.
+v0) has landed its core AND its coverage half**: the 8-shape trace
+language, the egress, emission for all 8 shapes, trusted discharges +
+pins for the four v0 shapes, and (2026-08-06) the finalized emission
+grammar + `Nlsat/Coverage.lean` (Q1 proved: grammar + fragment ⇒ the
+discharge kit applies, per constructor — see BOARD's 19a entry for the
+E1 audit findings incl. the const-lcFact completeness fix, and the E2
+theorem shapes). Remaining in the arc: **checker assembly +
+acceptance (Slice F/G — sub-slices F0–F5 in BOARD)** — then 19b (now
+just pseudoDivision/factorSplit identities → M3), 12e, 14, 15, 16.
 
 ### The trace layer (12d.6b, untrusted search-side)
 
@@ -95,16 +99,16 @@ empty clause. (Reproduce: the /tmp/dump_trace.lean recipe from the
 memory file — search `search (resolve Explain.explain)` on the unit
 clause, print `finalRefutation`/`traceBundles`.)
 
-## Next: Slice E (Q1) then Slice F/G (assembly + acceptance)
+## Next: Slice F/G (assembly + acceptance)
 
-**Slice E — Q1 coverage lemma.** Prove `Trace.Grammar` is covered by
-the (extended) S3 family + the discharge map: per grammar constructor,
-the discharge theorem that covers it exists and applies (linearRoot →
-`linearRoot_discharge`; thomQuadratic → `thom_discharge`; cellBound →
-the wrappers; rootGeneric deg ≤ 2 → `rootGeneric_discharge` + no-roots
-rule; leafNumeric → glue/CertGen). R2/R3 were the two gaps; both now
-closed. If the grammar exceeds the S3 family, extend the family first
-(BOARD rule).
+**Slice E (Q1) is DONE (2026-08-06).** The grammar in `Trace.lean`
+is finalized (E1 audit vs the 4.12.5 text: the const-lcFact
+completeness fix, `sp`-placeholder and `mkNeg`-fold pinings) and
+`Nlsat/Coverage.lean` proves per-constructor coverage
+(`coverage_linearRoot` / `coverage_thomQuadratic` / `cellBound_plinear`
+(new — the degenerate pairing) / `cellBound_generic`; build green 7604
+jobs, axiom-clean). The sub-slice plan for what remains is in BOARD's
+19a entry (F0–F5):
 
 **Slice F/G — `Nlsat/Check.lean` assembly.** The pieces exist; the work
 is composition:
@@ -133,6 +137,19 @@ target if its trace stays in fragment), 12e (integer branching), 14
 wiring, ½ session), 16 (parity harness).
 
 ## Traps / lessons (new this arc — also in memory file)
+
+- **Numeral defaulting in the Nlsat namespace context (2026-08-06,
+  cost ~1h):** a standalone `0` in a statement Prop position can
+  elaborate as `Nat.cast 0` (OfNat defaulting beats unification when
+  the term has `[1]!` subterms); the goal then shows `↑0`, which is
+  NOT defeq to `(0:ℝ)` at default transparency, and linarith is blind
+  to Int hypotheses. Discipline: annotate `(0 : ℝ)` in statements;
+  bridge to cast-zero hypotheses with GOAL-directed `exact_mod_cast`;
+  produce cast facts with `Int.cast_lt_zero.mpr`/`Int.cast_pos.mpr`,
+  never `exact_mod_cast` in argument position.
+- `if (b : Bool)` reduction: `if_true`/`if_false` are for `ite True`/
+  `ite False` — the Bool-condition if is `ite (b = true)`; use
+  `rw [h, if_pos rfl]` / `rw [h, if_neg Bool.false_ne_true]`.
 
 - `variable (ρ)` + equation-style defs: the recursive reference needs
   explicit ρ — make ρ an explicit parameter instead.

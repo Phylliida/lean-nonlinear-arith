@@ -209,33 +209,43 @@ def isV0 (b : TraceBundle) : Bool :=
 
 end TraceBundle
 
-/-! ## The emission grammar (Q1/F4, DRAFT — finalizes with the checker)
+/-! ## The emission grammar (Q1/F4 — FINALIZED 2026-08-06)
 
 The checker's INPUT CONTRACT, enumerated from
 `git show z3-4.12.5:src/nlsat/nlsat_explain.cpp` (the A1–A5 ineq shapes,
 B root tiers, C cell literals of the nla-19a board entry, spelled as
-step-level well-formedness). Proved direction: grammar → S3-coverage
-(Slice E). Explain → grammar is source-fidelity + pins (the search is
-untrusted — F4). A step outside the grammar is a parse-level checker
-rejection (the sound failure mode). -/
+step-level well-formedness), audited line-by-line in E1 (the const-
+lcFact gap fix, the `sp` placeholder and `mkNeg`-fold pinings — see
+the BOARD 19a entry). Coverage (E2): `Nlsat/Coverage.lean` proves per
+constructor that the grammar conditions + the bundle-context facts
+suffice for the Check.lean discharge kit. Proved direction: grammar →
+S3-coverage. Explain → grammar is source-fidelity + pins (the search
+is untrusted — F4). A step outside the grammar is a parse-level
+checker rejection (the sound failure mode). -/
 
 inductive Grammar : TraceStep → Prop
   /-- B-tier linear (:742/:756/:861): the guard is `degreeIn y p = 1`;
   the const-lc variant has `(coeffsIn y)[1]` constant NONZERO (:745
-  SASSERT; the port rejects `c == 0` defensively). `lcFact = some (c, s)`
-  requires `c` that lc and `s ≠ 0` (:763-765 — vanishing lc ⇒ generic
-  fallback). The plinear path is reachable ONLY via the quadratic
-  degenerate (:811-812 — `add_root_literal`'s chain :730-731 does not
-  try it), where the lc is the parent quadratic's `B` and CAN be a
-  nonzero constant; then `s = Int.sign c` and `ensure_sign` adds no
-  literal (:845 `is_const` skip). E1 audit 2026-08-06: the original
-  `c.asConst?.isNone` condition rejected those legitimate emissions. -/
+  SASSERT; the port rejects `c == 0` defensively) with `mkNeg` the
+  const's negativity (:746); `lcFact = some (c, s)` requires `c` that
+  lc, `s ≠ 0` (:763-765 — vanishing lc ⇒ generic fallback), and
+  `mkNeg = decide (s < 0)` (:767). The plinear path is reachable ONLY
+  via the quadratic degenerate (:811-812 — `add_root_literal`'s chain
+  :730-731 does not try it), where the lc is the parent quadratic's `B`
+  and CAN be a nonzero constant; then `s = Int.sign c` and
+  `ensure_sign` adds no literal (:845 `is_const` skip). E1 audit
+  2026-08-06: the original `c.asConst?.isNone` condition rejected those
+  legitimate emissions; the `mkNeg` folds were pinned with the E2
+  design (they make the lc-sign evidence derivable by `decide` in the
+  const cases). -/
   | linearRoot {k : RootKind} {y : Var} {p : MPoly} {mkNeg : Bool}
       {lcFact : Option (MPoly × Int)} :
       p.degreeIn y = 1 →
       (match lcFact with
-       | none => ∃ v, ((p.coeffsIn y)[1]!).asConst? = some v ∧ v ≠ 0
+       | none => ∃ v, ((p.coeffsIn y)[1]!).asConst? = some v ∧ v ≠ 0 ∧
+           mkNeg = decide (v < 0)
        | some (c, s) => c = (p.coeffsIn y)[1]! ∧ s ≠ 0 ∧
+           mkNeg = decide (s < 0) ∧
            ∀ v, c.asConst? = some v → s = Int.sign v) →
       Grammar (.linearRoot k y p mkNeg lcFact)
   /-- B-tier Thom (:787-820): `degreeIn y p = 2`, 1-based `i ∈ {1, 2}`,
