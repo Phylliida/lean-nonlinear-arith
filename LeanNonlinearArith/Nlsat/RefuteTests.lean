@@ -70,4 +70,79 @@ example (ρ : Nat → ℝ) :
       (arithClause [⟨1, false⟩] [⟨2, false⟩]) := by
   nlsat_arith_valid
 
+/-! ## The 2-var acceptance driver's arith lemmas (design review 5, F-i)
+
+The dump data verbatim from BOARD's F2 dump analysis (post-renameVars-
+fix), goal `x0²+x1² ≥ 2 ∧ x0 ≤ 1 ∧ x1 < 1 ∧ x0 > 0 ∧ x1 > 0`. Review 5's
+probe showed ALL of these close from literal-failure facts alone (no
+step-fact collection): bundles 6/7 and final cores 1/3 directly, final
+core 2 via one disequality trichotomy split (its `¬(x0−1=0)` fact is
+invisible to linarith). -/
+
+private def qx0 : MPoly := [(1, [(0, 1)])]
+private def qx1 : MPoly := [(1, [(1, 1)])]
+private def qx0sqx1sqm2 : MPoly := [(1, [(1, 2)]), (1, [(0, 2)]), (-2, [])]
+private def qx0m1 : MPoly := [(1, [(0, 1)]), (-1, [])]
+private def qx1m1 : MPoly := [(1, [(1, 1)]), (-1, [])]
+private def qx0p1 : MPoly := [(1, [(0, 1)]), (1, [])]
+private def qx0sqm2 : MPoly := [(1, [(0, 2)]), (-2, [])]
+
+/-- Atom table verbatim from the acceptance dump: 1 `x0²+x1²<2`,
+2 `x0>1`, 3 `x1<1`, 4 `x0>0`, 5 `x1>0`, 6 `x0+1>0`, 7 `x0<1`,
+8 `x0=1`, 9 `x0²<2`. -/
+private def drvAtoms : Array (Option Atom) :=
+  #[none,
+    some (.ineq ⟨.lt, [(qx0sqx1sqm2, false)]⟩),
+    some (.ineq ⟨.gt, [(qx0m1, false)]⟩),
+    some (.ineq ⟨.lt, [(qx1m1, false)]⟩),
+    some (.ineq ⟨.gt, [(qx0, false)]⟩),
+    some (.ineq ⟨.gt, [(qx1, false)]⟩),
+    some (.ineq ⟨.gt, [(qx0p1, false)]⟩),
+    some (.ineq ⟨.lt, [(qx0m1, false)]⟩),
+    some (.ineq ⟨.eq, [(qx0m1, false)]⟩),
+    some (.ineq ⟨.lt, [(qx0sqm2, false)]⟩)]
+
+/-- Bundle 6's arith marker (core `[⟨5,false⟩,⟨1,true⟩,⟨3,false⟩]`,
+proj `[⟨6,true⟩,⟨7,true⟩]`). -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ drvAtoms)
+      (arithClause [⟨5, false⟩, ⟨1, true⟩, ⟨3, false⟩] [⟨6, true⟩, ⟨7, true⟩]) := by
+  nlsat_arith_valid
+
+/-- Bundle 7's arith marker (same core, proj `[⟨8,true⟩,⟨4,true⟩,⟨9,true⟩]`
+— the thomQuadratic pair on both roots of x0²−2). -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ drvAtoms)
+      (arithClause [⟨5, false⟩, ⟨1, true⟩, ⟨3, false⟩]
+        [⟨8, true⟩, ⟨4, true⟩, ⟨9, true⟩]) := by
+  nlsat_arith_valid
+
+/-- Final bundle, arith core 1: `[⟨7,true⟩,⟨9,true⟩,⟨2,true⟩]`. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ drvAtoms)
+      (arithClause [⟨7, true⟩, ⟨9, true⟩, ⟨2, true⟩] []) := by
+  nlsat_arith_valid
+
+/-- Final bundle, arith core 2: `[⟨7,true⟩,⟨8,true⟩,⟨2,true⟩]` — the
+disequality case: needs one `lt_or_gt_of_ne` split of the `¬(x0−1=0)`
+fact before linarith closes each branch. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ drvAtoms)
+      (arithClause [⟨7, true⟩, ⟨8, true⟩, ⟨2, true⟩] []) := by
+  nlsat_arith_valid
+
+/-- Final bundle, arith core 3: `[⟨4,false⟩,⟨6,true⟩]`. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ drvAtoms)
+      (arithClause [⟨4, false⟩, ⟨6, true⟩] []) := by
+  nlsat_arith_valid
+
+/- Negative probe on the driver table: bundle 6 with one proj polarity
+flipped is not valid and must be rejected. -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ drvAtoms)
+      (arithClause [⟨5, false⟩, ⟨1, true⟩, ⟨3, false⟩] [⟨6, false⟩, ⟨7, true⟩]) := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

@@ -17,15 +17,22 @@ against the trusted layer (`Assemble` decode, `Coverage` discharges,
 shape, glue failure — is a tactic failure = sound rejection, never an
 unsound acceptance.
 
-**Method (per the F2-groundwork analysis):** assume every literal of
-the arith clause fails (`hnot : ∀ l ∈ C, ¬ litSatI I l`), extract
-ℝ-level facts per literal via the `holds_single_*` collapses
+**Method (per the F2-groundwork analysis + design review 5):** assume
+every literal of the arith clause fails (`hnot : ∀ l ∈ C, ¬ litSatI I l`),
+extract ℝ-level facts per literal via the `holds_single_*` collapses
 (negated-atom polarity via `Classical.not_not`), unfold `evalP`/`evalM`
-on the concrete polys to arithmetic over `ρ`, and close `False` with
-`linarith` (workhorse, R-i) / `nlinarith` (backup, with `sq_nonneg`
-hints per occurring variable). Step-derived facts (Coverage theorems)
-are collected in a later slice — the x0²+x1²<0 refutation's arith
-lemmas are all trivially valid and need none.
+on the concrete polys, normalize with `ring_nf` (the simp-unfold leaves
+`ρ x ^ 1`/`↑(-1)` spellings that are not linarith-normal — review 5,
+F-ii), and close `False` with `linarith` (workhorse, R-i) / `nlinarith`
+(backup, with `sq_nonneg` hints per occurring variable). Facts of shape
+`¬(t = 0)` are invisible to both (linarith cannot split disequalities),
+so on glue failure each is trichotomy-split (`lt_or_gt_of_ne`), lazily,
+one at a time, retrying the glue per branch (review 5, F-ii(b); the
+acceptance driver's final core 2 needs exactly one split). Step-derived
+facts (Coverage theorems) are NOT collected at this layer: review 5's
+probe (F-i) showed the acceptance driver's arith lemmas close from
+literal-failure facts alone; step-fact collection is re-sequenced to a
+later slice driven by a grammar-coverage census.
 
 The elaborator decodes against a NATIVE copy of the atom table
 (unsafe-evaluated from the goal — untrusted); proof-term construction
@@ -148,21 +155,55 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
       let (_, mvar') ← mvar.note `h_sq sqn none
       pure mvar'
   replaceMainGoal [mvar]
-  -- Unfold evalP/evalM on the concrete polys to arithmetic over ρ,
-  -- then the glue: linarith first (R-i), nlinarith as backup.
+  -- Unfold evalP/evalM on the concrete polys, then normalize: the
+  -- simp-unfold leaves `ρ x ^ 1` powers and `↑(-1)` Int-cast numerals
+  -- whose spelling is not linarith-normal (design review 5, F-ii(a)).
   evalTactic (← `(tactic|
     simp only [evalP, evalM, evalP_add, evalP_mul, evalP_neg, evalP_sub,
       evalP_smulTerm, evalP_ofInt, evalP_ofVar,
       Int.cast_one, Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add] at *))
-  try
-    evalTactic (← `(tactic| linarith))
-  catch _eLin =>
-    try
-      evalTactic (← `(tactic| nlinarith []))
+  evalTactic (← `(tactic| ring_nf at *))
+  -- The glue: linarith first (R-i), nlinarith as backup. On failure,
+  -- lazily trichotomy-split disequality facts `¬(t = 0)` (invisible to
+  -- linarith — review 5, F-ii(b)) one at a time, retrying per branch.
+  let glue : TacticM Bool := do
+    try evalTactic (← `(tactic| linarith)); return true
     catch _ =>
-      let skipMsg := if skipped.isEmpty then "none" else
-        (skipped.toList.map (toString ∘ repr)).toString
-      throwError "nlsat_arith_valid: glue failed (skipped literals: {skipMsg})"
+      try evalTactic (← `(tactic| nlinarith [])); return true
+      catch _ => return false
+  -- One not-yet-split disequality fact of the goal's noted facts.
+  let findDiseq (g : MVarId) (done : Array FVarId) :
+      TacticM (Option FVarId) := g.withContext do
+    for d in (← getLCtx) do
+      if d.userName == `h_f && !done.contains d.fvarId then
+        let ty ← instantiateMVars d.type
+        if ty.isAppOf ``Not && ty.getAppArgs[0]!.isAppOf ``Eq then
+          return some d.fvarId
+    return none
+  -- NOTE: `setGoals`, not `replaceMainGoal` — a closed branch leaves
+  -- the goal list EMPTY, and `replaceMainGoal` throws on an empty list.
+  let rec closeWithSplits (g : MVarId) (fuel : Nat) (done : Array FVarId) :
+      TacticM Unit := do
+    setGoals [g]
+    if ← glue then return
+    match fuel with
+    | 0 => throwError "nlsat_arith_valid: glue failed (diseq-split fuel exhausted)"
+    | fuel + 1 =>
+      match ← findDiseq g done with
+      | none =>
+        let skipMsg := if skipped.isEmpty then "none" else
+          (skipped.toList.map (toString ∘ repr)).toString
+        throwError "nlsat_arith_valid: glue failed (skipped literals: {skipMsg})"
+      | some d =>
+        g.withContext do
+          let tri ← mkAppM ``lt_or_gt_of_ne #[mkFVar d]
+          let (triFvar, gOr) ← g.note `h_tri tri none
+          let gs ← gOr.cases triFvar
+          let [c1, c2] := gs.toList.map (·.mvarId) |
+            throwError "nlsat_arith_valid: unexpected trichotomy case count"
+          closeWithSplits c1 fuel (done.push d)
+          closeWithSplits c2 fuel (done.push d)
+  closeWithSplits (← getMainGoal) 8 #[]
 
 /-- `nlsat_arith_valid` — prove `clauseSatI (interp ρ atoms) C` for a
 concrete atom table and clause (the F2 per-arith-marker obligation). -/
