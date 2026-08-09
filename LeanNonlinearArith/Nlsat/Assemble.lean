@@ -89,6 +89,41 @@ theorem clauseSatI_interp (ρ : Nat → ℝ) (atoms : Array (Option Atom))
 def arithClause (core proj : List Literal) : List Literal :=
   proj ++ core.map Literal.negate
 
+/-- Negated clause ⇒ every literal fails (the `ht` side of the RUP
+application for learned clauses in the F3 walk). -/
+theorem not_litSatI_forall_of_not_clauseSatI {I : Nat → Prop} {C : List Literal}
+    (h : ¬ clauseSatI I C) : ∀ l ∈ C, ¬ litSatI I l :=
+  fun l hl hls => h ⟨l, hl, hls⟩
+
+/-- Per-clause decodability check (kernel-computable: literal-array
+lookups + Bool only). -/
+def clauseDecodable (atoms : Array (Option Atom)) : List Literal → Bool
+  | [] => true
+  | l :: ls =>
+    (match atoms[l.bvar]? with | some (some _) => true | _ => false) &&
+    clauseDecodable atoms ls
+
+/-- The check implies the per-literal decodability `clauseSatI_interp`
+consumes (the F3 walk's bridge hypotheses enter as
+`clauseDecodable_true … (by decide)`). -/
+theorem clauseDecodable_true (atoms : Array (Option Atom)) :
+    ∀ C : List Literal, clauseDecodable atoms C = true →
+      ∀ l ∈ C, ∃ a, atoms[l.bvar]? = some (some a) := by
+  intro C
+  induction C with
+  | nil => intro _ l hl; cases hl
+  | cons l ls ih =>
+    intro h l' hl'
+    unfold clauseDecodable at h
+    rw [Bool.and_eq_true] at h
+    obtain ⟨h1, h2⟩ := h
+    cases hl' with
+    | head =>
+      split at h1
+      · rename_i a ha; exact ⟨a, ha⟩
+      · simp at h1
+    | tail _ hm => exact ih h2 l' hm
+
 /-! ## The unit-propagation engine (R1/F3) -/
 
 /-- One literal's status under the partial assignment. -/

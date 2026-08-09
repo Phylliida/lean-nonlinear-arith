@@ -36,6 +36,8 @@ import LeanNonlinearArith.Nlsat.Assemble
 import LeanNonlinearArith.Nlsat.AssembleTests
 import LeanNonlinearArith.Nlsat.Refute
 import LeanNonlinearArith.Nlsat.RefuteTests
+import LeanNonlinearArith.Nlsat.Walk
+import LeanNonlinearArith.Nlsat.WalkTests
 import LeanNonlinearArith.Nlsat.CheckTests
 import LeanNonlinearArith.Nlsat.TypesOrder
 import LeanNonlinearArith.Nlsat.IntervalSet
