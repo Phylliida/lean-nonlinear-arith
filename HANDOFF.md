@@ -81,6 +81,24 @@ Recipe (BOARD F4 entry + R4'):
   `withLayerHeartbeats`), 15 (tactus wiring, ½ session), 16 (parity
   harness).
 
+## Session mechanics (F3 workflow, reusable for F4)
+
+- **Adding a new dump case** (F4's x²+2x+1 driver): copy a `goN` in
+  `scratch_dump.lean`'s `DumpDriver` (init, mkVar per var,
+  mkIneqLiteral per atom, mkClause per input unit clause,
+  `Solver.check (Solver.resolve Explain.explain)`), add a
+  `printSnap "<name>"` line in `main`, run
+  `lake env lean --run scratch_dump.lean`. Output is paste-ready
+  `private def`s (⟨steps, lemma⟩ anonymous form — `lemma` is reserved).
+  The goal's input list for `nlsat_refute` = the referenced input
+  clauses in cid order, readable off the printed clause table/bundles;
+  WalkTests' `sq`/`drv` examples are the reference shape.
+- **Probe debugging:** `#guard_msgs (drop error)` swallows messages —
+  to see raw rejections, copy the file to a scratch, strip the guard
+  lines, `lake env lean` it, delete after.
+- Full build after test changes: `lake build` (green = 7610 jobs as of
+  F3; +2 for F4's new pins is expected).
+
 ## Traps / lessons (new this session — also in BOARD's F3 block)
 
 - **`Meta.evalExpr` of a bare FUNCTION const mis-evaluates on this
