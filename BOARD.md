@@ -2170,7 +2170,7 @@ solver) succeeds, with owner and effort class. Sources: reviews
 
 | # | Gap | Owner | Effort |
 |---|-----|-------|--------|
-| G1 | Zero-product eq-implication lemmas, total factor degree ≥ 3 (fs3/fs4 pins) | census-slice F-iv | **QUICK (~½ session)** |
+| G1 | ~~Zero-product eq-implication lemmas, total factor degree ≥ 3 (fs3/fs4 pins)~~ **DONE 2026-08-09** — `Refute.zeroProductClose`: native `factorM` + kernel-verified product identity (evalP simp + `ring`) + `mul_ne_zero`/`pow_ne_zero` chain; fs3/fs4 flipped to positive pins; fs3FinalBad soundness probe (invalid clause that passes RUP, rejected at the discharge) | landed in Refute.lean | — |
 | G2 | Multi-factor eq atoms in cores (z3 `add_zero_assumption` composite `∏pᵢ≠0` literals) skipped by `extractFact` | census-slice F-iv (A1) | **QUICK (~½ session)** |
 | G3 | Even-parity-marked atoms skipped by `extractFact` | census-slice F-iv | **QUICK (~½ session)** |
 | G4 | In-fragment non-literal-local bundles (rootGeneric definite-disc; √2-grade cellBound goal) | census slice (step-fact collection) | MEDIUM — needs the F-i step-fact machinery, census-first |

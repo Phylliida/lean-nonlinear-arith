@@ -1,6 +1,7 @@
 import Mathlib
 import LeanNonlinearArith.Nlsat.Assemble
 import LeanNonlinearArith.Nlsat.Coverage
+import LeanNonlinearArith.Nlsat.MPolyFactor
 
 /-!
 # nla-19a Slice F2 — the per-bundle arith-lemma elaborator (`Refute`)
@@ -84,6 +85,87 @@ def extractFact (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
       return some (← mkAppM ``mt #[(← mkAppM ``Iff.mpr #[lem]), h_i])
   | _ => return none
 
+/-- G1 (design review 7, F-v): the zero-product discharge. If an eq
+fact `evalP ρ p = 0` has `p` factorizing natively into factors each
+matched (exact poly equality) by a diseq fact `evalP ρ fᵢ ≠ 0`, close
+`False` directly: the product identity
+
+    evalP ρ p = ↑c * (evalP ρ f₁)^k₁ * … * (evalP ρ fₘ)^kₘ
+
+is kernel-verified by the evalP simp set + `ring` (the native
+factorization is untrusted — a wrong factorization fails loudly here),
+and the `mul_ne_zero`/`pow_ne_zero` chain contradicts `p = 0`. This
+closes the degree ≥ 3 cases beyond nlinarith's one-round pairwise
+products (fs3: three distinct factors; fs4: multiplicity 3).
+`unsafe` for consistency with the caller (no native eval here, but the
+FVarId-carrying index comes from one). Returns `false` on any
+mismatch — the caller falls through to the normal pipeline. -/
+unsafe def tryZeroProduct (g : MVarId) (ρ : Expr) (p : MPoly) (h0fv : FVarId)
+    (constant : Int) (chain : Array (MPoly × Nat × FVarId)) : TacticM Bool := do
+  g.withContext do
+    try
+      let ρp ← mkAppM ``Check.evalP #[ρ, toExpr p]
+      -- pin R := ℝ explicitly: `Int.cast`'s ring argument is implicit
+      -- and the hz subgoal must be ℝ-typed for `ring`
+      let mut rhs ← mkAppOptM ``Int.cast
+        #[some (mkConst ``Real), none, some (toExpr constant)]
+      for (f, k, _) in chain do
+        let fE ← mkAppM ``Check.evalP #[ρ, toExpr f]
+        let fkE ← mkAppM ``HPow.hPow #[fE, toExpr k]
+        rhs ← mkAppM ``HMul.hMul #[rhs, fkE]
+      let hzTy ← mkAppM ``Eq #[ρp, rhs]
+      let hzM ← mkFreshExprMVar hzTy
+      let saved ← getGoals
+      setGoals [hzM.mvarId!]
+      try
+        evalTactic (← `(tactic| simp only [evalP, evalM, evalP_add, evalP_mul,
+          evalP_neg, evalP_sub, evalP_smulTerm, evalP_ofInt, evalP_ofVar,
+          Int.cast_one, Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add]))
+        evalTactic (← `(tactic| ring))
+      catch e =>
+        setGoals saved
+        throw e
+      setGoals saved
+      unless (← hzM.mvarId!.isAssigned) do
+        throwError "zero-product identity subgoal not closed"
+      let hzE ← instantiateMVars hzM
+      -- the ≠ 0 chain, left-nested to match rhs's shape
+      let cneInt ← mkDecideProof (← mkAppM ``Ne #[toExpr constant, toExpr (0 : Int)])
+      -- `Int.cast_ne_zero`'s binders are all implicit/instance:
+      -- {α} [AddGroupWithOne] [CharZero] {n} — pin α := ℝ and n
+      let cneIff ← mkAppOptM ``Int.cast_ne_zero
+        #[some (mkConst ``Real), none, none, some (toExpr constant)]
+      let cne ← mkAppM ``Iff.mpr #[cneIff, cneInt]
+      let mut ne := cne
+      for (_, k, fv) in chain do
+        let pf ← mkAppM ``pow_ne_zero #[toExpr k, mkFVar fv]
+        ne ← mkAppM ``mul_ne_zero #[ne, pf]
+      let xeq0 ← mkAppM ``Eq.trans #[(← mkAppM ``Eq.symm #[hzE]), mkFVar h0fv]
+      let falsePrf ← mkAppOptM ``absurd #[none, some (mkConst ``False), xeq0, ne]
+      g.assign falsePrf
+      let gs ← getGoals
+      setGoals (← gs.filterM fun g' => return !(← g'.isAssigned))
+      return true
+    catch _ => return false
+
+/-- Try the zero-product close for each eq fact; `true` if `g` was
+assigned. -/
+unsafe def zeroProductClose (g : MVarId) (ρ : Expr)
+    (eqFacts diseqFacts : Array (MPoly × FVarId)) : TacticM Bool := do
+  for (p, h0fv) in eqFacts do
+    let fm := MPoly.factorM p
+    if fm.constant == 0 || fm.factors.isEmpty then continue
+    let mut chain : Array (MPoly × Nat × FVarId) := #[]
+    let mut ok := true
+    for (f, k) in fm.factors do
+      if k == 0 then continue
+      match diseqFacts.find? (fun (q, _) => q == f) with
+      | some (_, fv) => chain := chain.push (f, k, fv)
+      | none => ok := false; break
+    if !ok || chain.isEmpty then continue
+    if ← tryZeroProduct g ρ p h0fv fm.constant chain then return true
+  return false
+
 /-- Core worker: prove `clauseSatI (interp ρ atoms) C` for concrete
 `atoms`, `C`. `hName` seeds the extracted-fact names. Failure (any
 undecodable literal, skipped shape, or glue failure) propagates as a
@@ -115,10 +197,14 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
   let mut mvar := mvar2
   let mut skipped : Array Literal := #[]
   let mut vars : List Var := []
+  -- G1 (design review 7): eq/diseq fact index for the zero-product
+  -- discharge — (poly, h_f fvar) per eq-atom literal.
+  let mut eqFacts : Array (MPoly × FVarId) := #[]
+  let mut diseqFacts : Array (MPoly × FVarId) := #[]
   for l in CV do
     -- everything that typechecks terms mentioning context fvars must
     -- run in the CURRENT mvar's local context (hFvar, noted facts)
-    let (mvar', wasSkipped) ← mvar.withContext do
+    let (mvar', wasSkipped, factInfo) ← mvar.withContext do
       let lE := litToExpr l
       -- h_i : ¬ litSatI I l  :=  fun hlit => h ⟨l, by decide, hlit⟩
       let litSatTy ← mkAppM ``litSatI #[IE, lE]
@@ -138,13 +224,20 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
         mvar1.withContext do
           match (← extractFact ρ IE (mkFVar h_iFvar) l a) with
           | some fact =>
-            let (_, mvar2') ← mvar1.note `h_f fact none
-            pure (mvar2', false)
-          | none => pure (mvar1, true)
+            let (hfv, mvar2') ← mvar1.note `h_f fact none
+            let info := match a with
+              | .ineq ⟨.eq, [(q, false)]⟩ => some (q, hfv, l.neg)
+              | _ => none
+            pure (mvar2', false, info)
+          | none => pure (mvar1, true, none)
       | _ =>
         throwError "nlsat_arith_valid: literal {repr l} is undecodable in the atom table"
     mvar := mvar'
     if wasSkipped then skipped := skipped.push l
+    match factInfo with
+    | some (q, fv, true) => eqFacts := eqFacts.push (q, fv)
+    | some (q, fv, false) => diseqFacts := diseqFacts.push (q, fv)
+    | none => pure ()
     match atomsV[l.bvar]? with
     | some (some a) => vars := vars ++ atomVars a
     | _ => pure ()
@@ -154,6 +247,12 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
       let sqn ← mkAppM ``sq_nonneg #[mkApp ρ (toExpr v)]
       let (_, mvar') ← mvar.note `h_sq sqn none
       pure mvar'
+  -- G1 zero-product close (review 7, F-v): before the simp/ring_nf
+  -- mangling, while the h_f facts are still `evalP` comparisons.
+  -- Shape-gated (needs an eq fact whose factors all have diseq facts);
+  -- no-op on lt/gt-only cores.
+  if ← zeroProductClose mvar ρ eqFacts diseqFacts then
+    return
   replaceMainGoal [mvar]
   -- Unfold evalP/evalM on the concrete polys, then normalize: the
   -- simp-unfold leaves `ρ x ^ 1` powers and `↑(-1)` Int-cast numerals
