@@ -158,6 +158,26 @@ def go4 : SolverM (Option LBool) := do
   let _ ← Solver.mkClause #[l3.negate] false
   Solver.check (Solver.resolve Explain.explain)
 
+-- review-7 probe: THREE distinct factors — x0^3-6x0^2+11x0-6 = 0
+-- with x0-1, x0-2, x0-3 all ≠ 0. Does the solver refute at stage 0,
+-- and if so can the checker discharge the arith lemma (nlinarith
+-- multiplies hypothesis PAIRS once — a triple product may be beyond it)?
+def pCubic : MPoly := [(1, [(0, 3)]), ((-6), [(0, 2)]), (11, [(0, 1)]), ((-6), [])]
+def pXm3 : MPoly := [(1, [(0, 1)]), ((-3), [])]
+
+def go5 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let l1 ← Solver.mkIneqLiteral ⟨.eq, [(pCubic, false)]⟩
+  let l2 ← Solver.mkIneqLiteral ⟨.eq, [(pXm1, false)]⟩
+  let l3 ← Solver.mkIneqLiteral ⟨.eq, [(pXm2, false)]⟩
+  let l4 ← Solver.mkIneqLiteral ⟨.eq, [(pXm3, false)]⟩
+  let _ ← Solver.mkClause #[l1] false
+  let _ ← Solver.mkClause #[l2.negate] false
+  let _ ← Solver.mkClause #[l3.negate] false
+  let _ ← Solver.mkClause #[l4.negate] false
+  Solver.check (Solver.resolve Explain.explain)
+
 end DumpDriver
 
 def printSnap (name : String) (s : Solver) : IO Unit := do
@@ -182,3 +202,6 @@ def main : IO Unit := do
   let (r4, s4) := (DumpDriver.go4.run Solver.empty : Option LBool × Solver)
   IO.println s!"fs2 result: {repr r4}"
   printSnap "fs2" s4
+  let (r5, s5) := (DumpDriver.go5.run Solver.empty : Option LBool × Solver)
+  IO.println s!"fs3 result: {repr r5}"
+  printSnap "fs3" s5

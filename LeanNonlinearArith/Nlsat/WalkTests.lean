@@ -251,4 +251,71 @@ example : ∀ ρ : Nat → ℝ,
     (∀ C ∈ [[⟨1, false⟩], [⟨2, true⟩], [⟨3, true⟩]], clauseHolds ρ fs2Atoms C) → False := by
   nlsat_refute ⟨fs2Atoms, fs2Clauses, fs2Bundles, fs2Final⟩
 
+/-! ## KNOWN-GAP pins (design review 7, F-v) — expected REJECTION
+
+n-factor zero-product eq-implication lemmas with total factor degree
+≥ 3 exceed the F2 glue (nlinarith multiplies hypothesis pairs once —
+the discharges need a degree-3 product). The SOLVER refutes both goals
+at stage 0 (z3's explain does the same via `add_zero_assumption`'s
+internal factorization); the checker soundly rejects. The fix is
+checker-side factorization + a `mul_ne_zero` chain (census slice /
+F-iv). WHEN THAT LANDS these examples succeed and the guards FAIL
+loudly — flip them to positive pins then. -/
+
+/-- `(x0-1)(x0-2)(x0-3) = 0` with all three factors `≠ 0`. -/
+private def fs3Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(0, 3)]), ((-6), [(0, 2)]), (11, [(0, 1)]), ((-6), [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1)]), ((-2), [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1)]), ((-3), [])], false)]⟩)]
+
+private def fs3Clauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, false⟩], learned := false, deleted := false },
+   { lits := #[⟨2, true⟩], learned := false, deleted := false },
+   { lits := #[⟨3, true⟩], learned := false, deleted := false },
+   { lits := #[⟨4, true⟩], learned := false, deleted := false }]
+
+private def fs3Bundles : Array (Option TraceBundle) := #[none, none, none, none, none]
+
+private def fs3Final : TraceBundle :=
+  ⟨#[.resolution (.clause 1),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨1, false⟩, ⟨2, true⟩, ⟨3, true⟩, ⟨4, true⟩] #[]),
+      .resolution (.clause 4),
+      .resolution (.clause 3),
+      .resolution (.clause 2)], #[]⟩
+
+#guard_msgs (drop error) in
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, true⟩], [⟨3, true⟩], [⟨4, true⟩]],
+      clauseHolds ρ fs3Atoms C) → False := by
+  nlsat_refute ⟨fs3Atoms, fs3Clauses, fs3Bundles, fs3Final⟩
+
+/-- `(x0+1)³ = 0 ∧ x0+1 ≠ 0` — even a single REPEATED factor at
+multiplicity 3 exceeds the degree-2 product boundary. -/
+private def fs4Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(0, 3)]), (3, [(0, 2)]), (3, [(0, 1)]), (1, [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1)]), (1, [])], false)]⟩)]
+
+private def fs4Clauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, false⟩], learned := false, deleted := false },
+   { lits := #[⟨2, true⟩], learned := false, deleted := false }]
+
+private def fs4Bundles : Array (Option TraceBundle) := #[none, none, none]
+
+private def fs4Final : TraceBundle :=
+  ⟨#[.resolution (.clause 1),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨1, false⟩, ⟨2, true⟩] #[]),
+      .resolution (.clause 2)], #[]⟩
+
+#guard_msgs (drop error) in
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, true⟩]], clauseHolds ρ fs4Atoms C) → False := by
+  nlsat_refute ⟨fs4Atoms, fs4Clauses, fs4Bundles, fs4Final⟩
+
 end LeanNonlinearArith.Nlsat.Tests.Walk

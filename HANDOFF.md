@@ -50,7 +50,12 @@ Remaining in the roadmap: **F5 housekeeping → census slice → 19b
   collection via the Coverage theorems (mechanism recipe in BOARD:
   `coverage_linearRoot`/`coverage_thomQuadratic` assembly, R-iii
   root-order injection, R-ii by-value reconstruction) + the F-iv
-  `extractFact` extensions (multi-factor ¬EQ collapse, even parity).
+  `extractFact` extensions (multi-factor ¬EQ collapse, even parity)
+  PLUS (review 7, F-v) checker-side factorization + `mul_ne_zero`-chain
+  discharge for zero-product cores — degree ≥ 3 factor products exceed
+  the nlinarith glue (fs3/fs4 KNOWN-GAP pins in WalkTests flip loudly
+  when fixed); the trace carries no factorization hint for these, so
+  step-fact collection alone does not close it.
   `rootGeneric` definite-disc is the known member. The √2-grade goal
   (x0≥0 ∧ x0²≥2 ∧ x0≤1, load-bearing cellBound) lands here — the plain
   √2 goal refutes at stage 0 (BOARD F2-dump analysis). Review-6 options
