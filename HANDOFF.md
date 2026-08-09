@@ -49,9 +49,15 @@ Recipe (BOARD F4 entry + R4'):
    pins stay green (they were generated the same way).
 2. **factorSplit-bearing trace** x²+2x+1 (the knob that may pull the
    19b factorSplit identity forward, accepted risk).
-3. **Negative probes per R4':** corrupted `mkNeg`, corrupted `sp` —
-   parse-level rejections via the E1 grammar tightenings; decode-success
-   assertions on every step (R-ii).
+3. **Negative probes per R4' — RE-SCOPED by design review 6 (F-w):**
+   the walk does not parse step payloads, so corrupted-`mkNeg`/
+   corrupted-`sp` probes are invisible at this layer (SOUND: accept-
+   ⊆-valid holds regardless; the checker accepts a superset of grammar
+   traces — any refutation whose arith lemmas it re-discharges). Those
+   probes move to the census slice (payload consumption lands there);
+   F4 keeps the WalkTests probes (input-list mismatch, corrupted arith
+   polarity, corrupted lemma) + decode-success assertions on every
+   step (R-ii). A decidable `grammarOK` lint is a census-slice option.
 4. All 12c/12d pins re-green (nothing should have moved — confirm).
 
 ## After F4
