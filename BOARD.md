@@ -2084,6 +2084,36 @@ trip on the driver + factorSplit-bearing x²+2x+1 + negative probes per
 R4'; the dump printer and the walk are the machinery), then F5, then
 the census slice.
 
+**F4 DONE (2026-08-09): acceptance** (build green 7610; WalkTests +2
+end-to-end walks):
+1. **Regeneration stability:** the `scratch_dump.lean` printer
+   reproduces all 8 WalkTests snapshot defs byte-identically (mod
+   whitespace). Caught en route: the printer still emitted the
+   pre-4.25 `{ steps := …, lemma := … }` structure-instance form —
+   fixed to the anonymous `⟨steps, lemma⟩` form (the reserved-word
+   trap exactly as pinned in the F3 traps list).
+2. **factorSplit drivers (fs1/fs2):** fs1 = `x0²+2x0+1 = 0 ∧ x0+1 ≠ 0`
+   (repeated factor), fs2 = `x0²-3x0+2 = 0 ∧ x0-1 ≠ 0 ∧ x0-2 ≠ 0`
+   (distinct factors). SURPRISE vs the F2-groundwork expectation: both
+   refute at stage 0 with NO factorSplit step emitted — explain's sign
+   analysis keeps the factorization internal; the arith lemmas are
+   product-shaped eq-implications (`(x+1)² = 0 ⟹ x+1 = 0`; `(x-1)(x-2)
+   = 0` with both factors `≠ 0`). Both walk green — discharged by F2's
+   nlinarith backup path (review 5 F-ii glue: linarith first, nlinarith
+   with sq_nonneg hints as backup; plain linarith is linearly
+   consistent over the atoms {x², x} on these — the product step is
+   load-bearing). Consequence: 19b's factorSplit identity is NOT pulled
+   forward; the emission-side factorSplit steps that do occur (sq's
+   `4x0² → x0·x0`) are already walked (sq pins).
+3. **Negative probes:** the three WalkTests probes green (input-list
+   mismatch, corrupted arith polarity, corrupted lemma); review 6 F-w
+   moved payload-corruption probes to the census slice.
+4. Full build green 7610 jobs; all 12c/12d pins untouched.
+
+**12d.6b⇄19a ARC FUNCTIONALLY COMPLETE at v0.** NEXT: F5 housekeeping
+(R8/R1'), then the census slice (step-fact collection + F-iv; the
+√2-grade goal), then 19b/12e/14/15/16.
+
 ## nla-19a design review 6 `done` (2026-08-09, post-F3; Danielle-requested; probes + adversarial re-read)
 
 Method: adversarial re-read of `Walk.lean` + the Assemble.lean

@@ -79,10 +79,10 @@ def ppSteps (a : Array TraceStep) : String :=
   "#[" ++ String.intercalate ",\n      " (a.toList.map ppStep) ++ "]"
 
 def ppBundle (b : TraceBundle) : String :=
-  s!"some \{ steps := {ppSteps b.steps},\n        lemma := {ppLitArr b.lemma} }"
+  s!"some ⟨{ppSteps b.steps}, {ppLitArr b.lemma}⟩"
 
 def ppBundleFinal (b : TraceBundle) : String :=
-  s!"\{ steps := {ppSteps b.steps},\n   lemma := {ppLitArr b.lemma} }"
+  s!"⟨{ppSteps b.steps}, {ppLitArr b.lemma}⟩"
 
 def ppClauses (a : Array Clause) : String :=
   "#[" ++ String.intercalate ",\n   " (a.toList.map fun c =>
@@ -129,6 +129,35 @@ def go2 : SolverM (Option LBool) := do
   let _ ← Solver.mkClause #[l1] false
   Solver.check (Solver.resolve Explain.explain)
 
+-- F4 factorSplit case 1: x0^2+2*x0+1 = 0 ∧ x0+1 ≠ 0 (repeated factor)
+def pSq2x1 : MPoly := [(1, [(0, 2)]), (2, [(0, 1)]), (1, [])]
+def pXp1 : MPoly := [(1, [(0, 1)]), (1, [])]
+
+def go3 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let l1 ← Solver.mkIneqLiteral ⟨.eq, [(pSq2x1, false)]⟩
+  let l2 ← Solver.mkIneqLiteral ⟨.eq, [(pXp1, false)]⟩
+  let _ ← Solver.mkClause #[l1] false
+  let _ ← Solver.mkClause #[l2.negate] false
+  Solver.check (Solver.resolve Explain.explain)
+
+-- F4 factorSplit case 2: x0^2-3x0+2 = 0 ∧ x0-1 ≠ 0 ∧ x0-2 ≠ 0
+-- (two distinct factors — the zero-product case split)
+def pQuad : MPoly := [(1, [(0, 2)]), ((-3), [(0, 1)]), (2, [])]
+def pXm2 : MPoly := [(1, [(0, 1)]), ((-2), [])]
+
+def go4 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let l1 ← Solver.mkIneqLiteral ⟨.eq, [(pQuad, false)]⟩
+  let l2 ← Solver.mkIneqLiteral ⟨.eq, [(pXm1, false)]⟩
+  let l3 ← Solver.mkIneqLiteral ⟨.eq, [(pXm2, false)]⟩
+  let _ ← Solver.mkClause #[l1] false
+  let _ ← Solver.mkClause #[l2.negate] false
+  let _ ← Solver.mkClause #[l3.negate] false
+  Solver.check (Solver.resolve Explain.explain)
+
 end DumpDriver
 
 def printSnap (name : String) (s : Solver) : IO Unit := do
@@ -147,3 +176,9 @@ def main : IO Unit := do
   let (r2, s2) := (DumpDriver.go2.run Solver.empty : Option LBool × Solver)
   IO.println s!"sq result: {repr r2}"
   printSnap "sq" s2
+  let (r3, s3) := (DumpDriver.go3.run Solver.empty : Option LBool × Solver)
+  IO.println s!"fs1 result: {repr r3}"
+  printSnap "fs1" s3
+  let (r4, s4) := (DumpDriver.go4.run Solver.empty : Option LBool × Solver)
+  IO.println s!"fs2 result: {repr r4}"
+  printSnap "fs2" s4

@@ -59,7 +59,6 @@ private def sqFinal : TraceBundle :=
 example : ∀ ρ : Nat → ℝ,
     (∀ C ∈ [[⟨1, false⟩]], clauseHolds ρ sqAtoms C) → False := by
   nlsat_refute ⟨sqAtoms, sqClauses, sqBundles, sqFinal⟩
-
 /-! ## The 2-var acceptance driver (drv) -/
 
 private def drvAtoms : Array (Option Atom) :=
@@ -189,5 +188,67 @@ example : ∀ ρ : Nat → ℝ,
     (∀ C ∈ [[⟨1, true⟩], [⟨2, true⟩], [⟨3, false⟩], [⟨4, false⟩], [⟨5, false⟩]],
       clauseHolds ρ drvAtoms C) → False := by
   nlsat_refute ⟨drvAtoms, drvClausesBadRup, drvBundlesBadRup, drvFinal⟩
+
+/-! ## factorSplit drivers (fs1: repeated factor, fs2: distinct factors) -/
+
+/-- `x0²+2x0+1 = 0 ∧ x0+1 ≠ 0` — eq-implication through the repeated
+factor (x0+1)²; the solver refutes at stage 0 with a single arith
+lemma (no factorSplit step emitted — the factorization is internal to
+explain's sign analysis). -/
+private def fs1Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(0, 2)]), (2, [(0, 1)]), (1, [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1)]), (1, [])], false)]⟩)]
+
+private def fs1Clauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, false⟩], learned := false, deleted := false },
+   { lits := #[⟨2, true⟩], learned := false, deleted := false }]
+
+private def fs1Bundles : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   none]
+
+private def fs1Final : TraceBundle :=
+  ⟨#[.resolution (.clause 1),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨1, false⟩, ⟨2, true⟩] #[]),
+      .resolution (.clause 2)], #[]⟩
+
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, true⟩]], clauseHolds ρ fs1Atoms C) → False := by
+  nlsat_refute ⟨fs1Atoms, fs1Clauses, fs1Bundles, fs1Final⟩
+
+/-- `x0²-3x0+2 = 0 ∧ x0-1 ≠ 0 ∧ x0-2 ≠ 0` — the zero-product split over
+two distinct factors (x0-1)(x0-2). -/
+private def fs2Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(0, 2)]), ((-3), [(0, 1)]), (2, [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1)]), ((-2), [])], false)]⟩)]
+
+private def fs2Clauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, false⟩], learned := false, deleted := false },
+   { lits := #[⟨2, true⟩], learned := false, deleted := false },
+   { lits := #[⟨3, true⟩], learned := false, deleted := false }]
+
+private def fs2Bundles : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   none,
+   none]
+
+private def fs2Final : TraceBundle :=
+  ⟨#[.resolution (.clause 1),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨1, false⟩, ⟨2, true⟩, ⟨3, true⟩] #[]),
+      .resolution (.clause 3),
+      .resolution (.clause 2)], #[]⟩
+
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, true⟩], [⟨3, true⟩]], clauseHolds ρ fs2Atoms C) → False := by
+  nlsat_refute ⟨fs2Atoms, fs2Clauses, fs2Bundles, fs2Final⟩
 
 end LeanNonlinearArith.Nlsat.Tests.Walk
