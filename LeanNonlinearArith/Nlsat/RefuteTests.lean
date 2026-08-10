@@ -399,4 +399,82 @@ example (ρ : Nat → ℝ) :
     clauseSatI (interp ρ g4AtomsBad) (arithClause [⟨1, false⟩] []) := by
   nlsat_arith_valid
 
+/-! ## G4 census item 3 — step-fact collection (the cross-links member)
+
+Synthetic fixtures for the one census member that is NOT literal-local:
+an arith clause whose contradiction needs `rootVal`-vs-`ρ y` orderings
+connected to ineq-atom signs. Root literals `¬⟨k, y, i, p⟩` failing
+give opaque `rootCmp k (ρ y) (rootVal ρ y i p)` comparisons (item 2);
+the bundle's `thomQuadratic` steps convert them into the evaluated Thom
+region formulas — Or/And of comparisons over `evalP ρ p` and the
+`2Ay+B` value data, consumed by the Or-splitting glue.
+
+Fixture 1 (const lane): p = x0²−2. The two cell bounds
+`ρ 0 > root₁(p) ∧ ρ 0 < root₂(p)` force `ρ 0 ∈ (−√2, √2)`, where
+`p(ρ 0) < 0` — contradicting the `p ≥ 0` literal. A and disc are
+constants (1 and 8), so z3's `ensure_sign` adds NO literals for them
+(the :845 is_const skip): no sign atoms in the table — the numeric lane
+supplies `hAm`/`hdm`. -/
+
+private def tsPm2 : MPoly := [(1, [(0, 2)]), (-2, [])]
+
+private def tsAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.gt, 0, 1, tsPm2⟩),        -- 1: ρ 0 > root₁(p)
+    some (.root ⟨.lt, 0, 2, tsPm2⟩),        -- 2: ρ 0 < root₂(p)
+    some (.ineq ⟨.lt, [(tsPm2, false)]⟩)]   -- 3: p < 0
+
+private def tsSteps : Array TraceStep :=
+  #[.cellBound .lower .gt 0 1 tsPm2, .thomQuadratic .gt 0 1 tsPm2 1 1 1 (-1),
+    .cellBound .upper .lt 0 2 tsPm2, .thomQuadratic .lt 0 2 tsPm2 1 1 0 (-1)]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tsAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, false⟩]) := by
+  nlsat_arith_valid_steps tsSteps
+
+/- The steps are LOAD-BEARING: without them the clause has only opaque
+`rootVal` comparisons — no first-order cross-link — so the glue must
+fail and the elaborator reject. (Also the corrupted-payload probe
+vehicle for item 4's F-w checks.) -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tsAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, false⟩]) := by
+  nlsat_arith_valid
+
+/-- Fixture 2 (clause-literal lane): p = x1·x0² − 2 — A = x1 and
+disc = 8·x1 are non-constant, so z3's `ensure_sign` emits sign literals
+for them: atoms 4 (`A > 0`) and 5 (`disc > 0`), natively the by-value
+reconstructed `discPolyOf p` (the R-ii reconstruction). -/
+
+private def tnP : MPoly := [(1, [(0, 2), (1, 1)]), (-2, [])]
+private def tnA : MPoly := [(1, [(1, 1)])]
+private def tnD : MPoly := [(8, [(1, 1)])]
+
+private def tnAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.gt, 0, 1, tnP⟩),
+    some (.root ⟨.lt, 0, 2, tnP⟩),
+    some (.ineq ⟨.lt, [(tnP, false)]⟩),
+    some (.ineq ⟨.gt, [(tnA, false)]⟩),     -- 4: A > 0 (ensure_sign)
+    some (.ineq ⟨.gt, [(tnD, false)]⟩)]     -- 5: disc > 0 (ensure_sign)
+
+private def tnSteps : Array TraceStep :=
+  #[.cellBound .lower .gt 0 1 tnP, .thomQuadratic .gt 0 1 tnP 1 1 1 (-1),
+    .cellBound .upper .lt 0 2 tnP, .thomQuadratic .lt 0 2 tnP 1 1 0 (-1)]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tnAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, false⟩, ⟨4, true⟩, ⟨5, true⟩]) := by
+  nlsat_arith_valid_steps tnSteps
+
+/- Fixture 2 without the steps also must reject (same load-bearing
+argument). -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tnAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, false⟩, ⟨4, true⟩, ⟨5, true⟩]) := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

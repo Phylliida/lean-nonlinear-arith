@@ -52,6 +52,23 @@ defeq to any elaboration spelling). -/
 def litToExpr (l : Literal) : Expr :=
   mkApp2 (mkConst ``Literal.mk) (toExpr l.bvar) (toExpr l.neg)
 
+/-- Quote a `RootKind` (no `ToExpr` instance — ctor applications;
+defeq to any elaboration spelling). -/
+def rootKindToExpr : RootKind → Expr
+  | .eq => mkConst ``RootKind.eq
+  | .lt => mkConst ``RootKind.lt
+  | .gt => mkConst ``RootKind.gt
+  | .le => mkConst ``RootKind.le
+  | .ge => mkConst ``RootKind.ge
+
+/-- Quote a thomQuadratic step (the only `TraceStep` shape the meta
+layer needs an `Expr` of). -/
+def thomStepToExpr (k : RootKind) (y : Var) (i : Nat) (p : MPoly)
+    (sq sa spd sp : Int) : Expr :=
+  mkAppN (mkConst ``TraceStep.thomQuadratic)
+    #[rootKindToExpr k, toExpr y, toExpr i, toExpr p,
+      toExpr sq, toExpr sa, toExpr spd, toExpr sp]
+
 /-- All variables occurring in a polynomial's monomials. -/
 def mpolyVars (p : MPoly) : List Var :=
   p.flatMap fun (_, m) => m.map Prod.fst
@@ -71,10 +88,11 @@ inductive FactKind where
   | negChain (fs : List (MPoly × Bool))
     -- the fact is `negChain ρ fs (¬ sign)` (R-a/R-e): split PRE-mangle
     -- so branch-local zero-product closes see evalP-form facts
-  | rootPair (y : Var) (i : Nat) (p : MPoly)
+  | rootPair (k : RootKind) (y : Var) (i : Nat) (p : MPoly)
     -- G4 root-atom branch: the fact is `RootAtom.Holds ρ ⟨k, y, i, p⟩`
     -- (the pair `i ≤ rootCount ∧ rootCmp`) — the definite-disc close
-    -- (`rootDefiniteClose`) consumes it
+    -- (`rootDefiniteClose`) consumes the count side; step-fact
+    -- collection (`collectStepFacts`) consumes the comparison side
   | other
 
 /-- The fact-extraction for one literal: ℝ-level fact proof terms with
@@ -156,7 +174,7 @@ def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
         let hf ← mkAppM' hAll #[toExpr f, memPrf]
         pure (hf, .neZero f)
       return (hSign, .other) :: perFactor
-  | .root ⟨_, y, i, p⟩ =>
+  | .root ⟨k, y, i, p⟩ =>
     -- G4 root atoms (z3's `mk_root_atom` always arrives negated). The
     -- pair fact (count bound + rootCmp) is the extraction; the
     -- definite-disc close consumes it. Positive-polarity root literals
@@ -165,7 +183,7 @@ def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
     let aE := mkApp IE (toExpr l.bvar)
     let nn ← mkAppOptM ``Classical.not_not #[some aE]
     let hH ← mkAppM ``Iff.mp #[nn, h_i]
-    return [(hH, .rootPair y i p)]
+    return [(hH, .rootPair k y i p)]
 
 /-- The diseq fact for factor `f`, converting from a sign-flipped
 fact on `-f` if needed (`evalP_neg` + `neg_ne_zero`; `MPoly.neg`
@@ -370,6 +388,7 @@ def closeNumericSubgoal (m : MVarId) : TacticM Unit := do
   try
     evalTactic (← `(tactic| simp only [evalP, evalM, evalP_add,
       evalP_mul, evalP_neg, evalP_smulTerm, evalP_ofInt, evalP_ofVar,
+      signMatches,
       Int.cast_one, Int.cast_ofNat, one_mul, mul_one, add_zero,
       zero_add]))
     evalTactic (← `(tactic| norm_num))
@@ -378,13 +397,43 @@ def closeNumericSubgoal (m : MVarId) : TacticM Unit := do
     throw e
   setGoals saved
 
+/-- The two-hop value-fact bridge (G4 census): a proposition over the
+coefficient accessors `(coeffsOf p y)[k]!`, transported from its VALUE
+form over the reducer's concrete `cs` list. `mkBody` builds the
+proposition from arbitrary accessors (uniform spelling across the
+lemma-spelled and `[k]!`-redex forms); `accsValue` builds it from the
+concrete value accessors. The value-side subgoal is discharged by
+`closeNumericSubgoal` — the natively suggested values are suggestions
+only; every link is kernel-checked. -/
+def mkValueFact (hcsPrf : Expr) (cs : List MPoly)
+    (mkBody : (Nat → MetaM Expr) → MetaM Expr)
+    (accsValue : Nat → MetaM Expr) : TacticM Expr := do
+  let zTy := mkApp (mkConst ``List [levelZero]) (mkConst ``MPoly)
+  let csE := toExpr cs
+  let lam ← withLocalDecl `z BinderInfo.default zTy fun zE => do
+    mkLambdaFVars #[zE] (← mkBody (fun k => mkIdxGet zE k))
+  let congr ← mkAppM ``congrArg #[lam, hcsPrf]
+  let idxForm ← mkBody (fun k => mkIdxGet csE k)
+  let valTy ← mkBody accsValue
+  let bridge ← proveByRefl idxForm valTy
+  let m ← mkFreshExprMVar valTy
+  m.mvarId!.withContext do closeNumericSubgoal m.mvarId!
+  unless (← m.mvarId!.isAssigned) do
+    throwError "mkValueFact: numeric subgoal not closed"
+  let hVal ← instantiateMVars m
+  let composited ←
+    try mkAppM ``Eq.trans #[congr, bridge]
+    catch e => throwError "trans: {e.toMessageData}"
+  try mkAppM ``Eq.mpr #[composited, hVal]
+  catch e => throwError "mpr: {e.toMessageData}"
+
 /-- G4 definite-disc close: for a root-atom pair fact with constant
 coefficient data proving no roots exist, close `False` directly.
 Returns `true` iff `mvar` was assigned. Lanes: deg-2 const disc < 0;
 deg-2 A=B=0; deg-1 A=0. -/
 unsafe def rootDefiniteClose (mvar : MVarId) (ρ : Expr)
-    (roots : Array (Var × Nat × MPoly × FVarId)) : TacticM Bool := do
-  for (y, i, p, hfv) in roots do
+    (roots : Array (RootKind × Var × Nat × MPoly × FVarId)) : TacticM Bool := do
+  for (_k, y, i, p, hfv) in roots do
     if i == 0 then continue
     let deg := p.degreeIn y
     unless deg == 1 || deg == 2 do continue
@@ -400,25 +449,9 @@ unsafe def rootDefiniteClose (mvar : MVarId) (ρ : Expr)
         -- an rfl-defeq hop then replaces its `[k]!` accesses with the
         -- concrete coefficients (structural getD computation —
         -- `([1,2,3])[1]! = 2 := rfl` probes green).
-        let zTy := mkApp (mkConst ``List [levelZero]) (mkConst ``MPoly)
         let numFact (mkBody : (Nat → MetaM Expr) → MetaM Expr)
             (accsValue : Nat → MetaM Expr) : TacticM Expr := do
-          let lam ← withLocalDecl `z BinderInfo.default zTy fun zE => do
-            mkLambdaFVars #[zE] (← mkBody (fun k => mkIdxGet zE k))
-          let congr ← mkAppM ``congrArg #[lam, hcsPrf]
-          let idxForm ← mkBody (fun k => mkIdxGet csE k)
-          let valTy ← mkBody accsValue
-          let bridge ← proveByRefl idxForm valTy
-          let m ← mkFreshExprMVar valTy
-          m.mvarId!.withContext do closeNumericSubgoal m.mvarId!
-          unless (← m.mvarId!.isAssigned) do
-            throwError "rootDefiniteClose: numeric subgoal not closed"
-          let hVal ← instantiateMVars m
-          let composited ←
-            try mkAppM ``Eq.trans #[congr, bridge]
-            catch e => throwError "trans: {e.toMessageData}"
-          try mkAppM ``Eq.mpr #[composited, hVal]
-          catch e => throwError "mpr: {e.toMessageData}"
+          mkValueFact hcsPrf cs mkBody accsValue
         let hcount ←
           if deg == 2 && cs.length == 3 then do
             match cs[0]!.asConst?, cs[1]!.asConst?, cs[2]!.asConst? with
@@ -579,13 +612,601 @@ unsafe def zeroProductClose (g : MVarId) (ρ : Expr)
     if ← tryZeroProduct g ρ p h0fv fm.constant chain then return true
   return false
 
+/-! ## G4 census slice, item 3 — step-fact collection (the cross-links
+member)
+
+The census's design column (BOARD G4): live drivers are all
+literal-local, but one member of the emission grammar is NOT — an arith
+clause whose contradiction needs `rootVal`-vs-`ρ y` orderings CONNECTED
+to ineq-atom signs, where the encoding literal may be absent from the
+clause. The root fact extraction (item 2) yields opaque
+`rootCmp k (ρ y) (rootVal ρ y i p)` comparisons (`rootVal` carries
+`sqrt`): the glue can't consume them. The bundle's encoding steps are
+the bridge: each step that encodes a root literal the clause carries
+(matched by `(k, y, i, p)`) converts the root comparison into
+first-order comparison/s facts:
+
+- **linearRoot**: through `coverage_linearRoot` — the emitted literal's
+  failure is exactly the root comparison, so the comparison reversal
+  gives a plain `evalP`-level sign fact (the `lin_root_*` family behind
+  the discharge).
+- **thomQuadratic**: through `coverage_thomQuadratic` — the root
+  comparison IS the evaluated Thom region formula; forwarded through
+  the iff it becomes an Or/And of comparisons over
+  `evalP ρ p` / the `2Ay+B` value data, then lead-resolved (via
+  `leadSgn_of_pos`/`leadSgn_of_neg`, from a numeric or clause-literal
+  lead sign) and coefficient-reduced (via the reducer's `hcsPrf`
+  bridge — the `MPoly.add` kernel-reduction trap again), so the
+  mangle's `thomFormula` unfold turns it into glue-ready comparisons.
+  The disjunctive cases are consumed by `closeWithSplits`'s existing
+  Or-split (`findOr`).
+
+Every produced fact is a kernel-checked term; a step whose evidence is
+missing (canonicity unchecked, grammar inconsistency, missing clause
+sign literal in the non-const lanes) is SKIPPED — facts are additive,
+never subtractive (sound; the walk rejects only if a load-bearing step
+was skipped). Payload decision data (`sq`/`sa`/`mkNeg`/`lcFact`) is
+consumed only after GRAMMATICAL verification; the grammar prop for
+linearRoot can't ride `decide` (`coeffsIn` hits the `MPoly.add`
+wf-compilation wall), so it is constructed from the reducer chain +
+`coeffsOf_getElem!_eq`.
+-/
+
+/-- Find a determining comparison fact `0 < evalP ρ q` (sign 1),
+`evalP ρ q < 0` (sign −1), or `evalP ρ q = 0` / `0 = evalP ρ q`
+(sign 0) on the target poly `q` among the extracted `h_f` facts of the
+current goal's local context. Native poly match against each fact's
+evalP argument (defeq-checked); the result carries the fact fvar and
+the fact's own value spelling. -/
+unsafe def findSignFact (ρ : Expr) (q : MPoly) :
+    TacticM (Option (Int × Expr × Expr)) := do
+  let vE ← mkAppM ``Check.evalP #[ρ, toExpr q]
+  let zR ← mkRealZero
+  for d in (← getLCtx) do
+    unless d.userName == `h_f do continue
+    let ty ← instantiateMVars d.type
+    let (fn, args) := ty.getAppFnArgs
+    if fn == ``LT.lt && args.size == 4 then
+      let a := args[2]!; let b := args[3]!
+      let aZero ← isDefEq a zR
+      if aZero then
+        if ← isDefEq b vE then return some (1, mkFVar d.fvarId, b)
+      let bZero ← isDefEq b zR
+      if bZero then
+        if ← isDefEq a vE then return some (-1, mkFVar d.fvarId, a)
+    if fn == ``Eq && args.size == 3 then
+      let a := args[1]!; let b := args[2]!
+      if ← isDefEq a vE then
+        if ← isDefEq b zR then return some (0, mkFVar d.fvarId, a)
+      if ← isDefEq a zR then
+        if ← isDefEq b vE then return some (0, mkFVar d.fvarId, b)
+  return none
+
+/-- Convert a determining comparison proof on `v` into a proof of
+`signMatches s v` for the concrete payload sign −1/0/1. The
+`signMatches` body is the bare disjunction `A ∨ B ∨ C`; the unused
+sides' Props are pinned explicitly (no HOU mvars). -/
+def mkSignMatchesOfComp (s : Int) (vE : Expr) (hcomp : Expr) : MetaM Expr := do
+  let sE := toExpr s
+  let tyOf (t : Int) (cmp : MetaM Expr) : MetaM Expr := do
+    let eq ← mkAppM ``Eq #[sE, toExpr t]
+    mkAppM ``And #[eq, ← cmp]
+  let zR ← mkRealZero
+  let ltL ← mkAppM ``LT.lt #[vE, zR]   -- v < 0  (side A / s = −1)
+  let eqZ ← mkAppM ``Eq #[vE, zR]     -- v = 0  (side B / s = 0)
+  let ltR ← mkAppM ``LT.lt #[zR, vE]   -- 0 < v  (side C / s = 1)
+  match s with
+  | 1 => do
+    let hs ← mkEqRefl (toExpr (1 : Int))
+    let hAnd ← mkAppM ``And.intro #[hs, hcomp]
+    let aTy ← tyOf (-1) (pure ltL)
+    let bTy ← tyOf 0 (pure eqZ)
+    let hBC ← mkAppOptM ``Or.inr #[some bTy, none, hAnd]
+    mkAppOptM ``Or.inr #[some aTy, none, hBC]
+  | -1 => do
+    let hs ← mkEqRefl (toExpr (-1 : Int))
+    let hAnd ← mkAppM ``And.intro #[hs, hcomp]
+    let bTy ← tyOf 0 (pure eqZ)
+    let cTy ← tyOf 1 (pure ltR)
+    mkAppOptM ``Or.inl #[none, some (← mkAppM ``Or #[bTy, cTy]), hAnd]
+  | 0 => do
+    let hs ← mkEqRefl (toExpr (0 : Int))
+    let hAnd ← mkAppM ``And.intro #[hs, hcomp]
+    let aTy ← tyOf (-1) (pure ltL)
+    let cTy ← tyOf 1 (pure ltR)
+    let hBC ← mkAppOptM ``Or.inl #[none, some cTy, hAnd]
+    mkAppOptM ``Or.inr #[some aTy, none, hBC]
+  | _ => throwError "mkSignMatchesOfComp: sign {s} out of range"
+
+/-- The congruence-transport helper at the level of the reducer bridge:
+given `hcsPrf : coeffsOf p y = cs`, produce
+`F((coeffsOf p y)[k]!) = F(cs[k]!)` for any `F` (Prop- or value-valued)
+— the two-hop `congrArg` + `rfl`-defeq chain (the kernel-reduction
+trap discipline; the native `cs` indexing is suggestion only). -/
+def mkCoeFactEq (hcsPrf : Expr) (cs : List MPoly) (k : Nat)
+    (F : Expr → MetaM Expr) : MetaM Expr := do
+  let zTy := mkApp (mkConst ``List [levelZero]) (mkConst ``MPoly)
+  let lam ← withLocalDecl `z BinderInfo.default zTy fun zE => do
+    mkLambdaFVars #[zE] (← F (← mkIdxGet zE k))
+  let t1 ← mkAppM ``congrArg #[lam, hcsPrf]
+  let hget ← proveByRefl (← mkIdxGet (toExpr cs) k) (toExpr cs[k]!)
+  let mpty := mkConst ``MPoly
+  let lam2 ← withLocalDecl `x BinderInfo.default mpty fun xE => do
+    mkLambdaFVars #[xE] (← F xE)
+  let t2 ← mkAppM ``congrArg #[lam2, hget]
+  mkAppM ``Eq.trans #[t1, t2]
+
+/-- Transport a proof of the VALUE side `P(cs[k]!)` to the ACCESSOR
+side `P((coeffsOf p y)[k]!)` (Prop-valued `F`). -/
+def mkTransportedFact (hcsPrf : Expr) (cs : List MPoly) (k : Nat)
+    (F : Expr → MetaM Expr) (hVal : Expr) : MetaM Expr := do
+  let t ← mkCoeFactEq hcsPrf cs k F
+  mkAppM ``Eq.mpr #[t, hVal]
+
+/-- Same two-hop transport as `mkValueFact`, but the value-side proof is
+SUPPLIED (the clause-literal lanes — no numeric close needed). -/
+def mkValueFactOf (hcsPrf : Expr) (cs : List MPoly)
+    (mkBody : (Nat → MetaM Expr) → MetaM Expr)
+    (accsValue : Nat → MetaM Expr) (hVal : Expr) : TacticM Expr := do
+  let zTy := mkApp (mkConst ``List [levelZero]) (mkConst ``MPoly)
+  let csE := toExpr cs
+  let lam ← withLocalDecl `z BinderInfo.default zTy fun zE => do
+    mkLambdaFVars #[zE] (← mkBody (fun k => mkIdxGet zE k))
+  let congr ← mkAppM ``congrArg #[lam, hcsPrf]
+  let idxForm ← mkBody (fun k => mkIdxGet csE k)
+  let bridge ← proveByRefl idxForm (← mkBody accsValue)
+  let composited ← mkAppM ``Eq.trans #[congr, bridge]
+  mkAppM ``Eq.mpr #[composited, hVal]
+
+/-- A numerically-closed fact of the given proposition (value-side;
+concrete `cs` spellings — the R-i reducer currency). -/
+def closeNumerically (tgt : Expr) : TacticM Expr := do
+  let m ← mkFreshExprMVar tgt
+  m.mvarId!.withContext do closeNumericSubgoal m.mvarId!
+  unless (← m.mvarId!.isAssigned) do
+    throwError "closeNumerically: numeric subgoal not closed"
+  instantiateMVars m
+
+/-- Close an `Eq` between ℝ value expressions whose polys are concrete
+spelling variants of one value (mangle `evalP` + `ring`) — the
+disc-expansion transfer lane. Sandbox-managed by the caller. -/
+def closeAlgRefl (tgt : Expr) : TacticM Expr := do
+  let m ← mkFreshExprMVar tgt
+  let saved ← getGoals
+  setGoals [m.mvarId!]
+  m.mvarId!.withContext do
+    evalTactic (← `(tactic| simp only [evalP, evalM, evalP_add, evalP_mul,
+      evalP_neg, evalP_smulTerm, evalP_ofInt, evalP_ofVar, Int.cast_one,
+      Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add]))
+    evalTactic (← `(tactic| ring))
+  setGoals saved
+  unless (← m.mvarId!.isAssigned) do
+    throwError "closeAlgRefl: subgoal not closed"
+  instantiateMVars m
+
+/-- The `Grammar (.linearRoot …)` proof for a concrete linearRoot step.
+Kernel `decide` cannot go through `grammarOK`'s `coeffsIn` branch (the
+`MPoly.add` wf-compilation wall), so the coefficient evidence chain is
+built from the reducer + `coeffsOf_getElem!_eq`. Throws on
+payload/grammar inconsistency (sound skip — the caller catches). -/
+unsafe def mkLinearRootGrammar (y : Var) (p : MPoly) (mkNeg : Bool)
+    (lcFact : Option (MPoly × Int)) : TacticM Expr := do
+  let pE := toExpr p; let yE := toExpr y
+  let hdeg ← mkDecideProof
+    (← mkAppM ``Eq #[← mkAppM ``MPoly.degreeIn #[pE, yE], toExpr (1 : Nat)])
+  let (cs, hcsPrf) ← coeffsOfValue y p
+  unless cs.length == 2 do
+    throwError "mkLinearRootGrammar: coefficient count {cs.length} ≠ 2"
+  let c1 := cs[1]!
+  -- the array/list accessor bridge: (p.coeffsIn y)[1]! = c₁
+  let hb1 ← mkAppM ``coeffsOf_getElem!_eq #[pE, yE, toExpr (1 : Nat)]
+  let hc1 ← mkCoeFactEq hcsPrf cs 1 (fun x => pure x)
+  let harr ← mkAppM ``Eq.trans #[(← mkAppM ``Eq.symm #[hb1]), hc1]
+  match lcFact with
+  | none => do
+    let some v := c1.asConst?
+      | throwError "mkLinearRootGrammar: none-lcFact but lc is not const"
+    let someVE ← mkAppM ``Option.some #[toExpr v]
+    let hAs ← proveByRefl (← mkAppM ``MPoly.asConst? #[toExpr c1]) someVE
+    let lam ← withLocalDecl `x BinderInfo.default (mkConst ``MPoly) fun xE => do
+      mkLambdaFVars #[xE] (← mkAppM ``Eq
+        #[(← mkAppM ``MPoly.asConst? #[xE]), someVE])
+    let ha ← mkAppM ``Eq.trans #[(← mkAppM ``congrArg #[lam, harr]), hAs]
+    let hv ← mkDecideProof (← mkAppM ``Ne #[toExpr v, toExpr (0 : Int)])
+    let ltE ← mkAppM ``LT.lt #[toExpr v, toExpr (0 : Int)]
+    let decideE ← mkAppM ``decide #[ltE]
+    let hmk ← mkAppM ``Eq.symm
+      #[← mkDecideProof (← mkAppM ``Eq #[decideE, toExpr mkNeg])]
+    let motiveE ← withLocalDecl `v0 BinderInfo.default (mkConst ``Int) fun v0E => do
+      let asC ← mkAppM ``Eq
+        #[← mkAppM ``MPoly.asConst?
+            #[← mkIdxGet (← mkAppM ``MPoly.coeffsIn #[pE, yE]) 1],
+          ← mkAppM ``Option.some #[v0E]]
+      let hvNe ← mkAppM ``Ne #[v0E, toExpr (0 : Int)]
+      let hlt ← mkAppM ``LT.lt #[v0E, toExpr (0 : Int)]
+      let hdec0 ← mkAppM ``decide #[hlt]
+      let hmkT ← mkAppM ``Eq #[toExpr mkNeg, hdec0]
+      mkLambdaFVars #[v0E] (← mkAppM ``And #[asC, ← mkAppM ``And #[hvNe, hmkT]])
+    let hAnd ← mkAppM ``And.intro #[ha, ← mkAppM ``And.intro #[hv, hmk]]
+    let hcond ← mkAppOptM ``Exists.intro
+      #[none, some motiveE, some (toExpr v), some hAnd]
+    mkAppM ``Grammar.linearRoot #[hdeg, hcond]
+  | some (c, s) => do
+    unless c1 == c do
+      throwError "mkLinearRootGrammar: lcFact poly is not the lc"
+    let cE := toExpr c; let sE := toExpr s
+    let hc ← mkAppM ``Eq.symm #[harr]
+    let hsne ← mkDecideProof (← mkAppM ``Ne #[sE, toExpr (0 : Int)])
+    let hmk ← mkAppM ``Eq.symm #[← mkDecideProof (← mkAppM ``Eq
+      #[(← mkAppM ``decide #[← mkAppM ``LT.lt #[sE, toExpr (0 : Int)]]),
+        toExpr mkNeg])]
+    -- the const-sign conjunct: ∀ v, c.asConst? = some v → s = Int.sign v
+    let hsig ← withLocalDecl `v BinderInfo.default (mkConst ``Int) fun vE0 => do
+      let hty ← mkAppM ``Eq
+        #[(← mkAppM ``MPoly.asConst? #[cE]), ← mkAppM ``Option.some #[vE0]]
+      withLocalDecl `h BinderInfo.default hty fun hE => do
+        match c.asConst? with
+        | none => do
+          -- vacuous: h conflicts with the rfl-known `none`
+          let hN ← proveByRefl (← mkAppM ``MPoly.asConst? #[cE])
+            (toExpr (none : Option Int))
+          let hconf ← mkAppM ``Eq.trans #[(← mkAppM ``Eq.symm #[hN]), hE]
+          let tgt ← mkAppM ``Eq #[sE, ← mkAppM ``Int.sign #[vE0]]
+          let hne ← mkAppM ``Option.some_ne_none #[vE0]
+          let body ← mkAppOptM ``absurd
+            #[some (← mkAppM ``Eq #[(toExpr (none : Option Int)),
+                  (← mkAppM ``Option.some #[vE0])]),
+              some tgt, hconf, hne]
+          mkLambdaFVars #[vE0, hE] body
+        | some v0 => do
+          -- c.asConst? = some v0: chain h : some v0 = some vE0
+          let hP ← proveByRefl (← mkAppM ``MPoly.asConst? #[cE])
+            (← mkAppM ``Option.some #[toExpr v0])
+          let hv0v ← mkAppM ``Eq.trans #[(← mkAppM ``Eq.symm #[hP]), hE]
+          let hvv ← mkAppM ``Option.some.inj #[hv0v]
+          let hs0 ← mkDecideProof
+            (← mkAppM ``Eq #[sE, ← mkAppM ``Int.sign #[toExpr v0]])
+          let signLam ← withLocalDecl `w BinderInfo.default (mkConst ``Int) fun wE => do
+            mkLambdaFVars #[wE] (← mkAppM ``Int.sign #[wE])
+          let body ← mkAppM ``Eq.trans #[hs0, ← mkAppM ``congrArg #[signLam, hvv]]
+          mkLambdaFVars #[vE0, hE] body
+    let hcond ← mkAppM ``And.intro
+      #[hc, ← mkAppM ``And.intro #[hsne, ← mkAppM ``And.intro #[hmk, hsig]]]
+    mkAppM ``Grammar.linearRoot #[hdeg, hcond]
+
+/-- The lc-sign evidence lambda for `coverage_linearRoot`:
+`∀ c s, lcFact = some (c, s) → c.asConst? = none → signMatches s (evalP
+ρ c)`. `lcFact = none`: the arm is dead at the first hypothesis
+(`none ≠ some`). Const `c`: the arm is dead at the second (`asConst?`
+rfl-evals to `some`). Non-const `c`: the clause sign literal (the z3
+`ensure_sign` emission; an extracted `h_f` fact) is converted to
+`signMatches` and transported through the some-injection. Throws when
+the non-const lane's clause fact is missing or sign-inconsistent (sound
+skip — the caller catches). -/
+unsafe def mkHlcLambda (ρ : Expr) (lcFact : Option (MPoly × Int)) : TacticM Expr := do
+  match lcFact with
+  | none => do
+    let noneE := toExpr (none : Option (MPoly × Int))
+    withLocalDecl `c BinderInfo.default (mkConst ``MPoly) fun cE => do
+    withLocalDecl `s BinderInfo.default (mkConst ``Int) fun sE => do
+      let prodE ← mkAppM ``Prod.mk #[cE, sE]
+      let someE ← mkAppM ``Option.some #[prodE]
+      let h1Ty ← mkAppM ``Eq #[noneE, someE]
+      withLocalDecl `h1 BinderInfo.default h1Ty fun h1E => do
+        let h2Ty ← mkAppM ``Eq
+          #[(← mkAppM ``MPoly.asConst? #[cE]), toExpr (none : Option Int)]
+        withLocalDecl `h2 BinderInfo.default h2Ty fun h2E => do
+          let tgt ← mkAppM ``signMatches #[sE, ← mkAppM ``Check.evalP #[ρ, cE]]
+          let hne ← mkAppM ``Ne.symm #[← mkAppM ``Option.some_ne_none #[prodE]]
+          let body ← mkAppOptM ``absurd #[some h1Ty, some tgt, h1E, hne]
+          mkLambdaFVars #[cE, sE, h1E, h2E] body
+  | some (c, s) => do
+    let prodTy := mkApp2 (mkConst ``Prod [levelZero, levelZero])
+      (mkConst ``MPoly) (mkConst ``Int)
+    let compLane? ←
+      match c.asConst? with
+      | none => do
+        -- the clause-literal lane: signMatches at the CONST value `c`
+        -- from the extracted `h_f` comparison
+        match ← findSignFact ρ c with
+        | none => throwError "mkHlcLambda: no clause sign fact for the lc"
+        | some (sgn, hcomp, vE) =>
+          unless sgn == s do
+            throwError "mkHlcLambda: lc sign {sgn} ≠ payload {s}"
+          pure (some (← mkSignMatchesOfComp sgn vE hcomp))
+      | some _ => pure none
+    withLocalDecl `cv BinderInfo.default (mkConst ``MPoly) fun cvE => do
+    withLocalDecl `sv BinderInfo.default (mkConst ``Int) fun svE => do
+      let prodE ← mkAppM ``Prod.mk #[cvE, svE]
+      let someE ← mkAppM ``Option.some #[prodE]
+      let h1Ty ← mkAppM ``Eq #[toExpr (some (c, s) : Option (MPoly × Int)), someE]
+      withLocalDecl `h1 BinderInfo.default h1Ty fun h1E => do
+        let h2Ty ← mkAppM ``Eq
+          #[(← mkAppM ``MPoly.asConst? #[cvE]), toExpr (none : Option Int)]
+        withLocalDecl `h2 BinderInfo.default h2Ty fun h2E => do
+          let tgt ← mkAppM ``signMatches #[svE, ← mkAppM ``Check.evalP #[ρ, cvE]]
+          let hEq ← mkAppM ``Option.some.inj #[h1E]
+          let body ← match compLane? with
+          | some hVal => do
+            -- transport `signMatches s (evalP ρ c)` along the injection
+            let prodLam ← withLocalDecl `w BinderInfo.default prodTy fun wE => do
+              let pe ← mkAppM ``Prod.fst #[wE]
+              let se ← mkAppM ``Prod.snd #[wE]
+              mkLambdaFVars #[wE]
+                (← mkAppM ``signMatches #[se, ← mkAppM ``Check.evalP #[ρ, pe]])
+            let htransport ← mkAppM ``congrArg #[prodLam, hEq]
+            mkAppM ``Eq.mp #[htransport, hVal]
+          | none => do
+            -- const lane: the arm is dead on h2 — transport the `none`
+            -- contradiction from cvE to c via the fst-projection
+            let some v0 := c.asConst? | throwError "mkHlcLambda: lane mismatch"
+            let hP ← proveByRefl (← mkAppM ``MPoly.asConst? #[toExpr c])
+              (← mkAppM ``Option.some #[toExpr v0])
+            let fstLam ← withLocalDecl `z BinderInfo.default prodTy fun zE => do
+              mkLambdaFVars #[zE] (← mkAppM ``Prod.fst #[zE])
+            let hcv2 ← mkAppM ``Eq.symm #[← mkAppM ``congrArg #[fstLam, hEq]]
+            let eqnLam ← withLocalDecl `w BinderInfo.default (mkConst ``MPoly) fun wE => do
+              mkLambdaFVars #[wE]
+                (← mkAppM ``Eq #[(← mkAppM ``MPoly.asConst? #[wE]),
+                  toExpr (none : Option Int)])
+            let htyeq ← mkAppM ``congrArg #[eqnLam, hcv2]
+            let h2v ← mkAppM ``Eq.mp #[htyeq, h2E]
+            let hconf ← mkAppM ``Eq.trans #[(← mkAppM ``Eq.symm #[hP]), h2v]
+            let hne ← mkAppM ``Option.some_ne_none #[toExpr v0]
+            mkAppOptM ``absurd #[some (← mkAppM ``Eq
+                #[(← mkAppM ``Option.some #[toExpr v0]), toExpr (none : Option Int)]),
+              some tgt, hconf, hne]
+          mkLambdaFVars #[cvE, svE, h1E, h2E] body
+
+/-- linearRoot step consumption: for a root fact `⟨k, y, i, p⟩` encoded
+by a `linearRoot` step, convert the root comparison into the step's
+emitted-literal sign comparison (a plain ℝ fact the glue consumes).
+Skips (throws) on any missing evidence — grammar, canonicity, or the
+non-const lc lane's clause fact. -/
+unsafe def linearStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
+    (k : RootKind) (y : Var) (i : Nat) (p : MPoly) (mkNeg : Bool)
+    (lcFact : Option (MPoly × Int)) (hfvR : FVarId) : TacticM MVarId := do
+  let pE := toExpr p
+  let hOK ← mkDecideProof
+    (← mkAppM ``Eq #[mkApp (mkConst ``MPoly.canonOK) pE, mkConst ``true])
+  let hcan ← mkAppM ``MPoly.canonOK_sound #[pE, hOK]
+  let hgram ← mkLinearRootGrammar y p mkNeg lcFact
+  let hlc ← mkHlcLambda ρ lcFact
+  let hcov ← mkAppM ``coverage_linearRoot
+    #[ρ, rootKindToExpr k, toExpr y, toExpr i, pE, toExpr mkNeg, toExpr lcFact,
+      hgram, hcan, hlc]
+  let hcmp ← mkAppM ``And.right #[mkFVar hfvR]
+  let hSL ← mkAppM ``Iff.mpr #[hcov, hcmp]
+  -- collapse `¬ SHolds` to the comparison (emitted atom computed
+  -- natively via `linearRootEmitted` = (k.toIneqSign, parity fold))
+  let (k', lsign) := k.toIneqSign
+  let q := if mkNeg then p.neg else p
+  let qE := toExpr q
+  let lem ← match k' with
+    | IneqKind.lt => mkAppM ``holds_single_lt #[ρ, qE]
+    | IneqKind.gt => mkAppM ``holds_single_gt #[ρ, qE]
+    | IneqKind.eq => mkAppM ``holds_single_eq #[ρ, qE]
+  let hcomp ←
+    if !lsign then
+      -- polarity `false`: ¬ SHolds ρ a false = ¬ Holds — mt of the
+      -- single-factor collapse
+      mkAppM ``mt #[(← mkAppM ``Iff.mpr #[lem]), hSL]
+    else do
+      -- polarity `true`: ¬ ¬ Holds → Holds → the comparison
+      let propE := (← inferType hSL).getAppArgs[0]!
+      let hH ← mkAppM ``Iff.mp
+        #[(← mkAppOptM ``Classical.not_not #[some propE]), hSL]
+      mkAppM ``Iff.mp #[lem, hH]
+  let hsN := Name.mkSimple s!"hS{n}"
+  let (_, mvar') ← mvar.note hsN hcomp none
+  pure mvar'
+
+/-- The grammar prop for a thomQuadratic step: coefficient-free (degree
++ sign ranges only), so the plain `grammarOK` decide ticket works. -/
+def mkThomGrammar (k : RootKind) (y : Var) (i : Nat) (p : MPoly)
+    (sq sa spd sp : Int) : MetaM Expr := do
+  let sE := thomStepToExpr k y i p sq sa spd sp
+  let hOK ← mkDecideProof
+    (← mkAppM ``Eq #[mkApp (mkConst ``grammarOK) sE, mkConst ``true])
+  mkAppM ``grammarOK_sound #[sE, hOK]
+
+/-- thomQuadratic step consumption: for a root fact `⟨k, y, i, p⟩`
+encoded by the step, produce the lead-resolved, coefficient-reduced
+Thom region-formula fact from the root comparison — the cross-link from
+opaque `rootVal` comparisons to first-order comparisons over
+`evalP ρ p` and the `2Ay+B` value data. The fact is noted, rewritten
+by the coefficient/lead equalities, and left in the context for the
+mangle (`simp only [thomFormula]`) + `closeWithSplits`'s `findOr`-split
+to consume. Skips (throws) on any missing evidence. -/
+unsafe def thomStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
+    (k : RootKind) (y : Var) (i : Nat) (p : MPoly) (sq sa spd sp : Int)
+    (hfvR : FVarId) : TacticM MVarId := do
+  let pE := toExpr p
+  let hOK ← mkDecideProof
+    (← mkAppM ``Eq #[mkApp (mkConst ``MPoly.canonOK) pE, mkConst ``true])
+  let hcan ← mkAppM ``MPoly.canonOK_sound #[pE, hOK]
+  let hgram ← mkThomGrammar k y i p sq sa spd sp
+  let (cs, hcsPrf) ← coeffsOfValue y p
+  unless cs.length == 3 do
+    throwError "thomStepProduce: coefficient count {cs.length} ≠ 3"
+  let c2 := cs[2]!
+  let valAccs : Nat → MetaM Expr := fun k => pure (toExpr (cs[k]!))
+  let zR ← mkRealZero
+  -- A-sign evidence (const lane numeric; the clause lane otherwise),
+  -- accessor-formed; plus a lead-resolution comparison at the value side
+  let smA (accs : Nat → MetaM Expr) : MetaM Expr := do
+    mkAppM ``signMatches #[toExpr sa, ← mkAppM ``Check.evalP #[ρ, ← accs 2]]
+  let (hAm, hApair) ←
+    if let some a := c2.asConst? then
+      unless (a > 0 && sa == 1) || (a < 0 && sa == -1) do
+        throwError "thomStepProduce: const A={a} inconsistent with sa={sa}"
+      let c2EvE ← mkAppM ``Check.evalP #[ρ, toExpr c2]
+      let cmp ←
+        if a > 0 then mkAppM ``LT.lt #[zR, c2EvE]
+        else mkAppM ``LT.lt #[c2EvE, zR]
+      let hnum ← closeNumerically cmp
+      pure (← mkValueFact hcsPrf cs smA valAccs, (decide (a > 0), hnum))
+    else
+      match ← findSignFact ρ c2 with
+      | none => throwError "thomStepProduce: no clause sign fact for A"
+      | some (sgn, hcomp, vA) =>
+        unless sgn == sa do
+          throwError "thomStepProduce: A sign {sgn} ≠ payload sa {sa}"
+        let hVal ← mkSignMatchesOfComp sgn vA hcomp
+        pure (← mkValueFactOf hcsPrf cs smA valAccs hVal, (sgn == 1, hcomp))
+  -- disc-sign evidence in thom_discharge's EXPANSION form:
+  -- `signMatches sq (evalP(coe[1]!)² − 4·evalP(coe[2]!)·evalP(coe[0]!))`.
+  -- The clause literal is by-value against NATIVE `discPolyOf p y`
+  -- (the R-ii reconstruction); the move onto the expansion's value form
+  -- is the ring identity (closeAlgRefl).
+  let discBody (accs : Nat → MetaM Expr) : MetaM Expr := do
+    let b ← mkAppM ``Check.evalP #[ρ, ← accs 1]
+    let a ← mkAppM ``Check.evalP #[ρ, ← accs 2]
+    let c ← mkAppM ``Check.evalP #[ρ, ← accs 0]
+    let bsq ← mkAppM ``HPow.hPow #[b, toExpr (2 : Nat)]
+    let fourR ← mkAppOptM ``OfNat.ofNat
+      #[some (mkConst ``Real), some (toExpr 4), none]
+    let fourAC ← mkAppM ``HMul.hMul #[(← mkAppM ``HMul.hMul #[fourR, a]), c]
+    let disc ← mkAppM ``HSub.hSub #[bsq, fourAC]
+    mkAppM ``signMatches #[toExpr sq, disc]
+  let dPoly := discPolyOf p y
+  let hdm ←
+    if let some dv := dPoly.asConst? then
+      unless (dv > 0 && sq == 1) || (dv == 0 && sq == 0) do
+        throwError "thomStepProduce: const disc={dv} inconsistent with sq={sq}"
+      let hVal ← closeNumerically (← discBody valAccs)
+      mkValueFactOf hcsPrf cs discBody valAccs hVal
+    else
+      match ← findSignFact ρ dPoly with
+      | none => throwError "thomStepProduce: no clause sign fact for disc"
+      | some (sgn, hcomp, vE) =>
+        unless sgn == sq do
+          throwError "thomStepProduce: disc sign {sgn} ≠ payload sq {sq}"
+        let discVal ← do
+          let b ← mkAppM ``Check.evalP #[ρ, toExpr (cs[1]!)]
+          let a ← mkAppM ``Check.evalP #[ρ, toExpr c2]
+          let c ← mkAppM ``Check.evalP #[ρ, toExpr (cs[0]!)]
+          let bsq ← mkAppM ``HPow.hPow #[b, toExpr (2 : Nat)]
+          let fourR ← mkAppOptM ``OfNat.ofNat
+            #[some (mkConst ``Real), some (toExpr 4), none]
+          let fourAC ← mkAppM ``HMul.hMul #[(← mkAppM ``HMul.hMul #[fourR, a]), c]
+          mkAppM ``HSub.hSub #[bsq, fourAC]
+        let hVE ← closeAlgRefl (← mkAppM ``Eq #[vE, discVal])
+        let cmpL ← withLocalDecl `x BinderInfo.default (mkConst ``Real) fun xE => do
+          mkLambdaFVars #[xE]
+            (← match sgn with
+               | 1 => mkAppM ``LT.lt #[zR, xE]
+               | -1 => mkAppM ``LT.lt #[xE, zR]
+               | _ => mkAppM ``Eq #[xE, zR])
+        let hcompExp ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[cmpL, hVE]), hcomp]
+        let hVal ← mkSignMatchesOfComp sgn discVal hcompExp
+        mkValueFactOf hcsPrf cs discBody valAccs hVal
+  -- the discharge chain: thom_discharge + rootVal_eq_quad
+  let yE := toExpr y
+  let hdeg2 ← mkDecideProof
+    (← mkAppM ``Eq #[← mkAppM ``MPoly.degreeIn #[pE, yE], toExpr (2 : Nat)])
+  let hi ← do
+    let e1 ← mkAppM ``Eq #[toExpr i, toExpr (1 : Nat)]
+    let e2 ← mkAppM ``Eq #[toExpr i, toExpr (2 : Nat)]
+    mkDecideProof (← mkAppM ``Or #[e1, e2])
+  let hsa ← mkDecideProof (← mkAppM ``Ne #[toExpr sa, toExpr (0 : Int)])
+  let hsq ← do
+    let e0 ← mkAppM ``Eq #[toExpr sq, toExpr (0 : Int)]
+    let e1 ← mkAppM ``Eq #[toExpr sq, toExpr (1 : Int)]
+    mkDecideProof (← mkAppM ``Or #[e0, e1])
+  let hNev ←
+    match hApair with
+    | (true, hnum) => mkAppM ``ne_of_gt #[hnum]
+    | (false, hnum) => mkAppM ``ne_of_lt #[hnum]
+  let hAne ← mkValueFactOf hcsPrf cs (fun accs => do
+      mkAppM ``Ne #[← mkAppM ``Check.evalP #[ρ, ← accs 2], zR])
+    valAccs hNev
+  let hcov ← mkAppM ``thom_discharge
+    #[ρ, rootKindToExpr k, toExpr y, toExpr i, pE, toExpr sq, toExpr sa,
+      hdeg2, hi, hcan, hsa, hAm, hsq, hdm]
+  let hrveq ← mkAppM ``rootVal_eq_quad #[ρ, toExpr y, toExpr i, pE, hdeg2, hAne]
+  let cmpL ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+    mkLambdaFVars #[zE]
+      (mkAppN (mkConst ``rootCmp) #[rootKindToExpr k, mkApp ρ (toExpr y), zE])
+  let hcmp ← mkAppM ``And.right #[mkFVar hfvR]
+  let hcmpQ ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[cmpL, hrveq]), hcmp]
+  let hform ← mkAppM ``Iff.mp #[hcov, hcmpQ]
+  -- coefficient reductions + lead resolution as rewrite facts:
+  -- leadSgn at ACCESSOR form (rewritten first), then the two
+  -- coefficient accessors
+  let hC2 ← mkCoeFactEq hcsPrf cs 2 (fun v => mkAppM ``Check.evalP #[ρ, v])
+  let hC1 ← mkCoeFactEq hcsPrf cs 1 (fun v => mkAppM ``Check.evalP #[ρ, v])
+  let hLv ←
+    match hApair with
+    | (true, hnum) => mkAppM ``leadSgn_of_pos #[hnum]
+    | (false, hnum) => mkAppM ``leadSgn_of_neg #[hnum]
+  let hL ← mkAppM ``Eq.trans
+    #[(← mkCoeFactEq hcsPrf cs 2 (fun v => do
+        mkAppM ``leadSgn #[← mkAppM ``Check.evalP #[ρ, v]])),
+      hLv]
+  let nC2 := Name.mkSimple s!"hC2{n}"
+  let nC1 := Name.mkSimple s!"hC1{n}"
+  let nL := Name.mkSimple s!"hL{n}"
+  let nS := Name.mkSimple s!"hS{n}"
+  let (_, mv1) ← mvar.note nC2 hC2 none
+  let (_, mv2) ← mv1.note nC1 hC1 none
+  let (_, mv3) ← mv2.note nL hL none
+  let (_, mv4) ← mv3.note nS hform none
+  let saved ← getGoals
+  setGoals [mv4]
+  mv4.withContext do
+    evalTactic (← `(tactic|
+      rw [$(mkIdent nL):ident, $(mkIdent nC2):ident, $(mkIdent nC1):ident] at $(mkIdent nS):ident))
+  let gnew ← getMainGoal
+  setGoals saved
+  pure gnew
+
+/-- Step-fact collection (G4 census slice, item 3): for each encoding
+step the bundle carries (preceding the `.arith` marker), match its root
+atom against the extracted root facts and produce the cross-link
+fact/s. Steps whose evidence is missing are skipped soundly (the
+productions only ADD facts). `resolution`/`cellBound`/`factorSplit`/
+`leafNumeric` steps contribute nothing (R1/R5/R6/F3). -/
+unsafe def collectStepFacts (mvar : MVarId) (ρ : Expr) (steps : Array TraceStep)
+    (rootFacts : Array (RootKind × Var × Nat × MPoly × FVarId)) : TacticM MVarId := do
+  let mut mvar := mvar
+  let mut n : Nat := 0
+  for step in steps do
+    match step with
+    | .linearRoot k y p mkNeg lcFact => do
+      let matched := rootFacts.filter fun (kR, yR, _, pR, _) =>
+        kR == k && yR == y && pR == p
+      for (_, _, iR, _, hfvR) in matched do
+        mvar ← mvar.withContext do
+          try
+            linearStepProduce mvar ρ n k y iR p mkNeg lcFact hfvR
+          catch e =>
+            dbg_trace "collectStepFacts: linearStepProduce skipped: {← e.toMessageData.toString}"
+            pure mvar
+        n := n + 1
+    | .thomQuadratic k y i p sq sa spd sp => do
+      let matched := rootFacts.filter fun (kR, yR, iR, pR, _) =>
+        kR == k && yR == y && iR == i && pR == p
+      for (_, _, _, _, hfvR) in matched do
+        mvar ← mvar.withContext do
+          try
+            thomStepProduce mvar ρ n k y i p sq sa spd sp hfvR
+          catch e =>
+            dbg_trace "collectStepFacts: thomStepProduce skipped: {← e.toMessageData.toString}"
+            pure mvar
+        n := n + 1
+    | _ => pure ()
+  pure mvar
+
 /-- Core worker: prove `clauseSatI (interp ρ atoms) C` for concrete
 `atoms`, `C`. `hName` seeds the extracted-fact names. Failure (any
 undecodable literal, skipped shape, or glue failure) propagates as a
 tactic error — the sound direction. `unsafe` for the native decode
 (`Meta.evalExpr`) — untrusted meta, the produced terms are
-kernel-checked. -/
-unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
+kernel-checked. `steps` is the bundle's projection-step context
+(G4 census item 3 — step-fact collection; `#[]` outside the walk). -/
+unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
+    TacticM Unit := do
   let goalType ← mvar.getType
   -- Match `clauseSatI (interp ρ atoms) C` syntactically (no unfolding).
   let (fn, args) := goalType.getAppFnArgs
@@ -618,7 +1239,7 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
   let mut diseqFacts : Array (MPoly × FVarId) := #[]
   let mut prodEqFacts : Array (List (MPoly × Bool) × FVarId) := #[]
   let mut chainFacts : Array (FVarId × List (MPoly × Bool)) := #[]
-  let mut rootFacts : Array (Var × Nat × MPoly × FVarId) := #[]
+  let mut rootFacts : Array (RootKind × Var × Nat × MPoly × FVarId) := #[]
   for l in CV do
     -- everything that typechecks terms mentioning context fvars must
     -- run in the CURRENT mvar's local context (hFvar, noted facts)
@@ -645,14 +1266,14 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
               Array (MPoly × FVarId) × Array (MPoly × FVarId) ×
               Array (List (MPoly × Bool) × FVarId) ×
               Array (FVarId × List (MPoly × Bool)) ×
-              Array (Var × Nat × MPoly × FVarId)))
+              Array (RootKind × Var × Nat × MPoly × FVarId)))
           | facts =>
             let mut mv := mvar1
             let mut eqs : Array (MPoly × FVarId) := #[]
             let mut neqs : Array (MPoly × FVarId) := #[]
             let mut prods : Array (List (MPoly × Bool) × FVarId) := #[]
             let mut chs : Array (FVarId × List (MPoly × Bool)) := #[]
-            let mut roots : Array (Var × Nat × MPoly × FVarId) := #[]
+            let mut roots : Array (RootKind × Var × Nat × MPoly × FVarId) := #[]
             for (fact, kind) in facts do
               let (hfv, mv') ← mv.note `h_f fact none
               mv := mv'
@@ -661,7 +1282,7 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
               | .neZero q => neqs := neqs.push (q, hfv)
               | .eqProdZero fs => prods := prods.push (fs, hfv)
               | .negChain fs => chs := chs.push (hfv, fs)
-              | .rootPair y i p => roots := roots.push (y, i, p, hfv)
+              | .rootPair k y i p => roots := roots.push (k, y, i, p, hfv)
               | .other => pure ()
             pure (mv, false, (eqs, neqs, prods, chs, roots))
       | _ =>
@@ -682,6 +1303,12 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
       let sqn ← mkAppM ``sq_nonneg #[mkApp ρ (toExpr v)]
       let (_, mvar') ← mvar.note `h_sq sqn none
       pure mvar'
+  -- G4 census item 3: step-fact collection (the cross-links census
+  -- member). The bundle's encoding steps convert the extracted root
+  -- facts' opaque `rootVal` comparisons into glue-ready first-order
+  -- facts. Productions only ADD facts; missing evidence skips soundly.
+  if !steps.isEmpty then
+    mvar ← collectStepFacts mvar ρ steps rootFacts
   -- G1 zero-product close (review 7, F-v) + R-b multi-eq-positive
   -- branch (review 9): before the simp/ring_nf mangling, while the
   -- h_f facts are still `evalP` comparisons. Shape-gated; no-op on
@@ -702,6 +1329,7 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
       simp only [evalP, evalM, evalP_add, evalP_mul, evalP_neg, evalP_sub,
         evalP_smulTerm, evalP_ofInt, evalP_ofVar, oddProd, List.map_cons,
         List.map_nil, List.prod_cons, List.prod_nil, Prod.fst, negChain,
+        thomFormula, rootCmp,
         Int.cast_one, Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add] at *))
     evalTactic (← `(tactic| ring_nf at *))
   -- The glue: linarith first (R-i), nlinarith as backup. On failure,
@@ -821,6 +1449,15 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
 concrete atom table and clause (the F2 per-arith-marker obligation). -/
 elab "nlsat_arith_valid" : tactic => unsafe (do
   proveClauseSat (← getMainGoal))
+
+/-- `nlsat_arith_valid_steps s` — as `nlsat_arith_valid`, with the
+bundle's projection steps `s : Array TraceStep` consumed by step-fact
+collection (the G4 cross-links census member). -/
+elab "nlsat_arith_valid_steps " s:term : tactic => unsafe (do
+  let stepsTyE ← Term.elabType (← `(Array TraceStep))
+  let sE ← Term.elabTerm s (some stepsTyE)
+  let stepsV ← Meta.evalExpr (Array TraceStep) stepsTyE sE
+  proveClauseSat (← getMainGoal) stepsV)
 
 end Refute
 end LeanNonlinearArith.Nlsat

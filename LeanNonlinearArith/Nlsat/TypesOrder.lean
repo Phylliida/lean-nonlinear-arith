@@ -756,6 +756,92 @@ theorem mul_canon {p q : MPoly} (hp : Canon p) (hq : Canon q) : Canon (MPoly.mul
 
 end MPoly
 
+/-! ### Decidable canonicity mirrors (G4 census — the checker boundary's
+`decide` ticket)
+
+`MPoly.Canon` is a `Prop` (pairwise comparisons + pointwise
+nonzero/canonical conditions); the checker's step consumption needs
+`Canon` evidence from CONCRETE payload polys at decide grade. Since
+`MPoly.add` is wf-compiled (not kernel-reducible), no `decide` route
+through polynomial arithmetic can work — but canonicity is a pure
+LIST condition, so a structural Boolean mirror + soundness theorems
+close the gap. The head-vs-head strict-increase checks suffice:
+each condition plus the tail's own canonicity gives the full pairwise
+order by order transitivity. -/
+
+namespace Monomial
+
+/-- Decidable mirror of `Monomial.Canon`. -/
+def canonOK : Monomial → Bool
+  | [] => true
+  | (x, e) :: m =>
+    decide (0 < e) &&
+    (match m with
+     | [] => true
+     | (x', _) :: _ => decide (x < x')) &&
+    canonOK m
+
+theorem canonOK_sound : ∀ m : Monomial, canonOK m = true → Canon m
+  | [], _ => canon_nil
+  | (x, e) :: m, h => by
+    unfold canonOK at h
+    rw [Bool.and_eq_true, Bool.and_eq_true] at h
+    obtain ⟨⟨he, hhead⟩, hrest⟩ := h
+    have ihc := canonOK_sound m hrest
+    refine ⟨List.pairwise_cons.mpr ⟨?_, ihc.1⟩, fun p hp => ?_⟩
+    · intro p hp
+      cases m with
+      | nil => simp at hp
+      | cons x'e' m' =>
+        obtain ⟨x', e'⟩ := x'e'
+        have hx : x < x' := of_decide_eq_true hhead
+        rcases List.mem_cons.mp hp with rfl | hpm
+        · exact hx
+        · have h1 : x' < p.1 := (List.pairwise_cons.mp ihc.1).1 p hpm
+          exact Nat.lt_trans hx h1
+    · rw [List.mem_cons] at hp
+      rcases hp with rfl | hpm
+      · exact of_decide_eq_true he
+      · exact ihc.2 p hpm
+
+end Monomial
+
+namespace MPoly
+
+/-- Decidable mirror of `MPoly.Canon`. -/
+def canonOK : MPoly → Bool
+  | [] => true
+  | (a, m) :: p =>
+    decide (a ≠ 0) && m.canonOK &&
+    (match p with
+     | [] => true
+     | (_, n) :: _ => decide (Monomial.cmp m n = .gt)) &&
+    canonOK p
+
+theorem canonOK_sound : ∀ p : MPoly, canonOK p = true → Canon p
+  | [], _ => canon_nil
+  | (a, m) :: p, h => by
+    unfold canonOK at h
+    rw [Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true] at h
+    obtain ⟨⟨⟨ha, hm⟩, hhead⟩, hrest⟩ := h
+    have ihc := canonOK_sound p hrest
+    have hmc := Monomial.canonOK_sound m hm
+    refine ⟨List.pairwise_cons.mpr ⟨?_, ihc.1⟩, fun t ht => ?_⟩
+    · intro t ht
+      cases p with
+      | nil => simp at ht
+      | cons bn p' =>
+        obtain ⟨b, n⟩ := bn
+        have hc : Monomial.cmp m n = .gt := of_decide_eq_true hhead
+        rcases List.mem_cons.mp ht with rfl | htm
+        · exact hc
+        · exact Monomial.cmp_gt_trans hc ((List.pairwise_cons.mp ihc.1).1 t htm)
+    · rcases List.mem_cons.mp ht with rfl | htm
+      · exact ⟨of_decide_eq_true ha, hmc⟩
+      · exact ihc.2 t htm
+
+end MPoly
+
 /-! ### Pins (the docstring ordering chain, `polynomial.cpp:625` reading) -/
 
 -- x₃³ > x₃²x₁² > x₃x₂²x₁ > x₁³

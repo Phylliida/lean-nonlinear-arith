@@ -113,6 +113,8 @@ def precheck (snap : SnapshotTy) (goalAtoms : Array (Option Atom))
   for cid in [0:clauses.size] do
     if let some b := bundles[cid]! then
       if !b.isV0 then throw s!"learned clause {cid}: bundle not v0-checkable"
+      if !(b.steps.all grammarOK) then
+        throw s!"learned clause {cid}: trace step outside the emission grammar"
       let F ← nodeFSet clauses bundles learnedLemmas b
       if !litsEq b.lemma.toList clauses[cid]!.lits.toList then
         throw s!"learned clause {cid}: bundle lemma ≠ clause table"
@@ -121,6 +123,8 @@ def precheck (snap : SnapshotTy) (goalAtoms : Array (Option Atom))
       learnedLemmas := learnedLemmas.push (cid, b.lemma.toList)
   if !final.lemma.isEmpty then throw "final bundle's lemma is not empty"
   if !final.isV0 then throw "final bundle not v0-checkable"
+  if !(final.steps.all grammarOK) then
+    throw "final bundle: trace step outside the emission grammar"
   let Ff ← nodeFSet clauses bundles learnedLemmas final
   if !upRefutes (Ff.map (·.dedup)) [] then throw "final bundle: RUP check failed"
   -- input-clause contract: referenced input cids, increasing order
@@ -211,6 +215,11 @@ unsafe def buildFSet (IE : Expr)
     TacticM (List (List Literal) × List Expr) := do
   let mut Fvals : List (List Literal) := []
   let mut Fproofs : List Expr := []
+  -- G4 census item 3: the projection (non-resolution) steps preceding
+  -- each `.arith` marker — consumed by step-fact collection
+  -- (`Refute.collectStepFacts`), matched by `(k, y, i, p)` against the
+  -- clause's root facts.
+  let mut priorSteps : Array TraceStep := #[]
   for step in b.steps do
     match step with
     | .resolution (.clause cid') =>
@@ -234,14 +243,14 @@ unsafe def buildFSet (IE : Expr)
       let saved ← getGoals
       setGoals [am.mvarId!]
       try
-        Refute.proveClauseSat am.mvarId!
+        Refute.proveClauseSat am.mvarId! priorSteps
       catch e =>
         setGoals saved
         throwError "nlsat_refute: arith lemma {repr Cval} failed to discharge: {e.toMessageData}"
       setGoals saved
       let pf ← instantiateMVars am
       Fvals := Fvals ++ [Cval]; Fproofs := Fproofs ++ [pf]
-    | _ => pure ()
+    | _ => priorSteps := priorSteps.push step
   return (Fvals, Fproofs)
 
 /-- The RUP assembly for one node: kernel `decide` + `upRefutes_sound`,

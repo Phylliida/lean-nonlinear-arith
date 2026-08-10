@@ -694,6 +694,15 @@ theorem leadSgn_mul_self_pos {A : ℝ} (hA : A ≠ 0) : 0 < leadSgn A * A := by
   · simp [h]
     exact lt_of_le_of_ne (le_of_not_gt h) hA
 
+/-- Resolve `leadSgn` on a positive value (G4 step consumption — the
+Thom formula's args must reach lead-free first-order form). -/
+theorem leadSgn_of_pos {A : ℝ} (h : 0 < A) : leadSgn A = 1 := by
+  unfold leadSgn; rw [if_pos h]
+
+/-- Resolve `leadSgn` on a negative value. -/
+theorem leadSgn_of_neg {A : ℝ} (h : A < 0) : leadSgn A = -1 := by
+  unfold leadSgn; rw [if_neg (not_lt_of_gt h)]
+
 /-- Root value semantics for quadratics: the i-th root (z3 increasing
 order), coefficients sign-normalized to positive lead (flipping `p ↦ −p`
 does not change the roots, and for `A < 0` the flip swaps which sqrt
