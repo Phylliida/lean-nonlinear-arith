@@ -17,7 +17,11 @@ how rare — never defer a known gap with "until it shows up in
 practice".**
 
 **The R-series is COMPLETE (R-a..R-e); review-13 z3-divergence audit
-clean.** The discharge layer covers every ineq-atom shape
+clean; review-14 R2' FIXED (last un-owned gap) — dedup at the walk's
+decide sites (rupNode/final/precheck) with clauseSatI_dedup +
+not_litSatI_forall_dedup bridges; the stall needs EVERY clause
+duplicated (pinned pre/post). No un-owned known gaps remain; what's
+left is the scheduled roadmap.** The discharge layer covers every ineq-atom shape
 unconditionally; the only remaining `extractFacts` skip class is root
 atoms (G4/census slice). z3-source notes (review 13): z3 atoms always
 have sz >= 1 and sign-normalized (lm-positive) factors

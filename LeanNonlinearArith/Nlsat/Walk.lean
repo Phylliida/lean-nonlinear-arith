@@ -116,13 +116,13 @@ def precheck (snap : SnapshotTy) (goalAtoms : Array (Option Atom))
       let F ← nodeFSet clauses bundles learnedLemmas b
       if !litsEq b.lemma.toList clauses[cid]!.lits.toList then
         throw s!"learned clause {cid}: bundle lemma ≠ clause table"
-      if !upRefutes F b.lemma.toList then
+      if !upRefutes (F.map (·.dedup)) b.lemma.toList.dedup then
         throw s!"learned clause {cid}: RUP check failed"
       learnedLemmas := learnedLemmas.push (cid, b.lemma.toList)
   if !final.lemma.isEmpty then throw "final bundle's lemma is not empty"
   if !final.isV0 then throw "final bundle not v0-checkable"
   let Ff ← nodeFSet clauses bundles learnedLemmas final
-  if !upRefutes Ff [] then throw "final bundle: RUP check failed"
+  if !upRefutes (Ff.map (·.dedup)) [] then throw "final bundle: RUP check failed"
   -- input-clause contract: referenced input cids, increasing order
   let mut refSet : Array Nat := #[]
   for cid in [0:clauses.size] do
@@ -245,21 +245,37 @@ unsafe def buildFSet (IE : Expr)
   return (Fvals, Fproofs)
 
 /-- The RUP assembly for one node: kernel `decide` + `upRefutes_sound`,
-returning the learned-clause proof (`byContradiction` shape). -/
+returning the learned-clause proof (`byContradiction` shape).
+
+R2' hardening (review 14): the decide computation runs on DEDUP'd
+clauses — `clauseStatus` reads `[l, l]`-unassigned as `.other` (not
+unit), stalling propagation on duplicate-literal learned clauses
+(possible in z3: `processAntecedent` has no dedup in the mark path).
+Semantic identity via `clauseSatI_dedup`/`not_litSatI_forall_dedup`;
+the RETURNED proof is for the ORIGINAL clause list. -/
 def rupNode (IE motiveE : Expr)
     (Fvals : List (List Literal)) (Fproofs : List Expr)
     (targetVal : List Literal) : MetaM Expr := do
-  let targetE ← quoteLits targetVal
-  let FE ← quoteLitsList Fvals
+  let FvalsD := Fvals.map (·.dedup)
+  let targetValD := targetVal.dedup
+  let targetE ← quoteLits targetValD
+  let FE ← quoteLitsList FvalsD
   let hrup ← mkDecideProof
     (← mkAppM ``Eq #[mkApp2 (mkConst ``upRefutes) FE targetE, mkConst ``true])
-  let hF ← forallMemFold motiveE (Fvals.zip Fproofs)
-  let targetPropE := mkApp2 (mkConst ``clauseSatI) IE targetE
+  -- hF's antecedents are dedup'd clauses; bridge each proof
+  let FproofsD ← (Fvals.zip Fproofs).mapM fun (C, pf) => do
+    let CE ← quoteLits C
+    mkAppM ``Iff.mpr #[(← mkAppM ``clauseSatI_dedup #[IE, CE]), pf]
+  let hF ← forallMemFold motiveE (FvalsD.zip FproofsD)
+  -- the returned fact is about the ORIGINAL clause list
+  let targetOrigE ← quoteLits targetVal
+  let targetPropE := mkApp2 (mkConst ``clauseSatI) IE targetOrigE
   let lamE ← withLocalDecl `hCon BinderInfo.default (mkApp (mkConst ``Not) targetPropE)
     fun hConE => do
       -- `mkAppM`, not `mkApp`: the head has leading implicits {I} {C}
       let htE ← mkAppM ``not_litSatI_forall_of_not_clauseSatI #[hConE]
-      let upE := mkAppN (mkConst ``upRefutes_sound) #[IE, FE, targetE, hF, htE, hrup]
+      let htD ← mkAppM ``not_litSatI_forall_dedup #[IE, targetOrigE, htE]
+      let upE := mkAppN (mkConst ``upRefutes_sound) #[IE, FE, targetE, hF, htD, hrup]
       -- `Classical.byContradiction : (¬p → False) → p` (4.25 core)
       mkLambdaFVars #[hConE] upE
   mkAppM ``Classical.byContradiction #[lamE]
@@ -333,13 +349,19 @@ unsafe def walkRefutation (mvar : MVarId) (snapE : Expr) : TacticM Unit := do
         let (Fvals, Fproofs) ← buildFSet IE inputFacts learnedFacts b bundlesV
         let pf ← rupNode IE motiveE Fvals Fproofs b.lemma.toList
         learnedFacts := learnedFacts.push (cid, b.lemma.toList, pf)
-    -- Final bundle: target [] ⇒ False.
+    -- Final bundle: target [] ⇒ False. (Same R2' dedup as rupNode;
+    -- the [] target is unaffected but the F-set clauses may carry
+    -- duplicate literals.)
     let (Fvals, Fproofs) ← buildFSet IE inputFacts learnedFacts finalV bundlesV
+    let FvalsD := Fvals.map (·.dedup)
     let targetE ← quoteLits []
-    let FE ← quoteLitsList Fvals
+    let FE ← quoteLitsList FvalsD
     let hrup ← mkDecideProof
       (← mkAppM ``Eq #[mkApp2 (mkConst ``upRefutes) FE targetE, mkConst ``true])
-    let hF ← forallMemFold motiveE (Fvals.zip Fproofs)
+    let FproofsD ← (Fvals.zip Fproofs).mapM fun (C, pf) => do
+      let CE ← quoteLits C
+      mkAppM ``Iff.mpr #[(← mkAppM ``clauseSatI_dedup #[IE, CE]), pf]
+    let hF ← forallMemFold motiveE (FvalsD.zip FproofsD)
     let negMotiveE ← withLocalDecl `l BinderInfo.default (mkConst ``Literal) fun lE =>
       mkLambdaFVars #[lE] (mkApp (mkConst ``Not) (mkApp2 (mkConst ``litSatI) IE lE))
     let htE ← mkAppOptM ``List.forall_mem_nil #[some (mkConst ``Literal), some negMotiveE]

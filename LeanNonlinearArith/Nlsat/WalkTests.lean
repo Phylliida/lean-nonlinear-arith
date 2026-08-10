@@ -328,4 +328,26 @@ example : ∀ ρ : Nat → ℝ,
     (∀ C ∈ [[⟨1, false⟩], [⟨2, true⟩]], clauseHolds ρ fs4Atoms C) → False := by
   nlsat_refute ⟨fs4Atoms, fs4Clauses, fs4Bundles, fs4Final⟩
 
+/-! ## R2' (review 14) — duplicate-literal propagation stall + hardening -/
+
+/-- Pre-dedup (the R2' stall): EVERY clause carries duplicate literals;
+`clauseStatus` reads `[l, l]`-unassigned as `.other` (not unit), so no
+unit ever forms, propagation never starts, and the refutation check
+fails even though `{l, ¬l}` is unsatisfiable. -/
+example : upRefutes [[⟨0, false⟩, ⟨0, false⟩], [⟨0, true⟩, ⟨0, true⟩]] []
+    = false := by decide
+
+/-- Post-dedup (the hardening, review 14): the duplicated clauses are
+unit, `{l, ¬l}` refutes. This is the computation the walk's decide
+site now runs (FE/targetE dedup'd before `upRefutes`). -/
+example : upRefutes
+    ([[⟨0, false⟩, ⟨0, false⟩], [⟨0, true⟩, ⟨0, true⟩]].map (·.dedup)) []
+    = true := by decide
+
+/-- A partial case: only the driver clause is duplicated. Pre-dedup
+the singleton `¬l` still drives, so this one refutes either way —
+the stall needs EVERY clause duplicated (registered for the record). -/
+example : upRefutes [[⟨0, true⟩], [⟨0, false⟩, ⟨0, false⟩]] [] = true := by
+  decide
+
 end LeanNonlinearArith.Nlsat.Tests.Walk

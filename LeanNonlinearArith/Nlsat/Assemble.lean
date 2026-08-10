@@ -45,6 +45,19 @@ def litSatI (I : Nat → Prop) (l : Literal) : Prop :=
 def clauseSatI (I : Nat → Prop) (C : List Literal) : Prop :=
   ∃ l ∈ C, litSatI I l
 
+/-- R2' hardening (review 14): literal `dedup` is a semantic identity —
+`List.mem_dedup` preserves membership both ways. (`dedup` is native-
+AND kernel-computable on concrete literal lists — probed 2026-08-10,
+`example : ([⟨0,false⟩,⟨0,false⟩] : List Literal).dedup = _ := rfl`.) -/
+theorem clauseSatI_dedup (I : Nat → Prop) (C : List Literal) :
+    clauseSatI I C.dedup ↔ clauseSatI I C :=
+  exists_congr fun l => and_congr List.mem_dedup Iff.rfl
+
+/-- The ∀ side of the same bridge. -/
+theorem not_litSatI_forall_dedup (I : Nat → Prop) (C : List Literal) :
+    (∀ l ∈ C, ¬ litSatI I l) → ∀ l ∈ C.dedup, ¬ litSatI I l :=
+  fun h l hl => h l (List.mem_dedup.mp hl)
+
 /-- The atom-table interpretation: bvar `b` holds iff the table maps it
 to an atom that holds at `ρ`. Undecodable ↦ `False` (sound direction). -/
 def interp (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (b : Nat) : Prop :=
