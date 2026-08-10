@@ -61,12 +61,27 @@ def atomVars : Atom → List Var
   | .ineq a => a.factors.flatMap fun (p, _) => mpolyVars p
   | .root a => a.x :: mpolyVars a.p
 
-/-- The fact-extraction result for one literal: the proof term of an
-ℝ-level fact, or `none` if the shape is not (yet) handled — skipped
-literals weaken the glue but never soundness; the caller reports them
-on glue failure. -/
-def extractFact (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
-    MetaM (Option Expr) := do
+/-- Classification of an extracted ℝ-level fact, for the zero-product
+index (G1/G2). -/
+inductive FactKind where
+  | eqZero (q : MPoly)   -- the fact is `evalP ρ q = 0`
+  | neZero (q : MPoly)   -- the fact is `evalP ρ q ≠ 0`
+  | other
+
+/-- The fact-extraction for one literal: ℝ-level fact proof terms with
+their classifications, or `[]` if the shape is not (yet) handled —
+skipped literals weaken the glue but never soundness; the caller
+reports them on glue failure. Single-factor all-odd atoms take the
+pinned `holds_single_*` path; multi-factor / even-parity atoms
+(G2/G3, design review 7) take the `holds_multi_*` path:
+- `eq` positive (l.neg): the product vanishes (`holds_multi_eq_prod`);
+- `eq` negative: every factor is nonzero (`holds_multi_eq_ne`) — z3's
+  `add_zero_assumption` composite `∏ pᵢ ≠ 0` shape;
+- `lt`/`gt` positive: the odd-product sign + every factor nonzero;
+- `lt`/`gt` negative is disjunctive (some factor vanishes OR the sign
+  flips) — skipped (sound; weakens the glue only). -/
+def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
+    MetaM (List (Expr × FactKind)) := do
   match a with
   | .ineq ⟨k, [(q, false)]⟩ =>
     let qE := toExpr q
@@ -79,11 +94,54 @@ def extractFact (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
       let aE := mkApp IE (toExpr l.bvar)
       let nn ← mkAppOptM ``Classical.not_not #[some aE]
       let hH ← mkAppM ``Iff.mp #[nn, h_i]
-      return some (← mkAppM ``Iff.mp #[lem, hH])
+      let fact ← mkAppM ``Iff.mp #[lem, hH]
+      return [(fact, match k with | .eq => .eqZero q | _ => .other)]
     else
       -- h_i : ¬ H  ⇒  ¬ (the ℝ fact)
-      return some (← mkAppM ``mt #[(← mkAppM ``Iff.mpr #[lem]), h_i])
-  | _ => return none
+      let fact ← mkAppM ``mt #[(← mkAppM ``Iff.mpr #[lem]), h_i]
+      return [(fact, match k with | .eq => .neZero q | _ => .other)]
+  | .ineq ⟨k, fs⟩ =>
+    let fsE := toExpr fs
+    match k with
+    | .eq =>
+      if l.neg then
+        let aE := mkApp IE (toExpr l.bvar)
+        let nn ← mkAppOptM ``Classical.not_not #[some aE]
+        let hH ← mkAppM ``Iff.mp #[nn, h_i]
+        let hProd ← mkAppM ``holds_multi_eq_prod #[ρ, fsE, hH]
+        -- glue-only: the fact's type mentions `factorProd fs`, and
+        -- `MPoly.mul` does NOT reduce under kernel whnf (the
+        -- kernel-reduction trap), so the zero-product index can't
+        -- defeq-match a natively-folded product against it. The mangle
+        -- simp set (factorProd + evalP_mul) handles it for the glue.
+        return [(hProd, .other)]
+      else
+        let hAll ← mkAppM ``holds_multi_eq_ne #[ρ, fsE, h_i]
+        let mappedE := toExpr (fs.map Prod.fst)
+        fs.mapM fun (f, _) => do
+          let memPrf ← mkDecideProof (← mkAppM ``Membership.mem #[mappedE, toExpr f])
+          let hf ← mkAppM' hAll #[toExpr f, memPrf]
+          pure (hf, .neZero f)
+    | .lt | .gt =>
+      if !l.neg then return []
+      let aE := mkApp IE (toExpr l.bvar)
+      let nn ← mkAppOptM ``Classical.not_not #[some aE]
+      let hH ← mkAppM ``Iff.mp #[nn, h_i]
+      let signLem := match k with
+        | .lt => ``holds_multi_sign_lt
+        | _ => ``holds_multi_sign_gt
+      let neLem := match k with
+        | .lt => ``holds_multi_allNe_lt
+        | _ => ``holds_multi_allNe_gt
+      let hSign ← mkAppM signLem #[ρ, fsE, hH]
+      let hAll ← mkAppM neLem #[ρ, fsE, hH]
+      let mappedE := toExpr (fs.map Prod.fst)
+      let perFactor ← fs.mapM fun (f, _) => do
+        let memPrf ← mkDecideProof (← mkAppM ``Membership.mem #[mappedE, toExpr f])
+        let hf ← mkAppM' hAll #[toExpr f, memPrf]
+        pure (hf, .neZero f)
+      return (hSign, .other) :: perFactor
+  | _ => return []
 
 /-- G1 (design review 7, F-v): the zero-product discharge. If an eq
 fact `evalP ρ p = 0` has `p` factorizing natively into factors each
@@ -120,6 +178,7 @@ unsafe def tryZeroProduct (g : MVarId) (ρ : Expr) (p : MPoly) (h0fv : FVarId)
       try
         evalTactic (← `(tactic| simp only [evalP, evalM, evalP_add, evalP_mul,
           evalP_neg, evalP_sub, evalP_smulTerm, evalP_ofInt, evalP_ofVar,
+          oddProd, factorProd,
           Int.cast_one, Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add]))
         evalTactic (← `(tactic| ring))
       catch e =>
@@ -222,22 +281,26 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
       match atomsV[l.bvar]? with
       | some (some a) =>
         mvar1.withContext do
-          match (← extractFact ρ IE (mkFVar h_iFvar) l a) with
-          | some fact =>
-            let (hfv, mvar2') ← mvar1.note `h_f fact none
-            let info := match a with
-              | .ineq ⟨.eq, [(q, false)]⟩ => some (q, hfv, l.neg)
-              | _ => none
-            pure (mvar2', false, info)
-          | none => pure (mvar1, true, none)
+          match (← extractFacts ρ IE (mkFVar h_iFvar) l a) with
+          | [] => pure (mvar1, true, (#[] : Array (MPoly × FVarId)), #[])
+          | facts =>
+            let mut mv := mvar1
+            let mut eqs : Array (MPoly × FVarId) := #[]
+            let mut neqs : Array (MPoly × FVarId) := #[]
+            for (fact, kind) in facts do
+              let (hfv, mv') ← mv.note `h_f fact none
+              mv := mv'
+              match kind with
+              | .eqZero q => eqs := eqs.push (q, hfv)
+              | .neZero q => neqs := neqs.push (q, hfv)
+              | .other => pure ()
+            pure (mv, false, eqs, neqs)
       | _ =>
         throwError "nlsat_arith_valid: literal {repr l} is undecodable in the atom table"
     mvar := mvar'
     if wasSkipped then skipped := skipped.push l
-    match factInfo with
-    | some (q, fv, true) => eqFacts := eqFacts.push (q, fv)
-    | some (q, fv, false) => diseqFacts := diseqFacts.push (q, fv)
-    | none => pure ()
+    eqFacts := eqFacts ++ factInfo.1
+    diseqFacts := diseqFacts ++ factInfo.2
     match atomsV[l.bvar]? with
     | some (some a) => vars := vars ++ atomVars a
     | _ => pure ()
@@ -259,7 +322,7 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
   -- whose spelling is not linarith-normal (design review 5, F-ii(a)).
   evalTactic (← `(tactic|
     simp only [evalP, evalM, evalP_add, evalP_mul, evalP_neg, evalP_sub,
-      evalP_smulTerm, evalP_ofInt, evalP_ofVar,
+      evalP_smulTerm, evalP_ofInt, evalP_ofVar, oddProd, factorProd,
       Int.cast_one, Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add] at *))
   evalTactic (← `(tactic| ring_nf at *))
   -- The glue: linarith first (R-i), nlinarith as backup. On failure,

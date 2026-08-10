@@ -145,4 +145,70 @@ example (ρ : Nat → ℝ) :
       (arithClause [⟨5, false⟩, ⟨1, true⟩, ⟨3, false⟩] [⟨6, false⟩, ⟨7, true⟩]) := by
   nlsat_arith_valid
 
+/-! ## G2/G3 — multi-factor + even-parity extraction (design review 7)
+
+The G2 target shape (z3 `add_zero_assumption`, nlsat_explain.cpp:261-283):
+a composite `∏ pᵢ ≠ 0` as ONE multi-factor eq atom in the core, whose
+per-factor diseqs feed the zero-product close of the main eq atom.
+G3: even-parity-marked factors (sign-absorbed for lt/gt, parity-blind
+for eq). -/
+
+-- x0²-3x0+2 = (x0-1)(x0-2); the composite `¬(x0-1)(x0-2)=0` atom
+private def gQuad : MPoly := [(1, [(0, 2)]), (-3, [(0, 1)]), (2, [])]
+private def gXm1 : MPoly := [(1, [(0, 1)]), (-1, [])]
+private def gXm2 : MPoly := [(1, [(0, 1)]), (-2, [])]
+private def gXp1 : MPoly := [(1, [(0, 1)]), (1, [])]
+
+private def gAtoms : Array (Option Atom) :=
+  #[none,
+    some (.ineq ⟨.eq, [(gQuad, false)]⟩),                 -- 1: p = 0
+    some (.ineq ⟨.eq, [(gXm1, false), (gXm2, false)]⟩),   -- 2: composite eq (G2)
+    some (.ineq ⟨.lt, [(gXp1, true), (qx0, false)]⟩),     -- 3: even-marked lt (G3)
+    some (.ineq ⟨.gt, [(qx0, false)]⟩)]                   -- 4: x0 > 0
+
+/-- G2: core [p=0, composite] — the arith clause `p ≠ 0 ∨ composite`,
+i.e. `x0²-3x0+2 = 0 → (x0-1)(x0-2) = 0`. The composite's per-factor
+diseqs (x0-1 ≠ 0, x0-2 ≠ 0) feed `zeroProductClose` on p. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ gAtoms)
+      (arithClause [⟨1, false⟩, ⟨2, true⟩] []) := by
+  nlsat_arith_valid
+
+/-- G3 (eq is parity-blind): core [p=0, even-marked x0+1=0] — the
+arith clause `x0²+2x0+1 ≠ 0 ∨ x0+1 = 0` where the x0+1 atom carries the
+even parity bit (as z3's factorization would mark `(x0+1)²`). -/
+private def gAtoms3 : Array (Option Atom) :=
+  #[none,
+    some (.ineq ⟨.eq, [([(1, [(0, 2)]), (2, [(0, 1)]), (1, [])], false)]⟩),
+    some (.ineq ⟨.eq, [(gXp1, true)]⟩)]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ gAtoms3)
+      (arithClause [⟨1, false⟩, ⟨2, true⟩] []) := by
+  nlsat_arith_valid
+
+/-- G3 (lt/gt sign extraction with an even factor): core [lt-atom,
+gt-atom] — the arith clause `¬holds(3) ∨ ¬(x0 > 0)`, i.e.
+`(x0+1 ≠ 0 ∧ x0 < 0) → x0 ≤ 0`: the even factor x0+1 is sign-absorbed,
+the odd factor's sign is extracted via `oddProd`. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ gAtoms)
+      (arithClause [⟨3, false⟩, ⟨4, false⟩] []) := by
+  nlsat_arith_valid
+
+/- Negative probe: composite with a WRONG factor (x0-3 for x0-2) —
+the clause is invalid (x0 = 2 falsifies it). The per-factor diseqs
+extract fine but the zero-product gate finds x0-2 unmatched and the
+glue must fail. -/
+private def gAtomsBad : Array (Option Atom) :=
+  #[none,
+    some (.ineq ⟨.eq, [(gQuad, false)]⟩),
+    some (.ineq ⟨.eq, [(gXm1, false), ([(1, [(0, 1)]), (-3, [])], false)]⟩)]
+
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ gAtomsBad)
+      (arithClause [⟨1, false⟩, ⟨2, true⟩] []) := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

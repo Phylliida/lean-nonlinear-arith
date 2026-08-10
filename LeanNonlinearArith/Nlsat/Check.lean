@@ -424,6 +424,61 @@ theorem holds_single_gt (ρ : Nat → ℝ) (q : MPoly) :
   simp [IneqAtom.Holds, oddProd]
   exact ne_of_gt
 
+/-! ## Multi-factor / even-parity collapses (G2/G3, design review 7) -/
+
+/-- Product of ALL factor polys (parity-blind — for `eq`, multiplicity
+is irrelevant: `Holds ⟨.eq, fs⟩ ⟺ some factor vanishes ⟺ the product
+vanishes). -/
+def factorProd : List (MPoly × Bool) → MPoly
+  | [] => [(1, [])]
+  | (f, _) :: fs => MPoly.mul f (factorProd fs)
+
+theorem evalP_factorProd (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    evalP ρ (factorProd fs) = (fs.map fun f => evalP ρ f.1).prod := by
+  induction fs with
+  | nil => simp [factorProd, evalP, evalM]
+  | cons f fs ih => simp [factorProd, evalP_mul, ih]
+
+/-- Positive multi-factor `eq` fact: some factor vanishes ⟹ the product
+vanishes. -/
+theorem holds_multi_eq_prod (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    IneqAtom.Holds ρ ⟨.eq, fs⟩ → evalP ρ (factorProd fs) = 0 := by
+  intro h
+  rcases h with ⟨f, hf, hz⟩
+  rw [evalP_factorProd]
+  exact List.prod_eq_zero (List.mem_map.mpr ⟨f, hf, hz⟩)
+
+/-- Negative multi-factor `eq` fact (z3's `add_zero_assumption`
+composite `∏ pᵢ ≠ 0`): no factor vanishes. Quantified over the
+POLYNOMIALS (`fs.map Prod.fst`) so applications have no `Prod.fst`
+redex in their type. -/
+theorem holds_multi_eq_ne (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    ¬ IneqAtom.Holds ρ ⟨.eq, fs⟩ → ∀ f ∈ fs.map Prod.fst, evalP ρ f ≠ 0 := by
+  intro h f hf hz
+  obtain ⟨g, hg, rfl⟩ := List.mem_map.mp hf
+  exact h ⟨g, hg, hz⟩
+
+/-- Positive multi-factor sign facts (even factors are sign-absorbed —
+the sign is the odd-factor product's). -/
+theorem holds_multi_sign_lt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    IneqAtom.Holds ρ ⟨.lt, fs⟩ → oddProd ρ fs < 0 := (·.2)
+
+theorem holds_multi_sign_gt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    IneqAtom.Holds ρ ⟨.gt, fs⟩ → 0 < oddProd ρ fs := (·.2)
+
+/-- Positive multi-factor sign atoms: no factor vanishes. -/
+theorem holds_multi_allNe_lt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    IneqAtom.Holds ρ ⟨.lt, fs⟩ → ∀ f ∈ fs.map Prod.fst, evalP ρ f ≠ 0 :=
+  fun h f hf => by
+    obtain ⟨g, hg, rfl⟩ := List.mem_map.mp hf
+    exact h.1 g hg
+
+theorem holds_multi_allNe_gt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    IneqAtom.Holds ρ ⟨.gt, fs⟩ → ∀ f ∈ fs.map Prod.fst, evalP ρ f ≠ 0 :=
+  fun h f hf => by
+    obtain ⟨g, hg, rfl⟩ := List.mem_map.mp hf
+    exact h.1 g hg
+
 /-! ## The linearRoot discharge (z3 `mk_linear_root` :861-878) -/
 
 /-- The atom + polarity a `linearRoot` step emits (the F4
