@@ -305,4 +305,107 @@ inductive Grammar : TraceStep → Prop
   | resolution {ant : ResolutionAntecedent} :
       Grammar (.resolution ant)
 
+/-! ### The decidable mirror `grammarOK` + soundness
+
+G4 census slice (review-6's optional `grammarOK` lint, consumed here):
+the walk re-discharges arith lemmas from clause literals alone, so
+payloads are PARTICIPANT-GRADE never trust-grade — but the step-fact
+collection (rootCmp cross-links idle-F2 side) REQUIRES grammar
+evidence from payload data, which must be decide-grade on concrete
+steps. `grammarOK` mirrors each `Grammar` constructor; every emission
+side feeds only `decide`-able payloads, so the checker enforces the
+input contract against real traces too (sound rejection on mismatch). -/
+
+/-- Decidable mirror of `TraceStep.Grammar`. -/
+def grammarOK : TraceStep → Bool
+  | .linearRoot _k y p mkNeg lcFact =>
+    decide (p.degreeIn y = 1) &&
+    match lcFact with
+    | none =>
+      match ((p.coeffsIn y)[1]!).asConst? with
+      | some v => decide (v ≠ 0) && mkNeg == decide (v < 0)
+      | none => false
+    | some (c, s) =>
+      decide (c = (p.coeffsIn y)[1]!) && s != 0 && mkNeg == decide (s < 0) &&
+        (match c.asConst? with
+         | none => true
+         | some v => decide (s = Int.sign v))
+  | .thomQuadratic _k y i p sq sa spd sp =>
+    decide (p.degreeIn y = 2 ∧ (i = 1 ∨ i = 2) ∧
+      (sq = 0 ∨ sq = 1) ∧ (sa = -1 ∨ sa = 1) ∧
+      (spd = -1 ∨ spd = 0 ∨ spd = 1) ∧ (sp = -1 ∨ sp = 0 ∨ sp = 1) ∧
+      (sq = 0 → sp = 0))
+  | .rootGeneric _k _y i _p => decide (1 ≤ i)
+  | .cellBound side k y i p =>
+    (match side with
+     | .exact => decide (k = .eq)
+     | .lower => decide (k = .gt ∨ k = .ge)
+     | .upper => decide (k = .lt ∨ k = .le)) &&
+      decide (1 ≤ i) && decide (1 ≤ p.degreeIn y)
+  | .leafNumeric _ | .pseudoDivision .. | .factorSplit ..
+  | .intBranch .. | .resolution _ => true
+
+/-- Soundness: decide-grade grammar membership implies the Prop grammar. -/
+theorem grammarOK_sound (s : TraceStep) (h : grammarOK s) : Grammar s := by
+  cases s with
+  | leafNumeric x => exact Grammar.leafNumeric
+  | linearRoot k y p mkNeg lcFact =>
+    unfold grammarOK at h
+    rw [Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨hdeg, hcond⟩ := h
+    apply Grammar.linearRoot hdeg
+    cases lcFact with
+    | none =>
+      cases hcc : ((p.coeffsIn y)[1]!).asConst? with
+      | none =>
+        simp only [hcc] at hcond
+        exact Bool.noConfusion hcond
+      | some v =>
+        simp only [hcc] at hcond
+        rw [Bool.and_eq_true] at hcond
+        obtain ⟨hvne, hmk⟩ := hcond
+        rw [decide_eq_true_eq] at hvne
+        exact ⟨v, rfl, hvne, beq_iff_eq.mp hmk⟩
+    | some cs =>
+      obtain ⟨c, s'⟩ := cs
+      rw [Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true] at hcond
+      obtain ⟨⟨⟨hc, hss⟩, hmk⟩, hconst⟩ := hcond
+      refine ⟨of_decide_eq_true hc, bne_iff_ne.mp hss, beq_iff_eq.mp hmk, ?_⟩
+      intro v hv
+      cases hdc : c.asConst? with
+      | none =>
+        simp only [hdc] at hv
+        exact Option.noConfusion hv
+      | some v' =>
+        simp only [hdc] at hv hconst
+        have heq : v' = v := Option.some.inj hv
+        subst heq
+        exact of_decide_eq_true hconst
+  | thomQuadratic k y i p sq sa spd sp =>
+    unfold grammarOK at h
+    have h' := of_decide_eq_true h
+    exact Grammar.thomQuadratic h'.1 h'.2.1 h'.2.2.1 h'.2.2.2.1
+      h'.2.2.2.2.1 h'.2.2.2.2.2.1 h'.2.2.2.2.2.2
+  | rootGeneric k y i p =>
+    unfold grammarOK at h
+    exact Grammar.rootGeneric (of_decide_eq_true h)
+  | cellBound side k y i p =>
+    unfold grammarOK at h
+    rw [Bool.and_eq_true, Bool.and_eq_true] at h
+    obtain ⟨⟨hside, hi⟩, hdeg⟩ := h
+    cases side with
+    | exact =>
+      exact Grammar.cellBound (of_decide_eq_true hside)
+        (of_decide_eq_true hi) (of_decide_eq_true hdeg)
+    | lower =>
+      exact Grammar.cellBound (of_decide_eq_true hside)
+        (of_decide_eq_true hi) (of_decide_eq_true hdeg)
+    | upper =>
+      exact Grammar.cellBound (of_decide_eq_true hside)
+        (of_decide_eq_true hi) (of_decide_eq_true hdeg)
+  | pseudoDivision feq eqe xe de re lcSign isEven => exact Grammar.pseudoDivision
+  | factorSplit pe fse vanished => exact Grammar.factorSplit
+  | intBranch xe ve => exact Grammar.intBranch
+  | resolution ant => exact Grammar.resolution
+
 end LeanNonlinearArith.Nlsat

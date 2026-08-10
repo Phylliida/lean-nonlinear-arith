@@ -59,23 +59,42 @@ discharge layer is complete for ALL ineq-atom shapes, unconditionally:
 ONLY remaining `extractFacts` skip class is root atoms — owned by
 the census slice (G4).
 
-## Next: the census slice (G4)
+## Next: the census slice (G4) — step-fact collection + F-w probes
 
-F5 housekeeping DONE (2026-08-10): `Check.lean` split into
-`Check/Semantics.lean` + `Check/Discharge.lean` (re-export keeps all
-imports working); discharge hypotheses unified on full `MPoly.Canon`
-(+ reusable `MPoly.canon_two` in TypesOrder for concrete-canon proofs);
-`↑0`-form hypotheses normalized to `(0 : ℝ)` (R1').
-
-Census slice (G4): grammar-coverage census — per grammar shape, is the
-arith-clause contradiction literal-local (closes from literal failures
-+ glue) or not? Non-local cases get step-fact collection via the
-Coverage theorems (recipe on the BOARD: `coverage_linearRoot`/
-`coverage_thomQuadratic` assembly, R-iii root-order injection, R-ii
-by-value reconstruction). `rootGeneric` definite-disc is the known
-member. The √2-grade goal (x0≥0 ∧ x0²≥2 ∧ x0≤1, load-bearing
-cellBound) lands here. Review-6 F-w parked here: mkNeg/sp
-payload-corruption probes + optional decidable `grammarOK` lint.
+G4 so far (2026-08-10, commits incl. sqrt2 pin, the G4 root-atom arc,
+grammarOK):
+- **gps0 census data** (drivers in scratch_dump.lean: goSqrt2,
+  goDefinite/2, goRootGen): EVERY live arith clause literal-local; NO
+  driver ever emits rootGeneric — 4.12.5 source argument recorded on
+  BOARD G4 section (add_root_literal only from add_cell_lits;
+  mk_quadratic_root can't fail with real roots at the sample).
+  rootGeneric@deg≤2 = foreign-trace defense → synthetic pins.
+- **√2-grade goal** pinned end-to-end (WalkTests) — refutes stage-0.
+- **Census item 2 DONE**: extractFacts .root branch + rootDefiniteClose
+  (deg-2 neg-disc / deg-2 A=B=0 / deg-1 A=0 lanes) + the kernel-checked
+  concrete-coefficient reducer (reduceAdd/reduceGo/coeffsOfValue).
+  KEY TRAP: `MPoly.add` is wf-compiled → NOT kernel-reducible (rfl and
+  decide both fail on concrete sums) ⇒ coeffsOf on concrete polys
+  must ride equation-lemma bridges (`MPoly.add_cons_cons_*`,
+  `coeffsOf_go_cons` in Check/Semantics.lean; eq_1/eq_2/eq_3
+  specialized eq lemmas are the handle — bare eq_def's RHS carries
+  match-structure that blocks, and simp only [*.eq_def] LOOPS).
+  Bridges cross value-forms vs lemma-spelled `[k]!`-redex forms via
+  congrArg + rfl-defeq two-hops. `congrArg` on raw `.lam`-built
+  lambdas dies "unexpected bound variable #0" — always
+  withLocalDecl+mkLambdaFVars. `absurd`'s Sort binder needs pinning.
+- **Census item 1 DONE**: `grammarOK` decidable grammar mirror +
+  `grammarOK_sound` (Trace.lean). LEARN: `decide_eq_true` is forward;
+  use `of_decide_eq_true` / `beq_iff_{eq,ne}.mp` componentwise — never
+  rw decide_eq_true_eq on multi-occurrence decide shapes; avoid deep
+  obtain-patterns over conjunctions + dependent-eliminating
+  `cases` when hyps mention the scrutinee.
+- **REMAINING in G4**: item 3 step-fact collection (rootCmp
+  cross-links — R-ii by-value reconstruction via the new reducer +
+  linearRoot_hAq / rootVal_eq_* / thom_discharge consumption from
+  bundle step payloads; synthetic fixtures); item 4 F-w mkNeg/sp
+  payload-corruption probes; item 5 BOARD review. grammarOK's decide
+  evidence is the entry ticket for item 3's step consumption.
 
 ## Session mechanics (F3/F4 workflow)
 

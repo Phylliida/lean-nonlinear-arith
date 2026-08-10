@@ -2267,6 +2267,12 @@ column, locality census unchanged):**
    `TraceStep.Grammar` + `grammarOK_sound : grammarOK s → Grammar s`)
    — review-6's optional lint, now REQUIRED: step-fact collection
    needs grammar evidence from payload data (decide-grade).
+   **DONE 2026-08-10** (Trace.lean; ⊥→Prop soundness via
+   `of_decide_eq_true` naming conventions — LEARN: `decide_eq_true`
+   is the FORWARD direction; Bool-chain proofs choke on
+   `cases`/`obtain` deep-pattern dependent elimination — convert
+   componentwise, never rw `decide_eq_true_eq` over multi-occurrence
+   `decide ?p` shapes).
 2. `extractFacts` root-atom branch (the definite-disc member + its
    synthetic pin in RefuteTests).
 3. Step-fact collection from bundle context (the cross-links member +
