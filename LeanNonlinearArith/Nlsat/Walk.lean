@@ -32,13 +32,22 @@ its application. (Recorded on the board; root cause open.)
 smaller by creation order): the F-set is the bundle's antecedent
 clauses (input → the bridged hypothesis, learned → the earlier fold
 result) plus one `arithClause core proj` per `.arith` marker
-(discharged by F2's `Refute.proveClauseSat`). `.decision` markers stay
-in the lemma (skipped); non-resolution steps contribute no clause-level
-facts at this layer (review 5, F-i). The learned clause follows by
+(discharged by F2's `Refute.proveClauseSat`, with the bundle's
+preceding projection steps consumed by the G4 step-fact collection —
+`Refute.collectStepFacts`). `.decision` markers stay in the lemma
+(skipped); the remaining steps are consumed by step-fact collection,
+which converts root-atom facts into glue-ready first-order facts
+(the cross-links census member). The learned clause follows by
 `upRefutes_sound` with the RUP check discharged by `decide` (NEVER
 `native_decide` in the trusted layer; per-bundle-local kernel cost,
 R-v; the values are Nat/Bool only so kernel reduction is safe). The
 final bundle's empty lemma yields `False` directly.
+
+**Grammar gate (G4 census):** `precheck` additionally requires every
+step of every bundle (learned + final) to satisfy `grammarOK` — the
+decidable emission-grammar mirror. Real traces pass by construction;
+corrupted payloads that break the grammar are rejected before any
+discharge work.
 
 **Trust shape (R-viii):** untrusted meta producing kernel-checked
 terms; every failure — precheck rejection, failed arith discharge,
