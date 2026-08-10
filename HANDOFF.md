@@ -16,6 +16,10 @@ tree.**
 how rare — never defer a known gap with "until it shows up in
 practice".**
 
+**The R-series is COMPLETE (R-a..R-e).** The discharge layer covers
+every ineq-atom shape unconditionally; the only remaining
+`extractFacts` skip class is root atoms (G4/census slice).
+
 ## Where we are
 
 The **12d.6b ⇄ 19a arc is functionally complete at v0**, and the
@@ -68,19 +72,16 @@ member. The √2-grade goal (x0≥0 ∧ x0²≥2 ∧ x0≤1, load-bearing
 cellBound) lands here. Review-6 F-w parked here: mkNeg/sp
 payload-corruption probes + optional decidable `grammarOK` lint.
 
-## R-e (recorded, with fix sketch)
+## R-e — FIXED (review 12, 2026-08-10)
 
-Zero-product reasoning inside an Or-split BRANCH is not covered: the
-fact indexes (eqFacts/diseqFacts/prodEqFacts) are built pre-mangle, and
-post-split branch contexts only get the glue (the indexed fvars' types
-are mangled by then — `zeroProductClose`'s `evalP`-form assumptions
-break). Requires a negative multi-factor sign atom AND a separate
-factorization-depth-≥3 conflict in the SAME arith lemma. Fix sketch:
-unfold `negChain` at EXTRACTION time (build the nested-Or type directly
-instead of via the def), run Or-splits BEFORE zero-product closes, and
-re-index branch contexts (extractFacts per branch literal is already
-shape-driven — the machinery reuses). No z3-faithful trace observed to
-need it; when implementing, the BOARD entry has the full analysis.
+Zero-product reasoning now runs inside Or-split branches: `chainLoop`
+splits `negChain` facts PRE-mangle via `g.cases` (one factor at a time;
+the left-branch field fvar extends the eq index), and terminal branches
+run `zeroProductClose` with the extended index before mangle+glue.
+Discriminating pin: even-marked cubic factor + composite-eq diseqs +
+the sign fact in a DIFFERENT variable (nlinarith's eq-pairings and
+one-round products otherwise bypass the factorization — see the BOARD
+review-12 block for the witness-engineering analysis).
 
 ## Session mechanics (F3/F4 workflow)
 
@@ -130,6 +131,14 @@ need it; when implementing, the BOARD entry has the full analysis.
 - **`match` on pair patterns `(f, _) :: rest` can get stuck under
   whnf on variables** — use `g :: rest` + `g.1` projections instead
   (the `negChain` shape).
+- **evalTactic mangles ASSIGN the goal mvar** — after simp/ring_nf via
+  evalTactic, pass `← getMainGoal` (the fresh post-mangle mvar), not
+  the pre-mangle one ("metavariable already been assigned" symptom).
+  `CasesSubgoal` inherits `fields` from `InductionSubgoal` (there is
+  no `fieldHyps` in 4.25). mathlib nlinarith internals (review 12):
+  `removeNe` splits `≠` hyps itself; product round pairs EQUALITY hyps
+  with everything (`zero_mul_eq`/`mul_zero_eq`); one round only, no
+  products-of-products.
 - Core polarity: `arithClause core proj = proj ++ ¬core` — hand-written
   test cores invert into the clause (bit me twice; the checker
   correctly refused the invalid clauses).

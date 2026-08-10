@@ -311,4 +311,30 @@ example (ρ : Nat → ℝ) :
     clauseSatI (interp ρ dAtoms) [⟨3, false⟩] := by
   nlsat_arith_valid
 
+/-! ## R-e (review 12) — zero-product close inside an Or-split branch -/
+
+private def eP : MPoly := [(1, [(0, 3)]), (-6, [(0, 2)]), (11, [(0, 1)]), (-6, [])]
+  -- x0³-6x0²+11x0-6 = (x0-1)(x0-2)(x0-3)
+private def eS : MPoly := [(1, [(1, 1)])]   -- x1
+private def eF3 : MPoly := [(1, [(0, 1)]), (-3, [])]   -- x0-3
+
+private def eAtoms : Array (Option Atom) :=
+  #[none,
+    some (.ineq ⟨.lt, [(eP, true), (eS, false)]⟩),   -- 1: p EVEN-marked
+    some (.ineq ⟨.eq, [(gXm1, false), (rXm2, false), (eF3, false)]⟩),  -- 2
+    some (.ineq ⟨.lt, [(eS, false)]⟩)]               -- 3: x1 < 0
+
+/-- R-e: the negChain split of literal 1 (`p` even-marked, so the
+odd-product is just `x1`) yields `p = 0 ∨ (x1 = 0 ∨ ¬(x1 < 0))`.
+Branches `x1 = 0` and `¬(x1 < 0)` close against literal 3 by plain
+glue. The `p = 0` branch contradicts the per-factor diseqs from
+literal 2 ONLY via factorization: the sole sign fact (`x1 < 0`) is in
+a DIFFERENT variable, so nlinarith's one-round pairwise products can't
+reach the cubic (glue-unreachable; PRE-FIX this rejects). Clause:
+`(p≠0 ∧ x1<0) ∨ x0∈{1,2,3} ∨ x1≥0` — valid by cases on `x1 < 0` and
+`p = 0`. Post-fix the per-branch zero-product close handles it. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ eAtoms) [⟨1, false⟩, ⟨2, false⟩, ⟨3, true⟩] := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

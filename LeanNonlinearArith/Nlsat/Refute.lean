@@ -62,12 +62,15 @@ def atomVars : Atom → List Var
   | .root a => a.x :: mpolyVars a.p
 
 /-- Classification of an extracted ℝ-level fact, for the zero-product
-index (G1/G2 + R-b). -/
+index (G1/G2 + R-b) and the pre-mangle chain-split loop (R-e). -/
 inductive FactKind where
   | eqZero (q : MPoly)   -- the fact is `evalP ρ q = 0`
   | neZero (q : MPoly)   -- the fact is `evalP ρ q ≠ 0`
   | eqProdZero (fs : List (MPoly × Bool))
     -- the fact is `((fs.map Prod.fst).map (evalP ρ)).prod = 0` (R-b)
+  | negChain (fs : List (MPoly × Bool))
+    -- the fact is `negChain ρ fs (¬ sign)` (R-a/R-e): split PRE-mangle
+    -- so branch-local zero-product closes see evalP-form facts
   | other
 
 /-- The fact-extraction for one literal: ℝ-level fact proof terms with
@@ -80,8 +83,9 @@ pinned `holds_single_*` path; multi-factor / even-parity atoms
 - `eq` negative: every factor is nonzero (`holds_multi_eq_ne`) — z3's
   `add_zero_assumption` composite `∏ pᵢ ≠ 0` shape;
 - `lt`/`gt` positive: the odd-product sign + every factor nonzero;
-- `lt`/`gt` negative is disjunctive (some factor vanishes OR the sign
-  flips) — skipped (sound; weakens the glue only). -/
+- `lt`/`gt` negative: the flat `negChain` expansion
+  (`negHolds_chain_*`, review 10) — `f₁ = 0 ∨ (… ∨ ¬ sign)` — split by
+  the pre-mangle chain loop (R-e, review 12). -/
 def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
     MetaM (List (Expr × FactKind)) := do
   match a with
@@ -124,12 +128,13 @@ def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
     | .lt | .gt =>
       if !l.neg then
         -- R-a FULL (review 10): the flat negChain expansion
-        -- `f₁ = 0 ∨ (… ∨ ¬ sign)` — split by the glue loop
+        -- `f₁ = 0 ∨ (… ∨ ¬ sign)` — split PRE-mangle by the chain
+        -- loop (R-e, review 12)
         let lem := match k with
           | .lt => ``negHolds_chain_lt
           | _ => ``negHolds_chain_gt
         let hChain ← mkAppM lem #[ρ, fsE, h_i]
-        return [(hChain, .other)]
+        return [(hChain, .negChain fs)]
       let aE := mkApp IE (toExpr l.bvar)
       let nn ← mkAppOptM ``Classical.not_not #[some aE]
       let hH ← mkAppM ``Iff.mp #[nn, h_i]
@@ -339,6 +344,7 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
   let mut eqFacts : Array (MPoly × FVarId) := #[]
   let mut diseqFacts : Array (MPoly × FVarId) := #[]
   let mut prodEqFacts : Array (List (MPoly × Bool) × FVarId) := #[]
+  let mut chainFacts : Array (FVarId × List (MPoly × Bool)) := #[]
   for l in CV do
     -- everything that typechecks terms mentioning context fvars must
     -- run in the CURRENT mvar's local context (hFvar, noted facts)
@@ -361,14 +367,16 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
       | some (some a) =>
         mvar1.withContext do
           match (← extractFacts ρ IE (mkFVar h_iFvar) l a) with
-          | [] => pure (mvar1, true, ((#[], #[], #[]) :
+          | [] => pure (mvar1, true, ((#[], #[], #[], #[]) :
               Array (MPoly × FVarId) × Array (MPoly × FVarId) ×
-              Array (List (MPoly × Bool) × FVarId)))
+              Array (List (MPoly × Bool) × FVarId) ×
+              Array (FVarId × List (MPoly × Bool))))
           | facts =>
             let mut mv := mvar1
             let mut eqs : Array (MPoly × FVarId) := #[]
             let mut neqs : Array (MPoly × FVarId) := #[]
             let mut prods : Array (List (MPoly × Bool) × FVarId) := #[]
+            let mut chs : Array (FVarId × List (MPoly × Bool)) := #[]
             for (fact, kind) in facts do
               let (hfv, mv') ← mv.note `h_f fact none
               mv := mv'
@@ -376,8 +384,9 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
               | .eqZero q => eqs := eqs.push (q, hfv)
               | .neZero q => neqs := neqs.push (q, hfv)
               | .eqProdZero fs => prods := prods.push (fs, hfv)
+              | .negChain fs => chs := chs.push (hfv, fs)
               | .other => pure ()
-            pure (mv, false, (eqs, neqs, prods))
+            pure (mv, false, (eqs, neqs, prods, chs))
       | _ =>
         throwError "nlsat_arith_valid: literal {repr l} is undecodable in the atom table"
     mvar := mvar'
@@ -387,7 +396,8 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
     | _ => pure ()
     eqFacts := eqFacts ++ factInfo.1
     diseqFacts := diseqFacts ++ factInfo.2.1
-    prodEqFacts := prodEqFacts ++ factInfo.2.2
+    prodEqFacts := prodEqFacts ++ factInfo.2.2.1
+    chainFacts := chainFacts ++ factInfo.2.2.2
   -- sq_nonneg hints per occurring variable (nlinarith's nonlinear leaf)
   for v in vars.eraseDup do
     mvar ← mvar.withContext do
@@ -397,19 +407,20 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
   -- G1 zero-product close (review 7, F-v) + R-b multi-eq-positive
   -- branch (review 9): before the simp/ring_nf mangling, while the
   -- h_f facts are still `evalP` comparisons. Shape-gated; no-op on
-  -- lt/gt-only cores.
+  -- lt/gt-only cores. (Whole-clause fast path; the R-e chain loop
+  -- below re-runs it per branch with the split-produced eq facts.)
   if ← zeroProductClose mvar ρ eqFacts diseqFacts prodEqFacts then
     return
-  replaceMainGoal [mvar]
   -- Unfold evalP/evalM on the concrete polys, then normalize: the
   -- simp-unfold leaves `ρ x ^ 1` powers and `↑(-1)` Int-cast numerals
   -- whose spelling is not linarith-normal (design review 5, F-ii(a)).
-  evalTactic (← `(tactic|
-    simp only [evalP, evalM, evalP_add, evalP_mul, evalP_neg, evalP_sub,
-      evalP_smulTerm, evalP_ofInt, evalP_ofVar, oddProd, List.map_cons,
-      List.map_nil, List.prod_cons, List.prod_nil, Prod.fst, negChain,
-      Int.cast_one, Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add] at *))
-  evalTactic (← `(tactic| ring_nf at *))
+  let mangle : TacticM Unit := do
+    evalTactic (← `(tactic|
+      simp only [evalP, evalM, evalP_add, evalP_mul, evalP_neg, evalP_sub,
+        evalP_smulTerm, evalP_ofInt, evalP_ofVar, oddProd, List.map_cons,
+        List.map_nil, List.prod_cons, List.prod_nil, Prod.fst, negChain,
+        Int.cast_one, Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add] at *))
+    evalTactic (← `(tactic| ring_nf at *))
   -- The glue: linarith first (R-i), nlinarith as backup. On failure,
   -- lazily trichotomy-split disequality facts `¬(t = 0)` (invisible to
   -- linarith — review 5, F-ii(b)) one at a time, retrying per branch.
@@ -479,7 +490,49 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
     match atomsV[l.bvar]? with
     | some (some (.ineq a)) => acc + 2 * (a.factors.length + 1)
     | _ => acc + 2) 0 + 4
-  closeWithSplits (← getMainGoal) fuel #[]
+  -- R-e (review 12): split the negChain facts PRE-mangle, one factor
+  -- at a time, so each branch keeps evalP-form facts and the
+  -- zero-product close can run per branch with the split-produced eq
+  -- fact added to the index. Terminal branches: per-branch
+  -- zero-product close, then mangle + glue (+ splits) as before.
+  -- (`g.cases` whnf's the `negChain` def to the nested Or.)
+  let rec chainLoop (g : MVarId) (chs : List (FVarId × List (MPoly × Bool)))
+      (eqF : Array (MPoly × FVarId)) : TacticM Unit := do
+    setGoals [g]
+    match chs with
+    | [] =>
+      if ← zeroProductClose g ρ eqF diseqFacts prodEqFacts then return
+      setGoals [g]
+      mangle
+      -- NB: the mangle ASSIGNS `g` — the post-mangle goal is a new mvar
+      closeWithSplits (← getMainGoal) fuel #[]
+    | (_, []) :: rest => chainLoop g rest eqF
+    | (fv, f :: frest) :: rest =>
+      let gs ← g.cases fv
+      let [c1, c2] := gs.toList |
+        throwError "nlsat_arith_valid: unexpected negChain case count"
+      let fieldFv (c : CasesSubgoal) : TacticM FVarId :=
+        match c.fields[0]? with
+        | some e =>
+          if e.isFVar then pure e.fvarId!
+          else throwError "nlsat_arith_valid: negChain field is not an fvar"
+        | none => throwError "nlsat_arith_valid: negChain split has no fields"
+      let leftFv ← fieldFv c1
+      -- left branch: `evalP ρ f.1 = 0` — a new eq fact for the index
+      chainLoop c1.mvarId rest (eqF.push (f.1, leftFv))
+      -- right branch: `negChain ρ frest tail` — keep splitting
+      if frest.isEmpty then
+        chainLoop c2.mvarId rest eqF
+      else
+        let rightFv ← fieldFv c2
+        chainLoop c2.mvarId ((rightFv, frest) :: rest) eqF
+  if chainFacts.isEmpty then
+    setGoals [mvar]
+    mangle
+    -- NB: the mangle ASSIGNS `mvar` — the post-mangle goal is a new mvar
+    closeWithSplits (← getMainGoal) fuel #[]
+  else
+    chainLoop mvar chainFacts.toList eqFacts
 
 /-- `nlsat_arith_valid` — prove `clauseSatI (interp ρ atoms) C` for a
 concrete atom table and clause (the F2 per-arith-marker obligation). -/
