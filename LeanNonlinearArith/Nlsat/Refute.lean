@@ -470,7 +470,16 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
               throwError "nlsat_arith_valid: unexpected trichotomy case count"
             closeWithSplits c1 fuel (done.push d)
             closeWithSplits c2 fuel (done.push d)
-  closeWithSplits (← getMainGoal) 8 #[]
+  -- Split fuel sized by the clause (review 11 — no arbitrary bound):
+  -- each literal contributes at most `factors + 1` Or-splits (its
+  -- negChain depth) and at most one trichotomy split per extracted
+  -- diseq fact (bounded by the same count), so 2·(factors+1) per
+  -- literal + margin covers every split the loop can make.
+  let fuel := CV.foldl (fun acc l =>
+    match atomsV[l.bvar]? with
+    | some (some (.ineq a)) => acc + 2 * (a.factors.length + 1)
+    | _ => acc + 2) 0 + 4
+  closeWithSplits (← getMainGoal) fuel #[]
 
 /-- `nlsat_arith_valid` — prove `clauseSatI (interp ρ atoms) C` for a
 concrete atom table and clause (the F2 per-arith-marker obligation). -/

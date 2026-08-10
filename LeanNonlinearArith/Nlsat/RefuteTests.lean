@@ -283,4 +283,32 @@ example (ρ : Nat → ℝ) :
     clauseSatI (interp ρ rAtoms) [⟨4, false⟩, ⟨5, true⟩] := by
   nlsat_arith_valid
 
+/-! ## Degenerate shapes (review 11) -/
+
+private def dAtoms : Array (Option Atom) :=
+  #[none,
+    some (.ineq ⟨.eq, []⟩),                  -- 1: empty-factor eq (⟺ False)
+    some (.ineq ⟨.lt, [(rXp1, true)]⟩),      -- 2: all-EVEN lt (oddProd = 1)
+    some (.ineq ⟨.lt, []⟩)]                  -- 3: empty-factor lt (⟺ False)
+
+/-- Empty-factor eq atom, negated in the clause: `¬(∃ f ∈ [], f = 0)`
+is trivially true; the extracted fact is `1 = 0` (from the False
+hypothesis), which the glue closes. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ dAtoms) [⟨1, true⟩] := by
+  nlsat_arith_valid
+
+/-- All-even lt atom, negated in the clause: `¬(x0+1 ≠ 0 ∧ 1 < 0)` is
+trivially true; the sign fact is `1 < 0`, closed by the glue. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ dAtoms) [⟨2, true⟩] := by
+  nlsat_arith_valid
+
+/- Empty-factor lt atom UNnegated: `Holds(lt []) ⟺ 1 < 0` — the clause
+is INVALID and must reject. -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ dAtoms) [⟨3, false⟩] := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute
