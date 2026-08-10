@@ -31,6 +31,8 @@ import LeanNonlinearArith.Kernel.RAlgTests
 import LeanNonlinearArith.Nlsat.Types
 import LeanNonlinearArith.Nlsat.Trace
 import LeanNonlinearArith.Nlsat.Check
+import LeanNonlinearArith.Nlsat.Check.Semantics
+import LeanNonlinearArith.Nlsat.Check.Discharge
 import LeanNonlinearArith.Nlsat.Coverage
 import LeanNonlinearArith.Nlsat.Assemble
 import LeanNonlinearArith.Nlsat.AssembleTests
