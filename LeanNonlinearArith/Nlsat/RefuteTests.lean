@@ -672,4 +672,27 @@ example (ρ : Nat → ℝ) :
     clauseSatI (interp ρ fxAtoms) (arithClause [] [⟨1, true⟩, ⟨2, false⟩]) := by
   nlsat_arith_valid
 
+/-- The nonstrict Thom cells (kind coverage for the Thom production):
+`p = x0²−2` with BOTH bounds on the greater root. `ge 2` formula is
+conjunctive (`0 ≤ pv ∧ 0 ≤ pdv` ⟹ `2·y ≥ 0`), `le 2` is disjunctive
+(`pv ≤ 0 ∨ (0 ≤ pv ∧ pdv ≤ 0)` — exactly the split-fuel cell verified
+against `Semantics.thomFormula`): the `pv ≤ 0` branch dies against
+`0 ≤ pv` + the `p < 0` literal, the `pdv ≤ 0` branch (`2y ≤ 0`)
+dies against the `y > 0` literal. -/
+private def tqAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.ge, 0, 2, tsPm2⟩),         -- 1: ρ 0 ≥ root₂(p)
+    some (.root ⟨.le, 0, 2, tsPm2⟩),         -- 2: ρ 0 ≤ root₂(p)
+    some (.ineq ⟨.lt, [(tsPm2, false)]⟩),    -- 3: p < 0
+    some (.ineq ⟨.gt, [(tgX0, false)]⟩)]     -- 4: 0 < ρ 0
+
+private def tqSteps : Array TraceStep :=
+  #[.cellBound .lower .ge 0 2 tsPm2, .thomQuadratic .ge 0 2 tsPm2 1 1 1 0,
+    .cellBound .upper .le 0 2 tsPm2, .thomQuadratic .le 0 2 tsPm2 1 1 1 0]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tqAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, true⟩, ⟨4, true⟩]) := by
+  nlsat_arith_valid_steps tqSteps
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

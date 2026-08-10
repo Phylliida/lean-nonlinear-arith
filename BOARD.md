@@ -2376,6 +2376,20 @@ degenerate reroute non-const-lc (the clause lane), encoding-free
 foreign bilinear, plus per-fixture load-bearing negative probes and the
 xl end-to-end walk fixture with load-bearing + grammar-gate variants.
 
+**Adversarial addendum (Danielle's divergence probe, 2026-08-10):** the
+split-fuel `thomDisjunctive` table was verified cell-by-cell against
+`Semantics.thomFormula` — the un-pinned le/ge Thom cells were the one
+place a divergence could plausibly hide (nonstrict kinds don't use
+z3's strict-region + boundary decomposition; the ≤-forms absorb the
+boundary: `le 1 := 0 ≤ pv ∧ pdv ≤ 0` conjunctive, `le 2 := pv ≤ 0 ∨
+(0 ≤ pv ∧ pdv ≤ 0)`, `ge 1` disjunctive, `ge 2` conjunctive). The fuel
+table matched every cell. The le/ge Thom lane is now PINNED too
+(both-bounds-on-the-greater-root fixture: ge-2 conjunctive versus the
+`y > 0`/`p < 0` literals, le-2 disjunctive exercised through findOr).
+No off-board divergences were found in this audit — the remaining
+known items are all boarded (sp-superset semantics, the deliberate
+encoding-free lane, R-q, sq=0 Thom fixture, G5/6/7+G8/9/10 owners).
+
 **Honest inventory (recorded, NOT new gaps):**
 - rootCount EVALUATION lane (count comparisons like `2 ≤ rootCount` for
   const-coefficient deg-2 — e.g. an `i = 2` root atom on a double-root
