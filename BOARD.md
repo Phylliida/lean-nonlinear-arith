@@ -2554,6 +2554,30 @@ rebuilt-literal normalization:
    soundness gain, since the per-instance identity check dominates).
    A terminating non-partial pseudo-division for decide-grade tickets
    is a possible R3'-grade follow-up, parked.
+   **RESOLVED (Danielle, 2026-08-10): option 1.** Discussion outcome:
+   the choice never touched z3 fidelity — search runs the pinned
+   12d.1b-i port either way; the question was only what the trust
+   overlay verifies, and the per-instance identity verifies z3's own
+   mathematical contract (`lc^d·f = Q·eq + r`, deg-bound) rather than
+   a second implementation's agreement with the first. Recorded
+   property (strengthens the check): **d-parity is never trusted** —
+   any witness (d, Q, r) of the identity with lc ≠ 0 yields the same
+   sign conclusion under eq = 0 (perturbing to (d+1, lc·Q, lc·r)
+   scales sign r and flips parity in cancellation); payload d/lcSign
+   are pure untrusted hints. Completeness of acceptance: `ring` is
+   complete for the per-instance identities, so genuine emissions
+   always close. Cost model: per-(f, eq)-pair reflective close, fires
+   only in simplify-cluster conflicts (select_eq-gated — zero live
+   drivers emitted one across the whole 19a arc; that's why v0
+   worked), heartbeat-budgeted per layer; pathological many-factor
+   cores are G10 territory (nla-16 measurement; mitigation =
+   bundle-level memo, no design change). Option 2 was also the
+   strict-loser on cost: the wf-compiled MPoly stack can't kernel-
+   compute, so it meant a SECOND polynomial representation (build +
+   runtime + drift risk). nla-31's abstract termination/correctness
+   proof for `pseudoDivisionCore` stands unchanged as proof-layer
+   defense-in-depth — the green checker does not depend on it
+   (factorM/zeroProductClose architecture exactly).
 2. The standing target (ordering_139 vs first quadratic census row) is
    decided by Slice 0's dump, not in advance.
 3. Path (c) keep-original semantics: confirmed by 12d.5's pin; no new
