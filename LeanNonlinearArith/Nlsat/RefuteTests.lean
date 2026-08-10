@@ -365,4 +365,38 @@ example (ρ : Nat → ℝ) :
     clauseSatI (interp ρ eAtoms3) [⟨1, false⟩, ⟨2, false⟩, ⟨2, true⟩] := by
   nlsat_arith_valid
 
+/-- G4 (census slice): rootGeneric-definite-disc — the clause
+`¬(x0 = root₁(x0²+1))` (a negated root atom on a quadratic with disc
+= −4 < 0) is valid: the atom's root count is 0, so `i = 1 ≤ rootCount`
+is false at every ρ. The close goes through the root-atom extraction
+(`.rootPair` fact) plus the definite-disc lane of `rootDefiniteClose`
+on lattice-reduced concrete coefficients (the G4 reduction bridges —
+the identified kernel-non-reducibility of wf-compiled `MPoly.add`
+means `coeffsOf` computation rides the `MPoly.add_cons_cons_*`/
+`coeffsOf_go_cons` equation-lemma chain). -/
+private def g4Atoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.eq, 0, 1, [(1, [(0, 2)]), (1, [])]⟩)]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g4Atoms) (arithClause [⟨1, false⟩] []) := by
+  nlsat_arith_valid
+
+/-- The `i == 0` guard (negative probe): with index 0 the count bound
+`0 ≤ rootCount` is vacuous and `rootCmp .eq` needs only `ρ 0` coinciding
+with the degenerate-root value — so the clause is NOT valid (at
+`ρ 0 = 0` the atom holds: count part `0 ≤ 0` ✓, `rootCmp .eq (ρ 0) 0`
+— with disc < 0 the square-root convention gives root 0 — ✓). The
+close lane must stay `i ≥ 1`-gated; rejection is sound. -/
+private def g4AtomsBad : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.eq, 0, 0, [(1, [(0, 2)]), (1, [])]⟩)]
+
+/- Negative probe: see above — `0 ≤ rootCount` is always true, so no
+count contradiction exists; the glue would have to reject. -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g4AtomsBad) (arithClause [⟨1, false⟩] []) := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

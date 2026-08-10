@@ -807,6 +807,24 @@ theorem rootGeneric_discharge (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : N
   rw [not_not]
   exact Iff.rfl
 
+/-- Deg-1 with vanishing lead ⇒ no roots (the constant-in-`y` case of
+the definite-disc family, G4 census). -/
+theorem rootCount_zero_of_deg1_lc_zero (ρ : Nat → ℝ) (y : Var) (p : MPoly)
+    (hdeg : p.degreeIn y = 1) (hA : evalP ρ ((coeffsOf p y)[1]!) = 0) :
+    rootCount ρ y p = 0 := by
+  unfold rootCount
+  rw [if_pos hdeg, if_neg (fun h => h hA)]
+
+/-- Deg-2 with both `A` and `B` vanishing ⇒ no roots (the
+constant-in-`y` degenerate; `A = 0, B ≠ 0` counts 1). -/
+theorem rootCount_zero_of_deg2_lc_zero (ρ : Nat → ℝ) (y : Var) (p : MPoly)
+    (hdeg : p.degreeIn y = 2) (hA : evalP ρ ((coeffsOf p y)[2]!) = 0)
+    (hB : evalP ρ ((coeffsOf p y)[1]!) = 0) :
+    rootCount ρ y p = 0 := by
+  unfold rootCount
+  rw [if_neg (by rw [hdeg]; decide), if_neg (fun h => h hA),
+    if_neg (fun h => h hB)]
+
 /-- Deg-2 negative disc ⇒ no roots ⇒ the atom is false. -/
 theorem rootCount_zero_of_neg_disc (ρ : Nat → ℝ) (y : Var) (p : MPoly)
     (hdeg : p.degreeIn y = 2)

@@ -391,4 +391,49 @@ example : ∀ ρ : Nat → ℝ,
       clauseHolds ρ sqrt2Atoms C) → False := by
   nlsat_refute ⟨sqrt2Atoms, sqrt2Clauses, sqrt2Bundles, sqrt2Final⟩
 
+/-! ## G4 census slice — rootGeneric-definite-disc (synthetic fixture)
+
+`rootGeneric` at deg ≤ 2 is unreachable via z3-4.12.5 production reads
+(the generic fallback of `add_root_literal` needs `mk_quadratic_root`
+to fail, but a deg-≤2 poly with an isolated root always has `sq ≥ 0`;
+negative-disc quads have no roots and never reference one), so this
+family gets SYNTHETIC pins — the foreign-trace defensive grammar
+region (fs3FinalBad discipline; hand-written snapshot, not
+machine-generated). The clause `¬(x0 = root₁(x0²+1))`: the atom's
+`i = 1 ≤ rootCount = 0` (disc = −4) is false at every ρ, so the
+single-literal arith lemma is valid; the extraction's `.rootPair`
+fact + `rootDefiniteClose`'s neg-disc lane discharge it. -/
+
+private def rgAtoms : Array (Option Atom) :=
+  #[none,
+   some (.root ⟨.eq, 0, 1, [(1, [(0, 2)]), (1, [])]⟩)]
+
+private def rgClauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, false⟩], learned := false, deleted := false }]
+
+private def rgBundles : Array (Option TraceBundle) :=
+  #[none, none]
+
+private def rgFinal : TraceBundle :=
+  ⟨#[.resolution (.clause 1),
+      .resolution (.arith #[⟨1, false⟩] #[])], #[]⟩
+
+/-- End-to-end: the definite-disc refutation walked from the positive
+root-atom input clause. -/
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩]], clauseHolds ρ rgAtoms C) → False := by
+  nlsat_refute ⟨rgAtoms, rgClauses, rgBundles, rgFinal⟩
+
+private def rgAtomsBad : Array (Option Atom) :=
+  #[none,
+   some (.root ⟨.eq, 0, 0, [(1, [(0, 2)]), (1, [])]⟩)]
+
+/- Negative probe: `i = 0` keeps the count bound live, the close
+stays gated; rejection is sound. -/
+#guard_msgs (drop error) in
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩]], clauseHolds ρ rgAtomsBad C) → False := by
+  nlsat_refute ⟨rgAtomsBad, rgClauses, rgBundles, rgFinal⟩
+
 end LeanNonlinearArith.Nlsat.Tests.Walk

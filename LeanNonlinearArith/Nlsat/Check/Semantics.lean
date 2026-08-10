@@ -231,6 +231,66 @@ where
     | (a, m) :: ts =>
       go (init.set (m.degreeIn y) (MPoly.add init[m.degreeIn y]! [(a, m.erase y)])) ts
 
+/-! ## Reduction bridges for concrete `MPoly`/`coeffsOf` computation
+
+G4 (census slice): `MPoly.add` is well-founded-compiled, so it does
+NOT reduce under kernel whnf/rfl/decide (`MPoly.add [] [(1, [])] =
+[(1, [])] := rfl` FAILS) — and every `coeffsOf.go` accumulation step
+goes through it; so `coeffsOf` on a concrete polynomial is likewise
+not kernel-computable. The per-branch single-step lemmas below restate
+the *equation lemmas* for each concrete-merge branch, so a meta
+reducer (Refute.lean) can build kernel-checked value equalities
+`MPoly.add p q = r` / `coeffsOf p y = cs` on concrete polynomials.
+(`MVarId.refl` closers discharge the structural side equalities —
+degreeIn/erase/List.set/getElem!/`(c == 0)` — by ordinary whnf; only
+`MPoly.add` itself needs this treatment.) -/
+
+namespace MPoly
+
+theorem add_nil_l (q : MPoly) : MPoly.add [] q = q := MPoly.add.eq_1 q
+
+theorem add_nil_r {p : MPoly} (h : p ≠ []) : MPoly.add p [] = p := MPoly.add.eq_2 p h
+
+theorem add_cons_cons_gt {a : Int} {m : Monomial} {p : MPoly}
+    {b : Int} {n : Monomial} {q : MPoly}
+    (h : Monomial.cmp m n = .gt) :
+    MPoly.add ((a, m) :: p) ((b, n) :: q) = (a, m) :: MPoly.add p ((b, n) :: q) := by
+  rw [MPoly.add.eq_3, h]
+
+theorem add_cons_cons_lt {a : Int} {m : Monomial} {p : MPoly}
+    {b : Int} {n : Monomial} {q : MPoly}
+    (h : Monomial.cmp m n = .lt) :
+    MPoly.add ((a, m) :: p) ((b, n) :: q) = (b, n) :: MPoly.add ((a, m) :: p) q := by
+  rw [MPoly.add.eq_3, h]
+
+theorem add_cons_cons_eq_ne {a : Int} {m : Monomial} {p : MPoly}
+    {b : Int} {n : Monomial} {q : MPoly}
+    (h : Monomial.cmp m n = .eq) (hz : (a + b == 0) = false) :
+    MPoly.add ((a, m) :: p) ((b, n) :: q) = ((a + b), m) :: MPoly.add p q := by
+  rw [MPoly.add.eq_3, h]
+  simp only [hz, Bool.false_eq_true, reduceIte]
+
+theorem add_cons_cons_eq_zero {a : Int} {m : Monomial} {p : MPoly}
+    {b : Int} {n : Monomial} {q : MPoly}
+    (h : Monomial.cmp m n = .eq) (hz : (a + b == 0) = true) :
+    MPoly.add ((a, m) :: p) ((b, n) :: q) = MPoly.add p q := by
+  rw [MPoly.add.eq_3, h]
+  simp only [hz, ite_true]
+
+end MPoly
+
+/-- One `coeffsOf.go` cons-step, with all structural redexes replaced by
+computed values. (The reducibility analysis above: only the
+`MPoly.add` hop needs a proof term; the rest is defeq.) -/
+theorem coeffsOf_go_cons (y : Var) (init : List MPoly) (a : Int)
+    (m : Monomial) (ts : MPoly) (d : Nat) (v w : MPoly) (init' : List MPoly)
+    (hd : Monomial.degreeIn m y = d) (hv : init[d]! = v)
+    (hadd : MPoly.add v [(a, Monomial.erase m y)] = w)
+    (hset : init.set d w = init') :
+    coeffsOf.go y init ((a, m) :: ts) = coeffsOf.go y init' ts := by
+  rw [coeffsOf.go.eq_2, hd, hv, hadd, hset]
+
+
 theorem evalCoeffs_set (ρ : Nat → ℝ) (y : Var) (cs : List MPoly) (e : Nat)
     (v : MPoly) (he : e < cs.length) :
     evalCoeffs ρ y (cs.set e v) =

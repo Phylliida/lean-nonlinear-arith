@@ -71,6 +71,10 @@ inductive FactKind where
   | negChain (fs : List (MPoly × Bool))
     -- the fact is `negChain ρ fs (¬ sign)` (R-a/R-e): split PRE-mangle
     -- so branch-local zero-product closes see evalP-form facts
+  | rootPair (y : Var) (i : Nat) (p : MPoly)
+    -- G4 root-atom branch: the fact is `RootAtom.Holds ρ ⟨k, y, i, p⟩`
+    -- (the pair `i ≤ rootCount ∧ rootCmp`) — the definite-disc close
+    -- (`rootDefiniteClose`) consumes it
   | other
 
 /-- The fact-extraction for one literal: ℝ-level fact proof terms with
@@ -152,7 +156,16 @@ def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
         let hf ← mkAppM' hAll #[toExpr f, memPrf]
         pure (hf, .neZero f)
       return (hSign, .other) :: perFactor
-  | _ => return []
+  | .root ⟨_, y, i, p⟩ =>
+    -- G4 root atoms (z3's `mk_root_atom` always arrives negated). The
+    -- pair fact (count bound + rootCmp) is the extraction; the
+    -- definite-disc close consumes it. Positive-polarity root literals
+    -- (`¬atom` failing) stay skipped — sound.
+    if !l.neg then return []
+    let aE := mkApp IE (toExpr l.bvar)
+    let nn ← mkAppOptM ``Classical.not_not #[some aE]
+    let hH ← mkAppM ``Iff.mp #[nn, h_i]
+    return [(hH, .rootPair y i p)]
 
 /-- The diseq fact for factor `f`, converting from a sign-flipped
 fact on `-f` if needed (`evalP_neg` + `neg_ne_zero`; `MPoly.neg`
@@ -192,6 +205,266 @@ partial def forallMemNe (ρ : Expr) (qs : List (MPoly × Bool))
     let andE ← mkAppM ``And.intro #[pf, restE]
     mkAppM ``Iff.mpr #[iffE, andE]
   | _, _ => throwError "forallMemNe: length mismatch"
+
+/-! ## Concrete-coefficient extraction (G4, kernel-checked)
+
+`MPoly.add` is well-founded-compiled, so `coeffsOf` on a concrete
+polynomial does NOT reduce under kernel whnf/rfl/decide (probed).
+The proof-producing reducer below walks `coeffsOf.go` node-by-node,
+using the single-step bridges in `Check/Semantics.lean`
+(`MPoly.add_cons_cons_*`, `coeffsOf_go_cons`), with the structural
+side equalities (`Monomial.degreeIn`/`erase`, `List.set`/`getElem!`,
+Int `beq` chains) discharged by `rfl`-level defeq or `mkDecideProof`
+— all kernel-reducible (probed). Every produced term is kernel-
+checked; the native values it threads are suggestions only.
+
+The close of the definite-disc family: a `RootAtom.Holds` pair fact
+(`i ≤ rootCount ∧ rootCmp`) plus `rootCount = 0` (deg-1/2 with a
+decide-grade constant discriminant/coefficient situation) contradicts
+the atom's `i ≥ 1` directly. -/
+
+/-- Prove an `Eq` proposition by `rfl`-level defeq (subgoal + assign). -/
+def proveByRefl (lhs rhs : Expr) : MetaM Expr := do
+  let ty ← mkAppM ``Eq #[lhs, rhs]
+  let v ← mkFreshExprMVar ty
+  v.mvarId!.refl
+  instantiateMVars v
+
+/-- cons-prepend congruence: `h : xs = ys` to `Eq (t :: xs) (t :: ys)`. -/
+def consCong (tE : Expr) (h : Expr) : MetaM Expr := do
+  let elemTy ← inferType tE
+  let xTy := mkApp (mkConst ``List [levelZero]) elemTy
+  -- List.cons {α} a as: α (implicit) applied positionally first
+  let consAt := mkApp (mkConst ``List.cons [levelZero]) elemTy
+  let lam := .lam `x xTy (mkApp2 consAt tE (.bvar 0)) .default
+  mkAppM ``congrArg #[lam, h]
+
+/-- The `(base)[k]!` access form (`GetElem?.getElem!` — the elaboration
+of the lemmas' own `(coeffsOf p y)[k]!` spelling; probed `pp.all`). -/
+def mkIdxGet (base : Expr) (k : Nat) : MetaM Expr :=
+  mkAppM ``GetElem?.getElem! #[base, toExpr k]
+
+/-- Proof-producing reduction of `MPoly.add` on concrete polys:
+returns `(r, proof of MPoly.add p q = r)`. -/
+unsafe def reduceAdd (p q : MPoly) : MetaM (MPoly × Expr) := do
+  let pE := toExpr p; let qE := toExpr q
+  match p, q with
+  | [], q' =>
+    return (q', ← mkAppM ``Check.MPoly.add_nil_l #[qE])
+  | p', [] =>
+    let hne ← mkDecideProof (← mkAppM ``Ne #[pE, toExpr ([] : MPoly)])
+    return (p', ← mkAppM ``Check.MPoly.add_nil_r #[pE, hne])
+  | (a, m) :: p', (b, n) :: q' =>
+    let mE := toExpr m; let nE := toExpr n
+    let cmpE ← mkAppM ``Monomial.cmp #[mE, nE]
+    match Monomial.cmp m n with
+    | .gt =>
+      let hcmp ← mkDecideProof (← mkAppM ``Eq #[cmpE, mkConst ``Ordering.gt])
+      let hstep ← mkAppM ``Check.MPoly.add_cons_cons_gt #[hcmp]
+      let (r', prfR') ← reduceAdd p' ((b, n) :: q')
+      let prfCong ← consCong (toExpr (a, m)) prfR'
+      return ((a, m) :: r', ← mkAppM ``Eq.trans #[hstep, prfCong])
+    | .lt =>
+      let hcmp ← mkDecideProof (← mkAppM ``Eq #[cmpE, mkConst ``Ordering.lt])
+      let hstep ← mkAppM ``Check.MPoly.add_cons_cons_lt #[hcmp]
+      let (r', prfR') ← reduceAdd ((a, m) :: p') q'
+      let prfCong ← consCong (toExpr (b, n)) prfR'
+      return ((b, n) :: r', ← mkAppM ``Eq.trans #[hstep, prfCong])
+    | .eq =>
+      let sumE ← mkAppM ``HAdd.hAdd #[toExpr a, toExpr b]
+      let beqE ← mkAppM ``BEq.beq #[sumE, toExpr (0 : Int)]
+      if a + b == 0 then
+        let hz ← mkDecideProof (← mkAppM ``Eq #[beqE, mkConst ``true])
+        let hstep ← mkAppM ``Check.MPoly.add_cons_cons_eq_zero
+          #[← mkDecideProof (← mkAppM ``Eq #[cmpE, mkConst ``Ordering.eq]), hz]
+        let (r', prfR') ← reduceAdd p' q'
+        return (r', ← mkAppM ``Eq.trans #[hstep, prfR'])
+      else
+        let hz ← mkDecideProof (← mkAppM ``Eq #[beqE, mkConst ``false])
+        let hstep ← mkAppM ``Check.MPoly.add_cons_cons_eq_ne
+          #[← mkDecideProof (← mkAppM ``Eq #[cmpE, mkConst ``Ordering.eq]), hz]
+        let (r', prfR') ← reduceAdd p' q'
+        let prfCong ← consCong (toExpr ((a + b), m)) prfR'
+        return (((a + b), m) :: r', ← mkAppM ``Eq.trans #[hstep, prfCong])
+
+/-- The go-walk: `acc : coeffsOf p y = coeffsOf.go y init ts`. Returns the
+final coefficient list and a proof of `coeffsOf p y = <it>`. -/
+unsafe def reduceGo (y : Var) (init : List MPoly) (ts : MPoly)
+    (acc : Expr) : MetaM (List MPoly × Expr) := do
+  let initE := toExpr init; let yE := toExpr y
+  match ts with
+  | [] =>
+    let hEnd ← mkAppM ``Check.coeffsOf.go.eq_1 #[yE, initE]
+    return (init, ← mkAppM ``Eq.trans #[acc, hEnd])
+  | (a, m) :: ts' =>
+    let d := m.degreeIn y
+    let v := init[d]!
+    let e := m.erase y
+    let (w, prfW) ← reduceAdd v [(a, e)]
+    let init' := init.set d w
+    let init'E := toExpr init'
+    let mE := toExpr m
+    let hd ← mkDecideProof
+      (← mkAppM ``Eq #[← mkAppM ``Monomial.degreeIn #[mE, yE], toExpr d])
+    let hv ← proveByRefl (← mkIdxGet initE d) (toExpr v)
+    let hset ← proveByRefl
+      (← mkAppM ``List.set #[initE, toExpr d, toExpr w]) init'E
+    let hstep ← mkAppM ``Check.coeffsOf_go_cons
+      #[yE, initE, toExpr a, mE, toExpr ts', toExpr d, toExpr v, toExpr w,
+        init'E, hd, hv, prfW, hset]
+    let acc' ← mkAppM ``Eq.trans #[acc, hstep]
+    reduceGo y init' ts' acc'
+
+/-- Proof-producing coefficient extraction for a concrete polynomial:
+returns `(cs, proof of coeffsOf p y = cs)`. -/
+unsafe def coeffsOfValue (y : Var) (p : MPoly) : MetaM (List MPoly × Expr) := do
+  let pE := toExpr p; let yE := toExpr y
+  let d0 := p.degreeIn y
+  let init0 : List MPoly := List.replicate (d0 + 1) []
+  -- first link: coeffsOf p y = go y (replicate (d0+1) []) p
+  let head ← mkAppM ``Check.coeffsOf.eq_def #[pE, yE]
+  -- the replicate redex equals the concrete init0 (whnf-structural)
+  let repRedex ← mkAppM ``List.replicate
+    #[← mkAppM ``HAdd.hAdd #[← mkAppM ``MPoly.degreeIn #[pE, yE],
+        toExpr (1 : Nat)], toExpr ([] : MPoly)]
+  let hRep ← proveByRefl repRedex (toExpr init0)
+  -- lift via congrArg (λ z => go y z p)
+  let listMpolyTy := mkApp (mkConst ``List [levelZero]) (mkConst ``MPoly)
+  let lam ← withLocalDecl `z BinderInfo.default listMpolyTy fun zE => do
+    mkLambdaFVars #[zE] (mkApp3 (mkConst ``Check.coeffsOf.go) yE zE pE)
+  let lift ← mkAppM ``congrArg #[lam, hRep]
+  let acc0 ← mkAppM ``Eq.trans #[head, lift]
+  reduceGo y init0 p acc0
+
+/-- An ℝ-literal zero (the tryZeroProduct spelling). -/
+def mkRealZero : MetaM Expr :=
+  mkAppOptM ``OfNat.ofNat
+    #[some (mkConst ``Real), some (toExpr 0), none]
+
+/-- The discriminant comparison `(a₁)² − 4·(a₂)·(a₃) < 0` from
+accessor-building callbacks (uniform spelling across the bridge's
+forms). -/
+def mkDiscComp (ρ : Expr) (accs : Nat → MetaM Expr) : MetaM Expr := do
+  let ev : Nat → MetaM Expr := fun k => do mkAppM ``Check.evalP #[ρ, ← accs k]
+  let b ← ev 1; let a ← ev 2; let c ← ev 0
+  let bsq ← mkAppM ``HPow.hPow #[b, toExpr (2 : Nat)]
+  let fourR ← mkAppOptM ``OfNat.ofNat
+    #[some (mkConst ``Real), some (toExpr 4), none]
+  let fourA ← mkAppM ``HMul.hMul #[fourR, a]
+  let fourAC ← mkAppM ``HMul.hMul #[fourA, c]
+  let disc ← mkAppM ``HSub.hSub #[bsq, fourAC]
+  let zero ← mkRealZero
+  mkAppM ``LT.lt #[disc, zero]
+
+/-- The coefficient-equality `evalP ρ (acc) = 0` from an accessor. -/
+def mkCoefZeroComp (ρ : Expr) (acc : MetaM Expr) : MetaM Expr := do
+  let ev ← mkAppM ``Check.evalP #[ρ, ← acc]
+  let zero ← mkRealZero
+  mkAppM ``Eq #[ev, zero]
+
+/-- Close a `< 0` / `= 0` numeric-comparison subgoal whose polys are
+concrete: mangle evalP + norm_num. Sandbox-managed by the caller. -/
+def closeNumericSubgoal (m : MVarId) : TacticM Unit := do
+  let saved ← getGoals
+  setGoals [m]
+  try
+    evalTactic (← `(tactic| simp only [evalP, evalM, evalP_add,
+      evalP_mul, evalP_neg, evalP_smulTerm, evalP_ofInt, evalP_ofVar,
+      Int.cast_one, Int.cast_ofNat, one_mul, mul_one, add_zero,
+      zero_add]))
+    evalTactic (← `(tactic| norm_num))
+  catch e =>
+    setGoals saved
+    throw e
+  setGoals saved
+
+/-- G4 definite-disc close: for a root-atom pair fact with constant
+coefficient data proving no roots exist, close `False` directly.
+Returns `true` iff `mvar` was assigned. Lanes: deg-2 const disc < 0;
+deg-2 A=B=0; deg-1 A=0. -/
+unsafe def rootDefiniteClose (mvar : MVarId) (ρ : Expr)
+    (roots : Array (Var × Nat × MPoly × FVarId)) : TacticM Bool := do
+  for (y, i, p, hfv) in roots do
+    if i == 0 then continue
+    let deg := p.degreeIn y
+    unless deg == 1 || deg == 2 do continue
+    let closed ← mvar.withContext do
+      try
+        let pE := toExpr p; let yE := toExpr y
+        let hdeg ← mkDecideProof
+          (← mkAppM ``Eq #[← mkAppM ``MPoly.degreeIn #[pE, yE], toExpr deg])
+        let (cs, hcsPrf) ← coeffsOfValue y p
+        let csE := toExpr cs
+        -- Two-hop cast for lemma-spelled numeric facts: `congrArg` links
+        -- `(coeffsOf p y)` to the concrete `cs` inside the comparison;
+        -- an rfl-defeq hop then replaces its `[k]!` accesses with the
+        -- concrete coefficients (structural getD computation —
+        -- `([1,2,3])[1]! = 2 := rfl` probes green).
+        let zTy := mkApp (mkConst ``List [levelZero]) (mkConst ``MPoly)
+        let numFact (mkBody : (Nat → MetaM Expr) → MetaM Expr)
+            (accsValue : Nat → MetaM Expr) : TacticM Expr := do
+          let lam ← withLocalDecl `z BinderInfo.default zTy fun zE => do
+            mkLambdaFVars #[zE] (← mkBody (fun k => mkIdxGet zE k))
+          let congr ← mkAppM ``congrArg #[lam, hcsPrf]
+          let idxForm ← mkBody (fun k => mkIdxGet csE k)
+          let valTy ← mkBody accsValue
+          let bridge ← proveByRefl idxForm valTy
+          let m ← mkFreshExprMVar valTy
+          m.mvarId!.withContext do closeNumericSubgoal m.mvarId!
+          unless (← m.mvarId!.isAssigned) do
+            throwError "rootDefiniteClose: numeric subgoal not closed"
+          let hVal ← instantiateMVars m
+          let composited ←
+            try mkAppM ``Eq.trans #[congr, bridge]
+            catch e => throwError "trans: {e.toMessageData}"
+          try mkAppM ``Eq.mpr #[composited, hVal]
+          catch e => throwError "mpr: {e.toMessageData}"
+        let hcount ←
+          if deg == 2 && cs.length == 3 then do
+            match cs[0]!.asConst?, cs[1]!.asConst?, cs[2]!.asConst? with
+            | some C, some B, some A =>
+              if B * B - 4 * A * C < 0 then do
+                let hdisc ← numFact (fun accs => mkDiscComp ρ accs)
+                  (fun k => pure (toExpr (cs[k]!)))
+                pure (some (← mkAppM ``Check.rootCount_zero_of_neg_disc
+                  #[ρ, yE, pE, hdeg, hdisc]))
+              else if A == 0 && B == 0 then do
+                let hA ← numFact (fun accs => mkCoefZeroComp ρ (accs 2))
+                  (fun _ => pure (toExpr (cs[2]!)))
+                let hB ← numFact (fun accs => mkCoefZeroComp ρ (accs 1))
+                  (fun _ => pure (toExpr (cs[1]!)))
+                pure (some (← mkAppM ``Check.rootCount_zero_of_deg2_lc_zero
+                  #[ρ, yE, pE, hdeg, hA, hB]))
+              else pure none
+            | _, _, _ => pure none
+          else if deg == 1 && cs.length == 2 then do
+            match cs[1]!.asConst? with
+            | some 0 => do
+              let hA ← numFact (fun accs => mkCoefZeroComp ρ (accs 1))
+                (fun _ => pure (toExpr (cs[1]!)))
+              pure (some (← mkAppM ``Check.rootCount_zero_of_deg1_lc_zero
+                #[ρ, yE, pE, hdeg, hA]))
+            | _ => pure none
+          else pure none
+        match hcount with
+        | none => pure false
+        | some hcount =>
+          let hHold := mkFVar hfv
+          let hle ← mkAppM ``And.left #[hHold]
+          let hlof ← mkAppM ``Nat.le_of_eq #[hcount]
+          let hp ← mkAppM ``Nat.le_trans #[hle, hlof]
+          let hz ← mkAppM ``Nat.eq_zero_of_le_zero #[hp]
+          let hne ← mkDecideProof (← mkAppM ``Ne #[toExpr i, toExpr (0 : Nat)])
+          let falsePrf ← mkAppOptM ``absurd
+            #[none, some (mkConst ``False), hz, hne]
+          mvar.assign falsePrf
+          let gs ← getGoals
+          setGoals (← gs.filterM fun g' => return !(← g'.isAssigned))
+          pure true
+      catch _ => pure false
+    if closed then return true
+  return false
+
 
 /-- G1 (design review 7, F-v): the zero-product discharge. If an eq
 fact `evalP ρ p = 0` has `p` factorizing natively into factors each
@@ -345,6 +618,7 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
   let mut diseqFacts : Array (MPoly × FVarId) := #[]
   let mut prodEqFacts : Array (List (MPoly × Bool) × FVarId) := #[]
   let mut chainFacts : Array (FVarId × List (MPoly × Bool)) := #[]
+  let mut rootFacts : Array (Var × Nat × MPoly × FVarId) := #[]
   for l in CV do
     -- everything that typechecks terms mentioning context fvars must
     -- run in the CURRENT mvar's local context (hFvar, noted facts)
@@ -367,16 +641,18 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
       | some (some a) =>
         mvar1.withContext do
           match (← extractFacts ρ IE (mkFVar h_iFvar) l a) with
-          | [] => pure (mvar1, true, ((#[], #[], #[], #[]) :
+          | [] => pure (mvar1, true, ((#[], #[], #[], #[], #[]) :
               Array (MPoly × FVarId) × Array (MPoly × FVarId) ×
               Array (List (MPoly × Bool) × FVarId) ×
-              Array (FVarId × List (MPoly × Bool))))
+              Array (FVarId × List (MPoly × Bool)) ×
+              Array (Var × Nat × MPoly × FVarId)))
           | facts =>
             let mut mv := mvar1
             let mut eqs : Array (MPoly × FVarId) := #[]
             let mut neqs : Array (MPoly × FVarId) := #[]
             let mut prods : Array (List (MPoly × Bool) × FVarId) := #[]
             let mut chs : Array (FVarId × List (MPoly × Bool)) := #[]
+            let mut roots : Array (Var × Nat × MPoly × FVarId) := #[]
             for (fact, kind) in facts do
               let (hfv, mv') ← mv.note `h_f fact none
               mv := mv'
@@ -385,8 +661,9 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
               | .neZero q => neqs := neqs.push (q, hfv)
               | .eqProdZero fs => prods := prods.push (fs, hfv)
               | .negChain fs => chs := chs.push (hfv, fs)
+              | .rootPair y i p => roots := roots.push (y, i, p, hfv)
               | .other => pure ()
-            pure (mv, false, (eqs, neqs, prods, chs))
+            pure (mv, false, (eqs, neqs, prods, chs, roots))
       | _ =>
         throwError "nlsat_arith_valid: literal {repr l} is undecodable in the atom table"
     mvar := mvar'
@@ -397,7 +674,8 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
     eqFacts := eqFacts ++ factInfo.1
     diseqFacts := diseqFacts ++ factInfo.2.1
     prodEqFacts := prodEqFacts ++ factInfo.2.2.1
-    chainFacts := chainFacts ++ factInfo.2.2.2
+    chainFacts := chainFacts ++ factInfo.2.2.2.1
+    rootFacts := rootFacts ++ factInfo.2.2.2.2
   -- sq_nonneg hints per occurring variable (nlinarith's nonlinear leaf)
   for v in vars.eraseDup do
     mvar ← mvar.withContext do
@@ -410,6 +688,11 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
   -- lt/gt-only cores. (Whole-clause fast path; the R-e chain loop
   -- below re-runs it per branch with the split-produced eq facts.)
   if ← zeroProductClose mvar ρ eqFacts diseqFacts prodEqFacts then
+    return
+  -- G4 root-atom definite-disc close (census slice): shape-gated;
+  -- no-op unless the clause carries a negated root-atom literal whose
+  -- constant-coefficient situation kills every root.
+  if ← rootDefiniteClose mvar ρ rootFacts then
     return
   -- Unfold evalP/evalM on the concrete polys, then normalize: the
   -- simp-unfold leaves `ρ x ^ 1` powers and `↑(-1)` Int-cast numerals
