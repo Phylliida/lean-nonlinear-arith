@@ -337,4 +337,32 @@ example (ρ : Nat → ℝ) :
     clauseSatI (interp ρ eAtoms) [⟨1, false⟩, ⟨2, false⟩, ⟨3, true⟩] := by
   nlsat_arith_valid
 
+/-! ## Review-13 audit pins: multi-chain clause + degenerate chains -/
+
+/-- TWO negChain literals in one clause (the chainLoop multi-chain
+recursion): literal 4's chain is `x1 = 0 ∨ (x1 = 0 ∨ ¬(x1² < 0))`
+(duplicate factors — the same disjunct twice). The R-e clause plus a
+literal can only get more true. -/
+private def eAtoms2 : Array (Option Atom) :=
+  eAtoms.push (some (.ineq ⟨.lt, [(eS, false), (eS, false)]⟩))
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ eAtoms2)
+      [⟨1, false⟩, ⟨2, false⟩, ⟨3, true⟩, ⟨4, false⟩] := by
+  nlsat_arith_valid
+
+/-- Single-factor EVEN-marked negative lt: `Holds(lt [(x1,true)]) ⟺
+x1≠0 ∧ 1<0` is never true, so its negChain is `x1 = 0 ∨ ¬(1 < 0)` —
+a length-1 chain with a trivially-true tail. The clause is valid by
+the complementary literal-2 pair; the chain split must not disturb the
+close. -/
+private def eAtoms3 : Array (Option Atom) :=
+  #[none,
+    some (.ineq ⟨.lt, [(eS, true)]⟩),
+    some (.ineq ⟨.lt, [(eS, false)]⟩)]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ eAtoms3) [⟨1, false⟩, ⟨2, false⟩, ⟨2, true⟩] := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

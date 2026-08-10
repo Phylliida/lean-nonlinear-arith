@@ -16,9 +16,14 @@ tree.**
 how rare — never defer a known gap with "until it shows up in
 practice".**
 
-**The R-series is COMPLETE (R-a..R-e).** The discharge layer covers
-every ineq-atom shape unconditionally; the only remaining
-`extractFacts` skip class is root atoms (G4/census slice).
+**The R-series is COMPLETE (R-a..R-e); review-13 z3-divergence audit
+clean.** The discharge layer covers every ineq-atom shape
+unconditionally; the only remaining `extractFacts` skip class is root
+atoms (G4/census slice). z3-source notes (review 13): z3 atoms always
+have sz >= 1 and sign-normalized (lm-positive) factors
+(`mk_ineq_atom`, nlsat_solver.cpp:587-620) — our empty-factor and
+sign-flip handling are supersets, deliberately kept for
+out-of-contract robustness.
 
 ## Where we are
 
