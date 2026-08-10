@@ -614,6 +614,41 @@ example (ρ : Nat → ℝ) :
       (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, false⟩]) := by
   nlsat_arith_valid_steps tdSteps
 
+/-- The non-const lc clause lane: parent `tdP2 = x1·x0² + x2·x0 − 1`,
+`A = x1` vanishing at the sample (atom 2), and the reduct
+`q = x2·x0 − 1` with NON-CONST lc `x2` of sign −1 at the sample — the
+lc sign literal (atom 3). `mkNeg = decide (−1 < 0) = true`: the
+produced fact is `evalP ρ (1 − x2·x0) < 0`; with the `ρ 0 > 0` fact
+(atom 4), `ρ2·ρ0 < 0 < 1` closes. -/
+private def tdP2 : MPoly :=
+  [(1, [(0, 2), (1, 1)]), (1, [(0, 1), (2, 1)]), (-1, [])]
+private def tdQ2 : MPoly := [(1, [(0, 1), (2, 1)]), (-1, [])]
+private def tnX2 : MPoly := [(1, [(2, 1)])]
+
+private def td2Atoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.lt, 0, 1, tdP2⟩),          -- 1: ρ 0 < root₁(tdP2) < 0
+    some (.ineq ⟨.eq, [(tnA, false)]⟩),      -- 2: A = x1  (= 0 at the sample)
+    some (.ineq ⟨.lt, [(tnX2, false)]⟩),     -- 3: lc = x2  (< 0, ensure_sign)
+    some (.ineq ⟨.gt, [(tgX0, false)]⟩)]     -- 4: ρ 0 > 0
+
+private def td2Steps : Array TraceStep :=
+  #[.cellBound .upper .lt 0 1 tdP2, .linearRoot .lt 0 tdQ2 true (some (tnX2, -1))]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ td2Atoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, true⟩, ⟨4, true⟩]) := by
+  nlsat_arith_valid_steps td2Steps
+
+/- The lc sign literal is load-bearing: without it the clause lane
+finds no `hlc` evidence, the step skips, and the clause rejects
+(sound). -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ td2Atoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨4, true⟩]) := by
+  nlsat_arith_valid_steps td2Steps
+
 /- The vanishing-A fact is load-bearing for the transport: without the
 `A = 0` literal the step skips (sound) and the clause rejects. -/
 #guard_msgs (drop error) in

@@ -443,7 +443,6 @@ unsafe def rootDefiniteClose (mvar : MVarId) (ρ : Expr)
         let hdeg ← mkDecideProof
           (← mkAppM ``Eq #[← mkAppM ``MPoly.degreeIn #[pE, yE], toExpr deg])
         let (cs, hcsPrf) ← coeffsOfValue y p
-        let csE := toExpr cs
         -- Two-hop cast for lemma-spelled numeric facts: `congrArg` links
         -- `(coeffsOf p y)` to the concrete `cs` inside the comparison;
         -- an rfl-defeq hop then replaces its `[k]!` accesses with the
@@ -848,7 +847,7 @@ unsafe def mkLinearRootGrammar (k : RootKind) (y : Var) (p : MPoly) (mkNeg : Boo
             (toExpr (none : Option Int))
           let hconf ← mkAppM ``Eq.trans #[(← mkAppM ``Eq.symm #[hN]), hE]
           let tgt ← mkAppM ``Eq #[sE, ← mkAppM ``Int.sign #[vE0]]
-          let hne ← mkAppM ``Option.some_ne_none #[vE0]
+          let hne ← mkAppM ``Ne.symm #[← mkAppM ``Option.some_ne_none #[vE0]]
           let body ← mkAppOptM ``absurd
             #[some (← mkAppM ``Eq #[(toExpr (none : Option Int)),
                   (← mkAppM ``Option.some #[vE0])]),
@@ -961,8 +960,7 @@ iftarget (`hcmp : rootCmp k (ρ y) (rootVal ρ y i p)`) plus the step's
 grammar/canonicity/lc evidence, derive and note the emitted-literal
 comparison. -/
 unsafe def linearProduceTail (mvar : MVarId) (ρ : Expr) (n : Nat)
-    (k : RootKind) (p : MPoly) (mkNeg : Bool) (lcFact : Option (MPoly × Int))
-    (hcmp hcov : Expr) : TacticM MVarId := do
+    (k : RootKind) (p : MPoly) (mkNeg : Bool) (hcmp hcov : Expr) : TacticM MVarId := do
   let hSL ← mkAppM ``Iff.mpr #[hcov, hcmp]
   -- collapse `¬ SHolds` to the comparison (emitted atom computed
   -- natively via `linearRootEmitted` = (k.toIneqSign, parity fold))
@@ -1015,7 +1013,7 @@ unsafe def linearStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
     #[ρ, rootKindToExpr k, toExpr y, toExpr i, pE, toExpr mkNeg, toExpr lcFact,
       hgram, hcan, hlc]
   let hcmp ← mkAppM ``And.right #[mkFVar hfvR]
-  linearProduceTail mvar ρ n k p mkNeg lcFact hcmp hcov
+  linearProduceTail mvar ρ n k p mkNeg hcmp hcov
 
 /-- The sa = 0 degenerate reroute (z3 `mk_quadratic_root` :811-812, E1):
 the clause's root atom is on the PARENT `p` (deg 2 in `y`), the step is
@@ -1088,7 +1086,7 @@ unsafe def linearStepProduceDeg (mvar : MVarId) (ρ : Expr) (n : Nat)
   let hcov ← mkAppM ``coverage_linearRoot
     #[ρ, rootKindToExpr k, yE, iE, qE, toExpr mkNeg, toExpr lcFact,
       hgram, hcan, hlc]
-  linearProduceTail mvar ρ n k q mkNeg lcFact hcmp' hcov
+  linearProduceTail mvar ρ n k q mkNeg hcmp' hcov
 
 /-- The encoding-free lane (foreign traces, grammar-free): a deg-1 root
 fact with a CONSTANT nonzero lead coefficient converts unconditionally
@@ -1133,7 +1131,7 @@ unsafe def rootGenericLinearProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
       (mkAppN (mkConst ``rootCmp) #[rootKindToExpr k, mkApp ρ yE, zE])
   let hcmp' ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[cmpL, hrveq]),
     (← mkAppM ``And.right #[mkFVar hfvR])]
-  linearProduceTail mvar ρ n k p mkNeg none hcmp' hiff
+  linearProduceTail mvar ρ n k p mkNeg hcmp' hiff
 
 /-- The grammar prop for a thomQuadratic step: coefficient-free (degree
 + sign ranges only), so the plain `grammarOK` decide ticket works. -/
@@ -1159,7 +1157,10 @@ unsafe def thomStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
   let hOK ← mkDecideProof
     (← mkAppM ``Eq #[mkApp (mkConst ``MPoly.canonOK) pE, mkConst ``true])
   let hcan ← mkAppM ``MPoly.canonOK_sound #[pE, hOK]
-  let hgram ← mkThomGrammar k y i p sq sa spd sp
+  -- the decide ticket: all payload ranges (sq/sa/spd/sp/i/degree) are
+  -- validated here (throws ⟹ step skips); semantic consumption rides
+  -- `thom_discharge` below
+  let _hgram ← mkThomGrammar k y i p sq sa spd sp
   let (cs, hcsPrf) ← coeffsOfValue y p
   unless cs.length == 3 do
     throwError "thomStepProduce: coefficient count {cs.length} ≠ 3"
@@ -1295,6 +1296,19 @@ unsafe def thomStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
   setGoals saved
   pure gnew
 
+/-- Are the `(k, i)` Thom formulas disjunctive (Or-carriers)? -/
+def thomDisjunctive (k : RootKind) (i : Nat) : Bool :=
+  match k, i with
+  | .lt, 1 => false
+  | .lt, _ => true
+  | .gt, 1 => true
+  | .gt, _ => false
+  | .le, 1 => false
+  | .le, _ => true
+  | .ge, 1 => true
+  | .ge, _ => false
+  | .eq, _ => false
+
 /-- Native reduct check for the sa = 0 reroute (`:811-812`): `q` is the
 `B·y + C` truncation of the deg-2 parent `p` (the [1]/[0] coefficients
 agree by value). -/
@@ -1308,9 +1322,12 @@ step the bundle carries (preceding the `.arith` marker), match its root
 atom against the extracted root facts and produce the cross-link
 fact/s. Steps whose evidence is missing are skipped soundly (the
 productions only ADD facts). `resolution`/`cellBound`/`factorSplit`/
-`leafNumeric` steps contribute nothing (R1/R5/R6/F3). -/
+`leafNumeric` steps contribute nothing (R1/R5/R6/F3). Returns the
+count of potentially-Or-carrying Thom productions (matched disjunctive
+`(k, i)` formulas) for the caller's split-fuel sizing. -/
 unsafe def collectStepFacts (mvar : MVarId) (ρ : Expr) (steps : Array TraceStep)
-    (rootFacts : Array (RootKind × Var × Nat × MPoly × FVarId)) : TacticM MVarId := do
+    (rootFacts : Array (RootKind × Var × Nat × MPoly × FVarId)) :
+    TacticM (MVarId × Nat) := do
   let mut mvar := mvar
   let mut n : Nat := 0
   -- encoding-free lane (foreign traces): every deg-1 root fact with a
@@ -1357,7 +1374,13 @@ unsafe def collectStepFacts (mvar : MVarId) (ρ : Expr) (steps : Array TraceStep
             pure mvar
         n := n + 1
     | _ => pure ()
-  pure mvar
+  pure (mvar, steps.foldl (fun acc s =>
+    match s with
+    | .thomQuadratic k y i p _ _ _ _ =>
+      if thomDisjunctive k i &&
+         (rootFacts.any fun (kR, yR, iR, pR, _) =>
+           kR == k && yR == y && iR == i && pR == p) then acc + 1 else acc
+    | _ => acc) 0)
 
 /-- Core worker: prove `clauseSatI (interp ρ atoms) C` for concrete
 `atoms`, `C`. `hName` seeds the extracted-fact names. Failure (any
@@ -1470,7 +1493,8 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
   -- facts. Productions only ADD facts; missing evidence skips soundly.
   -- (Runs even with no steps: the encoding-free lane handles foreign
   -- deg-1 root facts.)
-  mvar ← collectStepFacts mvar ρ steps rootFacts
+  let (mvarC, thomOrs) ← collectStepFacts mvar ρ steps rootFacts
+  mvar := mvarC
   -- G1 zero-product close (review 7, F-v) + R-b multi-eq-positive
   -- branch (review 9): before the simp/ring_nf mangling, while the
   -- h_f facts are still `evalP` comparisons. Shape-gated; no-op on
@@ -1558,11 +1582,14 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
   -- each literal contributes at most `factors + 1` Or-splits (its
   -- negChain depth) and at most one trichotomy split per extracted
   -- diseq fact (bounded by the same count), so 2·(factors+1) per
-  -- literal + margin covers every split the loop can make.
-  let fuel := CV.foldl (fun acc l =>
+  -- literal + margin covers every split the loop can make. The item-3
+  -- Thom formula facts add up to `thomOrs` independent Or carriers;
+  -- each Or's split doubles the branch tree, so the clause-based
+  -- budget is multiplied by 2^thomOrs (G4 census item 3).
+  let fuel := (CV.foldl (fun acc l =>
     match atomsV[l.bvar]? with
     | some (some (.ineq a)) => acc + 2 * (a.factors.length + 1)
-    | _ => acc + 2) 0 + 4
+    | _ => acc + 2) 0 + 4) * 2 ^ thomOrs
   -- R-e (review 12): split the negChain facts PRE-mangle, one factor
   -- at a time, so each branch keeps evalP-form facts and the
   -- zero-product close can run per branch with the split-produced eq
