@@ -350,4 +350,45 @@ the stall needs EVERY clause duplicated (registered for the record). -/
 example : upRefutes [[⟨0, true⟩], [⟨0, false⟩, ⟨0, false⟩]] [] = true := by
   decide
 
+/-! ## The √2-grade acceptance goal (census slice G4)
+
+`x0 ≥ 0 ∧ x0² ≥ 2 ∧ x0 ≤ 1` — the census slice's standing acceptance
+goal. LANDED as a stage-0, literal-local refutation (the solver's
+core is the three input atoms themselves; the arith lemma needs no
+cellBound — census result, 2026-08-10). Snapshot data machine-generated
+by `scratch_dump.lean` (paste-ready printer output, no hand
+transcription). -/
+
+private def sqrt2Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.lt, [([(1, [(0, 1)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 2)]), ((-2), [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 1)]), ((-1), [])], false)]⟩)]
+
+private def sqrt2Clauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, true⟩], learned := false, deleted := false },
+   { lits := #[⟨2, true⟩], learned := false, deleted := false },
+   { lits := #[⟨3, true⟩], learned := false, deleted := false }]
+
+private def sqrt2Bundles : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   none,
+   none]
+
+private def sqrt2Final : TraceBundle :=
+  ⟨#[.resolution (.clause 2),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨1, true⟩, ⟨2, true⟩, ⟨3, true⟩] #[]),
+      .resolution (.clause 3),
+      .resolution (.clause 1)], #[]⟩
+
+/-- End-to-end: the √2-grade refutation walked from the three input
+clauses (referenced in cid order 1, 2, 3). -/
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, true⟩], [⟨2, true⟩], [⟨3, true⟩]],
+      clauseHolds ρ sqrt2Atoms C) → False := by
+  nlsat_refute ⟨sqrt2Atoms, sqrt2Clauses, sqrt2Bundles, sqrt2Final⟩
+
 end LeanNonlinearArith.Nlsat.Tests.Walk

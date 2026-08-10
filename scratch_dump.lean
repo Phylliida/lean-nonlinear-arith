@@ -178,6 +178,57 @@ def go5 : SolverM (Option LBool) := do
   let _ ← Solver.mkClause #[l4.negate] false
   Solver.check (Solver.resolve Explain.explain)
 
+-- the √2-grade acceptance goal: x0 ≥ 0 ∧ x0² ≥ 2 ∧ x0 ≤ 1 (UNSAT)
+def pX0sqM2 : MPoly := [(1, [(0, 2)]), ((-2), [])]
+
+def goSqrt2 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let lx ← Solver.mkIneqLiteral ⟨.lt, [(x0, false)]⟩      -- x0 ≥ 0   ⇔ ¬(x0 < 0)
+  let l2 ← Solver.mkIneqLiteral ⟨.lt, [(pX0sqM2, false)]⟩ -- x0² ≥ 2  ⇔ ¬(x0² − 2 < 0)
+  let l1 ← Solver.mkIneqLiteral ⟨.gt, [(pXm1, false)]⟩    -- x0 ≤ 1   ⇔ ¬(x0 − 1 > 0)
+  let _ ← Solver.mkClause #[lx.negate] false
+  let _ ← Solver.mkClause #[l2.negate] false
+  let _ ← Solver.mkClause #[l1.negate] false
+  Solver.check (Solver.resolve Explain.explain)
+
+-- census probe: x0² + 1 < 0 — negative definiteness at stage 0?
+-- (disc = −4 < 0 ⇒ no real roots; expect rootGeneric/definite-disc emission)
+def pX0sqP1 : MPoly := [(1, [(0, 2)]), (1, [])]
+
+def goDefinite : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let l1 ← Solver.mkIneqLiteral ⟨.lt, [(pX0sqP1, false)]⟩
+  let _ ← Solver.mkClause #[l1] false
+  Solver.check (Solver.resolve Explain.explain)
+
+-- census probe: x0² + x0 + 1 < 0 — again definite-negative
+def pDef2 : MPoly := [(1, [(0, 2)]), (1, [(0, 1)]), (1, [])]
+
+def goDefinite2 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let l1 ← Solver.mkIneqLiteral ⟨.lt, [(pDef2, false)]⟩
+  let _ ← Solver.mkClause #[l1] false
+  Solver.check (Solver.resolve Explain.explain)
+
+-- census probe: x0² + x1 < 0 ∧ x1 > 1 — at the stage-1 sample the
+-- quadratic x0²+c in x0 has disc = −4·c < 0 ⇒ generic root-atom fallback
+-- (rootGeneric, definite-disc) — the census's known non-literal-local member.
+def pX0sqX1 : MPoly := [(1, [(0, 2)]), (1, [(1, 1)])]
+def pX1m1 : MPoly := [(1, [(1, 1)]), ((-1), [])]
+
+def goRootGen : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let l1 ← Solver.mkIneqLiteral ⟨.lt, [(pX0sqX1, false)]⟩
+  let l2 ← Solver.mkIneqLiteral ⟨.gt, [(pX1m1, false)]⟩
+  let _ ← Solver.mkClause #[l1] false
+  let _ ← Solver.mkClause #[l2] false
+  Solver.check (Solver.resolve Explain.explain)
+
 end DumpDriver
 
 def printSnap (name : String) (s : Solver) : IO Unit := do
@@ -205,3 +256,15 @@ def main : IO Unit := do
   let (r5, s5) := (DumpDriver.go5.run Solver.empty : Option LBool × Solver)
   IO.println s!"fs3 result: {repr r5}"
   printSnap "fs3" s5
+  let (r6, s6) := (DumpDriver.goSqrt2.run Solver.empty : Option LBool × Solver)
+  IO.println s!"sqrt2 result: {repr r6}"
+  printSnap "sqrt2" s6
+  let (r7, s7) := (DumpDriver.goDefinite.run Solver.empty : Option LBool × Solver)
+  IO.println s!"def1 result: {repr r7}"
+  printSnap "def1" s7
+  let (r8, s8) := (DumpDriver.goDefinite2.run Solver.empty : Option LBool × Solver)
+  IO.println s!"def2 result: {repr r8}"
+  printSnap "def2" s8
+  let (r9, s9) := (DumpDriver.goRootGen.run Solver.empty : Option LBool × Solver)
+  IO.println s!"rg result: {repr r9}"
+  printSnap "rg" s9
