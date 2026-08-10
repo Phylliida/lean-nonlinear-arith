@@ -324,10 +324,10 @@ theorem MPoly.degreeIn_le_of_mem (y : Var) {p : MPoly} :
   exact (key p 0).1 t ht
 
 theorem evalP_coeffsOf (ρ : Nat → ℝ) (y : Var) (p : MPoly)
-    (hcan : ∀ t ∈ p, Monomial.Canon t.2) :
+    (hcan : MPoly.Canon p) :
     evalCoeffs ρ y (coeffsOf p y) = evalP ρ p := by
   unfold coeffsOf
-  rw [evalCoeffs_go ρ y p _ hcan (by
+  rw [evalCoeffs_go ρ y p _ (fun t ht => (hcan.2 t ht).2) (by
     intro t ht
     rw [List.length_replicate]
     exact Nat.lt_succ_of_le (MPoly.degreeIn_le_of_mem y t ht)),
@@ -350,7 +350,7 @@ theorem coeffsOf_length (p : MPoly) (y : Var) :
 /-- The linear-form bridge: `p` of degree 1 in `y` evaluates as
 `A·ρy + C` with `A = coeffsOf[1]`, `C = coeffsOf[0]`. -/
 theorem evalP_linear_form (ρ : Nat → ℝ) (y : Var) (p : MPoly)
-    (hdeg : p.degreeIn y = 1) (hcan : ∀ t ∈ p, Monomial.Canon t.2) :
+    (hdeg : p.degreeIn y = 1) (hcan : MPoly.Canon p) :
     evalP ρ p =
       evalP ρ ((coeffsOf p y)[1]!) * ρ y + evalP ρ ((coeffsOf p y)[0]!) := by
   rw [← evalP_coeffsOf ρ y p hcan]
@@ -365,7 +365,7 @@ theorem evalP_linear_form (ρ : Nat → ℝ) (y : Var) (p : MPoly)
 /-- The quadratic-form bridge: `p` of degree 2 in `y` evaluates as
 `A·ρy² + B·ρy + C`. -/
 theorem evalP_quadratic_form (ρ : Nat → ℝ) (y : Var) (p : MPoly)
-    (hdeg : p.degreeIn y = 2) (hcan : ∀ t ∈ p, Monomial.Canon t.2) :
+    (hdeg : p.degreeIn y = 2) (hcan : MPoly.Canon p) :
     evalP ρ p =
       evalP ρ ((coeffsOf p y)[2]!) * (ρ y)^2 +
         evalP ρ ((coeffsOf p y)[1]!) * ρ y + evalP ρ ((coeffsOf p y)[0]!) := by

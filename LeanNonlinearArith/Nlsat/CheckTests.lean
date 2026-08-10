@@ -29,14 +29,12 @@ example : pLin.degreeIn 1 = 1 := by native_decide
 example : pLinNeg.degreeIn 1 = 1 := by native_decide
 
 -- canonicity (checker boundary, by decide)
-theorem pLin_canon : ∀ t ∈ pLin, Monomial.Canon t.2 := by
-  intro t ht
-  simp only [pLin, List.mem_cons, List.mem_nil_iff, or_false] at ht
-  rcases ht with rfl | rfl <;> unfold Monomial.Canon <;> decide
-theorem pLinNeg_canon : ∀ t ∈ pLinNeg, Monomial.Canon t.2 := by
-  intro t ht
-  simp only [pLinNeg, List.mem_cons, List.mem_nil_iff, or_false] at ht
-  rcases ht with rfl | rfl <;> unfold Monomial.Canon <;> decide
+theorem pLin_canon : MPoly.Canon pLin :=
+  MPoly.canon_two 2 [(1, 1)] 1 [(0, 1)] (by decide) (by unfold Monomial.Canon; decide)
+    (by decide) (by unfold Monomial.Canon; decide) (by native_decide)
+theorem pLinNeg_canon : MPoly.Canon pLinNeg :=
+  MPoly.canon_two (-3) [(1, 1)] 2 [] (by decide) (by unfold Monomial.Canon; decide)
+    (by decide) (by unfold Monomial.Canon; decide) (by native_decide)
 
 -- emission reconstruction (F4): kinds × polarity per the toIneqSign remap
 example : linearRootEmitted .lt pLin false = (⟨.lt, [(pLin, false)]⟩, true) := rfl
@@ -129,10 +127,9 @@ example : discPolyOf pQuad 1 = [(8, [])] := by native_decide
 -- pDiffPolyOf computes: 2y normalized by content 2 → y
 example : pDiffPolyOf pQuad 1 = [(1, [(1, 1)])] := by native_decide
 
-theorem pQuad_canon : ∀ t ∈ pQuad, Monomial.Canon t.2 := by
-  intro t ht
-  simp only [pQuad, List.mem_cons, List.mem_nil_iff, or_false] at ht
-  rcases ht with rfl | rfl <;> unfold Monomial.Canon <;> decide
+theorem pQuad_canon : MPoly.Canon pQuad :=
+  MPoly.canon_two 1 [(1, 2)] (-2) [] (by decide) (by unfold Monomial.Canon; decide)
+    (by decide) (by unfold Monomial.Canon; decide) (by native_decide)
 
 /-- The Thom discharge, applied: `ρ 1 > root₂(y² − 2)` ⟺ the region
 formula `p > 0 ∧ pDiff > 0` (positive lead, disc = 8 > 0). -/

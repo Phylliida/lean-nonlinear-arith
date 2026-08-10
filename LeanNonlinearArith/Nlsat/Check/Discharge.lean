@@ -81,7 +81,7 @@ the leading-coefficient positivity evidence (const-lc variant: by
 variant: from the `lcFact` sign literal failing at `ρ`). -/
 theorem linearRoot_discharge (ρ : Nat → ℝ) (k : RootKind) (y : Var) (p : MPoly)
     (mkNeg : Bool)
-    (hdeg : p.degreeIn y = 1) (hcan : ∀ t ∈ p, Monomial.Canon t.2)
+    (hdeg : p.degreeIn y = 1) (hcan : MPoly.Canon p)
     (hAq : 0 < (if mkNeg then (-1 : ℝ) else 1) * evalP ρ ((coeffsOf p y)[1]!)) :
     ¬ SHolds ρ (linearRootEmitted k p mkNeg).1 (linearRootEmitted k p mkNeg).2 ↔
       rootCmp k (ρ y)
@@ -402,7 +402,7 @@ everywhere, exactly why z3 skips that `ensure_sign`.) -/
 theorem thom_discharge (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : Nat) (p : MPoly)
     (sq sa : Int)
     (hdeg : p.degreeIn y = 2) (hi : i = 1 ∨ i = 2)
-    (hcan : ∀ t ∈ p, Monomial.Canon t.2)
+    (hcan : MPoly.Canon p)
     (hsa : sa ≠ 0) (hAm : signMatches sa (evalP ρ ((coeffsOf p y)[2]!)))
     (hsq : sq = 0 ∨ sq = 1)
     (hdm : signMatches sq
@@ -768,7 +768,7 @@ theorem rootVal_eq_quad (ρ : Nat → ℝ) (y : Var) (i : Nat) (p : MPoly)
 failure IS the root comparison). -/
 theorem cellBound_linear (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : Nat)
     (p : MPoly) (mkNeg : Bool)
-    (hdeg : p.degreeIn y = 1) (hcan : ∀ t ∈ p, Monomial.Canon t.2)
+    (hdeg : p.degreeIn y = 1) (hcan : MPoly.Canon p)
     (hAq : 0 < (if mkNeg then (-1 : ℝ) else 1) * evalP ρ ((coeffsOf p y)[1]!))
     (hfails : ¬ SHolds ρ (linearRootEmitted k p mkNeg).1
       (linearRootEmitted k p mkNeg).2) :
@@ -781,7 +781,7 @@ formula's truth (from the sign facts) give the ordering. -/
 theorem cellBound_thom (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : Nat)
     (p : MPoly) (sq sa : Int)
     (hdeg : p.degreeIn y = 2) (hi : i = 1 ∨ i = 2)
-    (hcan : ∀ t ∈ p, Monomial.Canon t.2)
+    (hcan : MPoly.Canon p)
     (hsa : sa ≠ 0) (hAm : signMatches sa (evalP ρ ((coeffsOf p y)[2]!)))
     (hsq : sq = 0 ∨ sq = 1)
     (hdm : signMatches sq

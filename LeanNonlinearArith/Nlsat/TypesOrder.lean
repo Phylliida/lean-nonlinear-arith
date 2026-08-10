@@ -595,6 +595,20 @@ theorem ofVar_canon (x : Var) : Canon (MPoly.ofVar x) := by
   subst hp
   simp
 
+/-- Two-term canonicality constructor (covers the checker/test-suite
+concrete polys): descending-ordered terms with nonzero canonical parts. -/
+theorem canon_two (a : Int) (m : Monomial) (b : Int) (n : Monomial)
+    (ha : a ≠ 0) (hm : Monomial.Canon m) (hb : b ≠ 0) (hn : Monomial.Canon n)
+    (hgt : Monomial.cmp m n = .gt) : Canon [(a, m), (b, n)] :=
+  ⟨List.pairwise_cons.mpr ⟨fun c hc => by
+      rcases List.mem_singleton.mp hc with rfl
+      exact hgt, List.pairwise_singleton _ _⟩,
+    fun t ht => by
+      rcases List.mem_cons.mp ht with rfl | h
+      · exact ⟨ha, hm⟩
+      · rcases List.mem_singleton.mp h with rfl
+        exact ⟨hb, hn⟩⟩
+
 /-- Merge-add respects a strict upper bound (in `cmp`) on the monomials —
 the head-dominance transfer that rebuilds `Pairwise` through the merge. -/
 theorem add_bound {mo : Monomial} {p q : MPoly} :

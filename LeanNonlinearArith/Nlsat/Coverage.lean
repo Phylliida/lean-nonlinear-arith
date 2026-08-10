@@ -143,10 +143,9 @@ theorem coverage_linearRoot (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : Nat
       rootCmp k (ρ y) (rootVal ρ y i p) := by
   cases hgram with
   | linearRoot hdeg hcond =>
-    have hcan' : ∀ t ∈ p, Monomial.Canon t.2 := fun t ht => (hcan.2 t ht).2
     have hAq := linearRoot_hAq ρ y p mkNeg lcFact hcond hlc
     rw [rootVal_eq_linear ρ y i p hdeg]
-    apply linearRoot_discharge ρ k y p mkNeg hdeg hcan'
+    apply linearRoot_discharge ρ k y p mkNeg hdeg hcan
     exact_mod_cast hAq
 
 /-- **Coverage, `thomQuadratic`** (z3 `mk_quadratic_root` :787-820):
@@ -169,11 +168,10 @@ theorem coverage_thomQuadratic (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : 
             evalP ρ ((coeffsOf p y)[1]!))) := by
   cases hgram with
   | thomQuadratic hdeg hi hsq hsa _ _ _ =>
-    have hcan' : ∀ t ∈ p, Monomial.Canon t.2 := fun t ht => (hcan.2 t ht).2
     have hsa' : sa ≠ 0 := by rcases hsa with h | h <;> omega
     rw [rootVal_eq_quad ρ y i p hdeg (hAm.ne_zero hsa')]
     rw [evalP_discPolyOf] at hdm
-    exact thom_discharge ρ k y i p sq sa hdeg hi hcan' hsa' hAm hsq hdm
+    exact thom_discharge ρ k y i p sq sa hdeg hi hcan hsa' hAm hsq hdm
 
 /-- `rootVal` in the degenerate-quadratic case: `A` vanishes at `ρ`
 (the `sa = 0` reroute of `mk_quadratic_root` :809-812), so the root is
