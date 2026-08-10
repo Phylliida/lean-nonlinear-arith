@@ -159,7 +159,7 @@ products (fs3: three distinct factors; fs4: multiplicity 3).
 FVarId-carrying index comes from one). Returns `false` on any
 mismatch — the caller falls through to the normal pipeline. -/
 unsafe def tryZeroProduct (g : MVarId) (ρ : Expr) (p : MPoly) (h0fv : FVarId)
-    (constant : Int) (chain : Array (MPoly × Nat × FVarId)) : TacticM Bool := do
+    (constant : Int) (chain : Array (MPoly × Nat × FVarId × Bool)) : TacticM Bool := do
   g.withContext do
     try
       let ρp ← mkAppM ``Check.evalP #[ρ, toExpr p]
@@ -167,7 +167,7 @@ unsafe def tryZeroProduct (g : MVarId) (ρ : Expr) (p : MPoly) (h0fv : FVarId)
       -- and the hz subgoal must be ℝ-typed for `ring`
       let mut rhs ← mkAppOptM ``Int.cast
         #[some (mkConst ``Real), none, some (toExpr constant)]
-      for (f, k, _) in chain do
+      for (f, k, _, _) in chain do
         let fE ← mkAppM ``Check.evalP #[ρ, toExpr f]
         let fkE ← mkAppM ``HPow.hPow #[fE, toExpr k]
         rhs ← mkAppM ``HMul.hMul #[rhs, fkE]
@@ -196,8 +196,24 @@ unsafe def tryZeroProduct (g : MVarId) (ρ : Expr) (p : MPoly) (h0fv : FVarId)
         #[some (mkConst ``Real), none, none, some (toExpr constant)]
       let cne ← mkAppM ``Iff.mpr #[cneIff, cneInt]
       let mut ne := cne
-      for (_, k, fv) in chain do
-        let pf ← mkAppM ``pow_ne_zero #[toExpr k, mkFVar fv]
+      for (f, k, fv, flipped) in chain do
+        -- the diseq fact may be on `-f` (sign-flipped composite factor);
+        -- convert via `evalP_neg` + `neg_ne_zero`
+        let base ←
+          if !flipped then pure (mkFVar fv)
+          else do
+            let fE ← mkAppM ``Check.evalP #[ρ, toExpr f]
+            let heq ← mkAppM ``Check.evalP_neg #[ρ, toExpr f]
+            let zeroR ← mkAppOptM ``OfNat.ofNat
+              #[some (mkConst ``Real), some (toExpr 0), none]
+            let neLam ← withLocalDecl `x BinderInfo.default (mkConst ``Real)
+              fun xE => do
+                mkLambdaFVars #[xE] (← mkAppM ``Ne #[xE, zeroR])
+            let congr ← mkAppM ``congrArg #[neLam, heq]
+            let hneg ← mkAppM ``Eq.mp #[congr, mkFVar fv]
+            mkAppM ``Iff.mp #[(← mkAppOptM ``neg_ne_zero
+              #[some (mkConst ``Real), none, some fE]), hneg]
+        let pf ← mkAppM ``pow_ne_zero #[toExpr k, base]
         ne ← mkAppM ``mul_ne_zero #[ne, pf]
       let xeq0 ← mkAppM ``Eq.trans #[(← mkAppM ``Eq.symm #[hzE]), mkFVar h0fv]
       let falsePrf ← mkAppOptM ``absurd #[none, some (mkConst ``False), xeq0, ne]
@@ -214,12 +230,15 @@ unsafe def zeroProductClose (g : MVarId) (ρ : Expr)
   for (p, h0fv) in eqFacts do
     let fm := MPoly.factorM p
     if fm.constant == 0 || fm.factors.isEmpty then continue
-    let mut chain : Array (MPoly × Nat × FVarId) := #[]
+    let mut chain : Array (MPoly × Nat × FVarId × Bool) := #[]
     let mut ok := true
     for (f, k) in fm.factors do
       if k == 0 then continue
-      match diseqFacts.find? (fun (q, _) => q == f) with
-      | some (_, fv) => chain := chain.push (f, k, fv)
+      -- exact match OR sign-flipped (z3's factor() normalization aligns
+      -- in practice, but a composite atom may carry `-fᵢ`; `MPoly.neg`
+      -- kernel-reduces so the conversion is defeq-clean)
+      match diseqFacts.find? (fun (q, _) => q == f || q == MPoly.neg f) with
+      | some (q, fv) => chain := chain.push (f, k, fv, !(q == f))
       | none => ok := false; break
     if !ok || chain.isEmpty then continue
     if ← tryZeroProduct g ρ p h0fv fm.constant chain then return true

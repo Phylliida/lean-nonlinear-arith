@@ -53,10 +53,12 @@ Remaining in the roadmap: **F5 housekeeping → census slice → 19b
   `extractFact` extensions (multi-factor ¬EQ collapse, even parity)
   G1 (zero-product degree ≥ 3) and G2/G3 (multi-factor + even-parity
   `extractFacts` paths) are DONE — see BOARD's gap inventory.
-  REMAINING extractFact gap: lt/gt NEGATIVE multi-factor (disjunctive
-  — skipped, sound); multi-eq-positive facts are glue-only (the
-  `factorProd`/`MPoly.mul` kernel-reduction trap blocks the
-  zero-product index's defeq match — noted in Refute.lean).
+  Residual sub-corners (review 8): lt/gt NEGATIVE multi-factor
+  (disjunctive — skipped, sound); multi-eq-positive facts are
+  glue-only (the `factorProd`/`MPoly.mul` kernel-reduction trap
+  blocks the zero-product index's defeq match). Sign-flipped factor
+  matching (R-d) was found by the audit and FIXED (evalP_neg +
+  neg_ne_zero; gAtomsFlip pin).
   `rootGeneric` definite-disc is the known member. The √2-grade goal
   (x0≥0 ∧ x0²≥2 ∧ x0≤1, load-bearing cellBound) lands here — the plain
   √2 goal refutes at stage 0 (BOARD F2-dump analysis). Review-6 options

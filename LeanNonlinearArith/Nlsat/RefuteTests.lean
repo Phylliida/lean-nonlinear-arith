@@ -211,4 +211,17 @@ example (ρ : Nat → ℝ) :
       (arithClause [⟨1, false⟩, ⟨2, true⟩] []) := by
   nlsat_arith_valid
 
+/-- Sign-flipped composite factor (audit fix): the composite carries
+`2-x0` where the factorizer has `x0-2`. The clause is still valid; the
+close converts via `evalP_neg` + `neg_ne_zero`. -/
+private def gAtomsFlip : Array (Option Atom) :=
+  #[none,
+    some (.ineq ⟨.eq, [(gQuad, false)]⟩),
+    some (.ineq ⟨.eq, [(gXm1, false), ([(-1, [(0, 1)]), (2, [])], false)]⟩)]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ gAtomsFlip)
+      (arithClause [⟨1, false⟩, ⟨2, true⟩] []) := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute
