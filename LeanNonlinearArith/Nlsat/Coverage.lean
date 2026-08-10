@@ -146,7 +146,7 @@ theorem coverage_linearRoot (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : Nat
     have hAq := linearRoot_hAq ρ y p mkNeg lcFact hcond hlc
     rw [rootVal_eq_linear ρ y i p hdeg]
     apply linearRoot_discharge ρ k y p mkNeg hdeg hcan
-    exact_mod_cast hAq
+    exact hAq
 
 /-- **Coverage, `thomQuadratic`** (z3 `mk_quadratic_root` :787-820):
 for an in-grammar step, the root comparison at `rootVal` is the Thom

@@ -82,7 +82,7 @@ variant: from the `lcFact` sign literal failing at `ρ`). -/
 theorem linearRoot_discharge (ρ : Nat → ℝ) (k : RootKind) (y : Var) (p : MPoly)
     (mkNeg : Bool)
     (hdeg : p.degreeIn y = 1) (hcan : MPoly.Canon p)
-    (hAq : 0 < (if mkNeg then (-1 : ℝ) else 1) * evalP ρ ((coeffsOf p y)[1]!)) :
+    (hAq : (0 : ℝ) < (if mkNeg then (-1 : ℝ) else 1) * evalP ρ ((coeffsOf p y)[1]!)) :
     ¬ SHolds ρ (linearRootEmitted k p mkNeg).1 (linearRootEmitted k p mkNeg).2 ↔
       rootCmp k (ρ y)
         (-evalP ρ ((coeffsOf p y)[0]!) / evalP ρ ((coeffsOf p y)[1]!)) := by
@@ -90,7 +90,7 @@ theorem linearRoot_discharge (ρ : Nat → ℝ) (k : RootKind) (y : Var) (p : MP
   set A := evalP ρ ((coeffsOf p y)[1]!)
   set C := evalP ρ ((coeffsOf p y)[0]!)
   set s : ℝ := if mkNeg then (-1 : ℝ) else 1
-  have hsA : (0 : ℝ) < s * A := by exact_mod_cast hAq
+  have hsA : (0 : ℝ) < s * A := hAq
   have hsAne : s * A ≠ 0 := ne_of_gt hsA
   have hq : evalP ρ (if mkNeg then p.neg else p) = (s * A) * ρ y + (s * C) := by
     cases mkNeg <;> simp [s, evalP_neg, hform] <;> ring
@@ -769,7 +769,7 @@ failure IS the root comparison). -/
 theorem cellBound_linear (ρ : Nat → ℝ) (k : RootKind) (y : Var) (i : Nat)
     (p : MPoly) (mkNeg : Bool)
     (hdeg : p.degreeIn y = 1) (hcan : MPoly.Canon p)
-    (hAq : 0 < (if mkNeg then (-1 : ℝ) else 1) * evalP ρ ((coeffsOf p y)[1]!))
+    (hAq : (0 : ℝ) < (if mkNeg then (-1 : ℝ) else 1) * evalP ρ ((coeffsOf p y)[1]!))
     (hfails : ¬ SHolds ρ (linearRootEmitted k p mkNeg).1
       (linearRootEmitted k p mkNeg).2) :
     rootCmp k (ρ y) (rootVal ρ y i p) := by
