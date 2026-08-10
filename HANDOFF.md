@@ -59,11 +59,13 @@ discharge layer is complete for ALL ineq-atom shapes, unconditionally:
 ONLY remaining `extractFacts` skip class is root atoms — owned by
 the census slice (G4).
 
-## Next: F5 housekeeping (R8 + R1'), then the census slice (G4)
+## Next: the census slice (G4)
 
-F5: split `Check.lean` into Semantics/Discharge; unify discharge
-hypotheses on full `MPoly.Canon`; normalize `↑0`-form hypotheses to
-`(0 : ℝ)` annotations (R1', approved; see BOARD review 3).
+F5 housekeeping DONE (2026-08-10): `Check.lean` split into
+`Check/Semantics.lean` + `Check/Discharge.lean` (re-export keeps all
+imports working); discharge hypotheses unified on full `MPoly.Canon`
+(+ reusable `MPoly.canon_two` in TypesOrder for concrete-canon proofs);
+`↑0`-form hypotheses normalized to `(0 : ℝ)` (R1').
 
 Census slice (G4): grammar-coverage census — per grammar shape, is the
 arith-clause contradiction literal-local (closes from literal failures

@@ -1655,6 +1655,24 @@ any point = sound rejection.
   `MPoly.Canon`; normalize `↑0`-form hypotheses to `(0 : ℝ)`
   annotations (R1', approved).
 
+**F5 DONE (2026-08-10, commits f2196d9/045d677/5d0e1e3, build green
+7612):** Check.lean → `Check/Semantics.lean` (eval/hom suite, coeffsOf
+machinery, atom + root-atom semantics incl. `rootCmp`/`thomFormula`/
+`leadSgn`/`rootVal`/`rootCount`, the coeffsOf↔coeffsIn R3 bridge) +
+`Check/Discharge.lean` (the four discharges, `thom_iff`,
+discPolyOf/pDiffPolyOf reconstructions) with `Check.lean` as a pure
+re-export — 96 declarations preserved verbatim, namespaces unchanged.
+Canon unification: the four discharges + `evalP_coeffsOf`/
+`evalP_linear_form`/`evalP_quadratic_form` take `MPoly.Canon p` (weak
+per-term form derived internally); Coverage's `hcan'` weakenings
+deleted; CheckTests helpers restated via new `MPoly.canon_two`
+(TypesOrder.lean, the `ofInt_canon`/`ofVar_canon` family). R1': the
+two `hAq` binders carry `(0 : ℝ)` annotations; all
+`exact_mod_cast`-bridges dropped. Trap rediscovered: `by decide`
+on `MPoly.Canon p` fails — Canon is a non-reducible def to instance
+search even after `unfold`; the Pairwise/∀-mem layers synthesize
+individually only via the explicit constructors.
+
 ## nla-19a design review 3 `done` (2026-08-06, mid-F/G arc — parity + regret lenses; R1'/R2' Danielle-approved same day)
 
 Method: adversarial re-read of the day's three landing sites
