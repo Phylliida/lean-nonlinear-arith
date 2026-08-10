@@ -53,12 +53,14 @@ Remaining in the roadmap: **F5 housekeeping → census slice → 19b
   `extractFact` extensions (multi-factor ¬EQ collapse, even parity)
   G1 (zero-product degree ≥ 3) and G2/G3 (multi-factor + even-parity
   `extractFacts` paths) are DONE — see BOARD's gap inventory.
-  Residual sub-corners after review 9: R-b FIXED (List.prod restate
-  + listEvalProd_ne_zero branch); R-a FIXED conditionally (collapse
-  when all factors have diseq facts; the unconditional shape is
-  disjunctive — full Or-splitting deferred to census if a live probe
-  needs it); R-c documented non-issue (solver and checker share
-  factorM); R-d FIXED in review 8 (sign-flip matching).
+  R-series CLOSED (reviews 8-10): R-d sign-flip matching (8); R-b
+  multi-eq-positive via List.prod restate + listEvalProd_ne_zero (9);
+  R-a FULL via negChain flat expansion + Or-splitting in
+  closeWithSplits (10 — the per-factor RECURSIVE expansion is WRONG,
+  the odd-product sign couples odd factors); R-c documented non-issue
+  (solver and checker share factorM). extractFacts skips ROOT ATOMS
+  ONLY (census-slice territory). Danielle's standing directive:
+  cover ALL cases — never "defer until it shows up in practice".
   `rootGeneric` definite-disc is the known member. The √2-grade goal
   (x0≥0 ∧ x0²≥2 ∧ x0≤1, load-bearing cellBound) lands here — the plain
   √2 goal refutes at stage 0 (BOARD F2-dump analysis). Review-6 options

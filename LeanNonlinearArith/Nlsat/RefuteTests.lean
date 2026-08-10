@@ -273,4 +273,14 @@ example (ρ : Nat → ℝ) :
       [⟨1, true⟩, ⟨2, false⟩, ⟨3, false⟩, ⟨4, false⟩] := by
   nlsat_arith_valid
 
+/-- R-a FULL (review 10): the negative multi-factor lt literal with NO
+diseq facts anywhere (review 9's conditional collapse would skip this).
+The `negChain` expansion splits: `x0-1=0 ∨ (x0+1=0 ∨ ¬((x0-1)(x0+1) < 0))`;
+each branch contradicts the `x0²-1 < 0` fact. Clause:
+`holds(4) ∨ ¬(x0²-1 < 0)` — valid: |x0|<1 with x0≠±1 ⟹ literal 4;
+|x0|≥1 ⟹ literal 5. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ rAtoms) [⟨4, false⟩, ⟨5, true⟩] := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

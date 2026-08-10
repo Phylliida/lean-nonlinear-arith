@@ -484,8 +484,8 @@ theorem holds_multi_allNe_gt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
 
 /-- R-a (review 9): a negative multi-factor sign literal COLLAPSES to
 the negated sign when every factor is independently known nonzero
-(¬(A ∧ B) with A discharged). Without the side condition the shape is
-disjunctive and stays skipped. -/
+(¬(A ∧ B) with A discharged). Used by `negHolds_chain_*`; the FULL
+unconditional form is the `negChain` expansion below. -/
 theorem holds_multi_neg_sign_lt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
     ¬ IneqAtom.Holds ρ ⟨.lt, fs⟩ → (∀ f ∈ fs.map Prod.fst, evalP ρ f ≠ 0) →
       ¬ oddProd ρ fs < 0 := by
@@ -503,6 +503,58 @@ theorem holds_multi_neg_sign_gt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
   refine ⟨?_, hs⟩
   intro f hf
   exact hne f.1 (List.mem_map.mpr ⟨f, hf, rfl⟩)
+
+/-- R-a FULL (review 10): the flat nested-Or expansion of a negative
+multi-factor sign atom: `f₁ = 0 ∨ (f₂ = 0 ∨ … ∨ tail)`. NB the
+per-factor RECURSIVE form is WRONG — the odd-product sign couples all
+odd factors; the correct expansion is flat (some factor vanishes ∨
+the whole sign fails). (`g.1`, not a pair pattern, so the cons
+equation fires on variables.) -/
+def negChain (ρ : Nat → ℝ) : List (MPoly × Bool) → Prop → Prop
+  | [], tail => tail
+  | g :: rest, tail => evalP ρ g.1 = 0 ∨ negChain ρ rest tail
+
+theorem negChain_tail {ρ : Nat → ℝ} {tail : Prop} :
+    ∀ {fs : List (MPoly × Bool)}, tail → negChain ρ fs tail := by
+  intro fs h
+  induction fs with
+  | nil => exact h
+  | cons g rest ih => exact Or.inr ih
+
+theorem negChain_mem {ρ : Nat → ℝ} {f : MPoly} {e : Bool} {tail : Prop} :
+    evalP ρ f = 0 → ∀ {fs : List (MPoly × Bool)}, (f, e) ∈ fs → negChain ρ fs tail := by
+  intro hz fs hm
+  induction fs with
+  | nil => exact absurd hm (List.not_mem_nil)
+  | cons g rest ih =>
+    rw [List.mem_cons] at hm
+    rcases hm with rfl | hm
+    · exact Or.inl hz
+    · exact Or.inr (ih hm)
+
+/-- The full unconditional expansions: `¬ Holds` for a multi-factor
+sign atom is the flat chain `some factor vanishes ∨ the sign fails`. -/
+theorem negHolds_chain_lt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    ¬ IneqAtom.Holds ρ ⟨.lt, fs⟩ → negChain ρ fs (¬ oddProd ρ fs < 0) := by
+  intro h
+  by_cases hall : ∀ g ∈ fs, evalP ρ g.1 ≠ 0
+  · exact negChain_tail (holds_multi_neg_sign_lt ρ fs h (fun f hf => by
+      obtain ⟨g, hg, rfl⟩ := List.mem_map.mp hf
+      exact hall g hg))
+  · push_neg at hall
+    obtain ⟨⟨g, e⟩, hg, hz⟩ := hall
+    exact negChain_mem hz hg
+
+theorem negHolds_chain_gt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    ¬ IneqAtom.Holds ρ ⟨.gt, fs⟩ → negChain ρ fs (¬ 0 < oddProd ρ fs) := by
+  intro h
+  by_cases hall : ∀ g ∈ fs, evalP ρ g.1 ≠ 0
+  · exact negChain_tail (holds_multi_neg_sign_gt ρ fs h (fun f hf => by
+      obtain ⟨g, hg, rfl⟩ := List.mem_map.mp hf
+      exact hall g hg))
+  · push_neg at hall
+    obtain ⟨⟨g, e⟩, hg, hz⟩ := hall
+    exact negChain_mem hz hg
 
 /-! ## The linearRoot discharge (z3 `mk_linear_root` :861-878) -/
 

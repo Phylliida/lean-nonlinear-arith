@@ -122,7 +122,14 @@ def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
           let hf ← mkAppM' hAll #[toExpr f, memPrf]
           pure (hf, .neZero f)
     | .lt | .gt =>
-      if !l.neg then return []
+      if !l.neg then
+        -- R-a FULL (review 10): the flat negChain expansion
+        -- `f₁ = 0 ∨ (… ∨ ¬ sign)` — split by the glue loop
+        let lem := match k with
+          | .lt => ``negHolds_chain_lt
+          | _ => ``negHolds_chain_gt
+        let hChain ← mkAppM lem #[ρ, fsE, h_i]
+        return [(hChain, .other)]
       let aE := mkApp IE (toExpr l.bvar)
       let nn ← mkAppOptM ``Classical.not_not #[some aE]
       let hH ← mkAppM ``Iff.mp #[nn, h_i]
@@ -332,11 +339,10 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
   let mut eqFacts : Array (MPoly × FVarId) := #[]
   let mut diseqFacts : Array (MPoly × FVarId) := #[]
   let mut prodEqFacts : Array (List (MPoly × Bool) × FVarId) := #[]
-  let mut skippedHL : Array (Literal × Atom × FVarId) := #[]
   for l in CV do
     -- everything that typechecks terms mentioning context fvars must
     -- run in the CURRENT mvar's local context (hFvar, noted facts)
-    let (mvar', wasSkipped, h_iFv, factInfo) ← mvar.withContext do
+    let (mvar', wasSkipped, factInfo) ← mvar.withContext do
       let lE := litToExpr l
       -- h_i : ¬ litSatI I l  :=  fun hlit => h ⟨l, by decide, hlit⟩
       let litSatTy ← mkAppM ``litSatI #[IE, lE]
@@ -355,7 +361,7 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
       | some (some a) =>
         mvar1.withContext do
           match (← extractFacts ρ IE (mkFVar h_iFvar) l a) with
-          | [] => pure (mvar1, true, h_iFvar, ((#[], #[], #[]) :
+          | [] => pure (mvar1, true, ((#[], #[], #[]) :
               Array (MPoly × FVarId) × Array (MPoly × FVarId) ×
               Array (List (MPoly × Bool) × FVarId)))
           | facts =>
@@ -371,51 +377,17 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
               | .neZero q => neqs := neqs.push (q, hfv)
               | .eqProdZero fs => prods := prods.push (fs, hfv)
               | .other => pure ()
-            pure (mv, false, h_iFvar, (eqs, neqs, prods))
+            pure (mv, false, (eqs, neqs, prods))
       | _ =>
         throwError "nlsat_arith_valid: literal {repr l} is undecodable in the atom table"
     mvar := mvar'
+    if wasSkipped then skipped := skipped.push l
     match atomsV[l.bvar]? with
-    | some (some a) =>
-      if wasSkipped then skippedHL := skippedHL.push (l, a, h_iFv)
-      vars := vars ++ atomVars a
+    | some (some a) => vars := vars ++ atomVars a
     | _ => pure ()
     eqFacts := eqFacts ++ factInfo.1
     diseqFacts := diseqFacts ++ factInfo.2.1
     prodEqFacts := prodEqFacts ++ factInfo.2.2
-  -- R-a conditional sign-collapse (review 9): a skipped NEGATIVE
-  -- multi-factor lt/gt literal whose factors ALL have diseq facts
-  -- collapses to the negated sign. (Without the side condition the
-  -- shape is disjunctive and stays skipped.)
-  for (l, a, h_ifv) in skippedHL do
-    match a with
-    | .ineq ⟨k, fs⟩ =>
-      if l.neg || k == .eq then
-        skipped := skipped.push l
-        continue
-      let mut matched : Array (MPoly × FVarId × Bool) := #[]
-      let mut ok := true
-      for (f, _) in fs do
-        match diseqFacts.find? (fun (q, _) => q == f || q == MPoly.neg f) with
-        | some (q, fv) => matched := matched.push (f, fv, !(q == f))
-        | none => ok := false; break
-      if !ok then
-        skipped := skipped.push l
-        continue
-      let (collapsed, mvar') ← mvar.withContext do
-        try
-          let parts ← matched.toList.mapM fun (f, fv, fl) => diseqFactFor ρ f fv fl
-          let hAll ← forallMemNe ρ fs parts
-          let lem := match k with
-            | .lt => ``holds_multi_neg_sign_lt
-            | _ => ``holds_multi_neg_sign_gt
-          let hNeg ← mkAppM lem #[ρ, toExpr fs, mkFVar h_ifv, hAll]
-          let (_, mv') ← mvar.note `h_f hNeg none
-          pure (true, mv')
-        catch _ => pure (false, mvar)
-      mvar := mvar'
-      if !collapsed then skipped := skipped.push l
-    | _ => skipped := skipped.push l
   -- sq_nonneg hints per occurring variable (nlinarith's nonlinear leaf)
   for v in vars.eraseDup do
     mvar ← mvar.withContext do
@@ -435,7 +407,7 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
   evalTactic (← `(tactic|
     simp only [evalP, evalM, evalP_add, evalP_mul, evalP_neg, evalP_sub,
       evalP_smulTerm, evalP_ofInt, evalP_ofVar, oddProd, List.map_cons,
-      List.map_nil, List.prod_cons, List.prod_nil, Prod.fst,
+      List.map_nil, List.prod_cons, List.prod_nil, Prod.fst, negChain,
       Int.cast_one, Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add] at *))
   evalTactic (← `(tactic| ring_nf at *))
   -- The glue: linarith first (R-i), nlinarith as backup. On failure,
@@ -455,6 +427,18 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
         if ty.isAppOf ``Not && ty.getAppArgs[0]!.isAppOf ``Eq then
           return some d.fvarId
     return none
+  -- One not-yet-split Or fact (R-a full, review 10): the `negChain`
+  -- expansions of negative multi-factor sign literals. Splitting any
+  -- Or hypothesis is sound when proving `False`; the only Or hyps in
+  -- this pipeline are the negChain facts (the trichotomy Ors are
+  -- consumed immediately on creation).
+  let findOr (g : MVarId) (done : Array FVarId) :
+      TacticM (Option FVarId) := g.withContext do
+    for d in (← getLCtx) do
+      if !done.contains d.fvarId then
+        let ty ← instantiateMVars d.type
+        if ty.isAppOf ``Or then return some d.fvarId
+    return none
   -- NOTE: `setGoals`, not `replaceMainGoal` — a closed branch leaves
   -- the goal list EMPTY, and `replaceMainGoal` throws on an empty list.
   let rec closeWithSplits (g : MVarId) (fuel : Nat) (done : Array FVarId) :
@@ -464,20 +448,28 @@ unsafe def proveClauseSat (mvar : MVarId) : TacticM Unit := do
     match fuel with
     | 0 => throwError "nlsat_arith_valid: glue failed (diseq-split fuel exhausted)"
     | fuel + 1 =>
-      match ← findDiseq g done with
-      | none =>
-        let skipMsg := if skipped.isEmpty then "none" else
-          (skipped.toList.map (toString ∘ repr)).toString
-        throwError "nlsat_arith_valid: glue failed (skipped literals: {skipMsg})"
+      match ← findOr g done with
       | some d =>
-        g.withContext do
-          let tri ← mkAppM ``lt_or_gt_of_ne #[mkFVar d]
-          let (triFvar, gOr) ← g.note `h_tri tri none
-          let gs ← gOr.cases triFvar
-          let [c1, c2] := gs.toList.map (·.mvarId) |
-            throwError "nlsat_arith_valid: unexpected trichotomy case count"
-          closeWithSplits c1 fuel (done.push d)
-          closeWithSplits c2 fuel (done.push d)
+        let gs ← g.cases d
+        let [c1, c2] := gs.toList.map (·.mvarId) |
+          throwError "nlsat_arith_valid: unexpected Or case count"
+        closeWithSplits c1 fuel (done.push d)
+        closeWithSplits c2 fuel (done.push d)
+      | none =>
+        match ← findDiseq g done with
+        | none =>
+          let skipMsg := if skipped.isEmpty then "none" else
+            (skipped.toList.map (toString ∘ repr)).toString
+          throwError "nlsat_arith_valid: glue failed (skipped literals: {skipMsg})"
+        | some d =>
+          g.withContext do
+            let tri ← mkAppM ``lt_or_gt_of_ne #[mkFVar d]
+            let (triFvar, gOr) ← g.note `h_tri tri none
+            let gs ← gOr.cases triFvar
+            let [c1, c2] := gs.toList.map (·.mvarId) |
+              throwError "nlsat_arith_valid: unexpected trichotomy case count"
+            closeWithSplits c1 fuel (done.push d)
+            closeWithSplits c2 fuel (done.push d)
   closeWithSplits (← getMainGoal) 8 #[]
 
 /-- `nlsat_arith_valid` — prove `clauseSatI (interp ρ atoms) C` for a
