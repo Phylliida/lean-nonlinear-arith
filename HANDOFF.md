@@ -1,12 +1,12 @@
-# HANDOFF — 2026-08-10 (reviews 6–15 done; G4 census slice COMPLETE; next = 19b → M3)
+# HANDOFF — 2026-08-10 (reviews 3–15 done; G4 census COMPLETE; NEXT = 19b → M3)
 
 Read first: `DESIGN-endgame.md` (master plan — §0 finish line, §2
-critical path, §6 decisions + divergence register, §8 standing
-directives), then `BOARD.md` — the nla-19a entry has design reviews
-3–15, the G1–G10 gap inventory, the F1–F5 decisions, and all landing
-blocks. Memory file `verus-cad/memory/project_tactus_nonlinear_port.md`
-has the session history. Build: Nix `lake` on PATH (not elan);
-`lake build` green (7612 jobs).
+critical path, §8 standing directives), then `BOARD.md` — the
+nla-19a entry has design reviews 3–15, the G1–G10 gap inventory, the
+F1–F5 decisions, all landing blocks. Memory file
+`verus-cad/memory/project_tactus_nonlinear_port.md` has the session
+history. Build: Nix `lake` on PATH (not elan); `lake build` green
+(7612 jobs, commit 60b0038).
 
 **Source-of-truth rule (unchanged): all ports cite
 `git show z3-4.12.5:<path>` (repo: `verus-cad/z3`), never the working
@@ -14,101 +14,107 @@ tree.**
 
 **Standing directive (Danielle, 2026-08-09): cover ALL cases no matter
 how rare — never defer a known gap with "until it shows up in
-practice".** Its harness-level twin now lives in
-`~/.hermes/config.yaml`'s `agent.system_prompt` (2026-08-10): "Depth
-is unlimited; scope is exact … widen it once, say so … Finished-late
-ages better than partial-on-time …".
+practice".**
 
 ## Where we are
 
-The **12d.6b ⇄ 19a arc is functionally complete at v0**, the discharge
-layer covers ALL ineq-atom shapes unconditionally, and now the **G4
-census slice is COMPLETE** (reviews 13–15; root atoms were the last
-`extractFacts` skip class):
+The discharge layer is complete through the **G4 census slice**
+(reviews 3–15). No un-owned known gaps remain; the last
+`extractFacts` skip class (root atoms) is closed.
 
-- **F3** (`Walk.lean`, `nlsat_refute`): the DAG walk — bridged input
-  clauses, per-learned-cid RUP (`by decide` + `upRefutes_sound`), F2
-  arith discharges in sandboxed sub-goals, final bundle ⇒ `False`.
-  Goal contract (R-vi): `∀ ρ, (∀ C ∈ Cs, clauseHolds ρ atoms C) →
-  False`, Cs = referenced input clauses in cid order (mismatch
-  rejects). **Grammar gate (G4)**: `precheck` also requires every
-  bundle's steps to satisfy `grammarOK` (native compute) — corrupted
-  payloads reject before any discharge work.
-- **F4 acceptance**: dump printer ↔ WalkTests defs byte-identical;
-  fs1/fs2 drivers walked end-to-end.
-- **G1** `Refute.zeroProductClose` (native `factorM` + kernel-verified
-  identity + ne-chain); **G2/G3** `extractFacts` multi-factor /
-  even-parity paths (`holds_multi_*` in Check.lean).
-- **R-series COMPLETE**: R-d sign-flip factor matching (`evalP_neg` +
-  `neg_ne_zero`); R-b multi-eq-positive via `List.prod`-of-evals +
-  `listEvalProd_ne_zero`; R-a FULL via flat `negChain` expansion +
-  Or-splitting glue (NB: the per-factor RECURSIVE expansion is
-  mathematically WRONG — odd-product sign couples odd factors);
-  **R-e** (review 12): `chainLoop` splits negChain facts PRE-mangle
-  via `g.cases`, extending the eq index per branch — zero-product
-  closes work inside Or-split branches. Review-13 z3-divergence
-  audit CLEAN; **R2' FIXED (review 14)**: duplicate-literal UP stalls
-  via `List.dedup` at the four decide sites + trusted dedup bridges.
-- **G4 census slice COMPLETE (review 15)** — all five items:
-  1. `grammarOK` decidable grammar mirror + `grammarOK_sound`
-     (Trace.lean).
-  2. root-atom extraction + `rootDefiniteClose` (deg-2 neg-disc /
-     deg-2 A=B=0 / deg-1 A=0 lanes) + kernel-checked
-     concrete-coefficient reducer (`reduceAdd`/`reduceGo`/
-     `coeffsOfValue`).
-  3. **Step-fact collection** (`Refute.collectStepFacts` — the
-     cross-links census member): per `.arith` marker the bundle's
-     preceding projection steps are consumed; for each encoding step
-     matched against an extracted root fact `(k, y, i, p)`, the opaque
-     `rootCmp k (ρ y) (rootVal …)` converts into glue-ready
-     first-order facts. Lanes: **linearRoot** direct (kind×polarity
-     coverage: lt/gt/eq → not-not, le/ge → mt — table-pinned),
-     **sa = 0 degenerate reroute** (`rootVal_eq_degenerate` +
-     coefficient links + `rootVal_eq_linear`; A = 0 sign literal
-     load-bearing), **encoding-free lane** (foreign traces: deg-1
-     const-lc converts with no step — grammar-free sound insurance),
-     **thomQuadratic** (`thom_discharge` + `rootVal_eq_quad` in RAW
-     coefficient-expansion form; `leadSgn` resolved via
-     `leadSgn_of_pos`/`leadSgn_of_neg`; accessors rewritten at the
-     noted formula so `simp only [thomFormula]` yields Or/And
-     comparisons `findOr` consumes). Every production is a
-     kernel-checked term; missing evidence skips soundly.
-  4. **F-w probes pinned**: mkNeg corrupt (grammar-BREAKING) → reject;
-     sq mismatch (grammar-clean, semantic mismatch) → skip ⇒
-     load-bearing reject; sq=0 with sp≠0 (E1 placeholder, both
-     grammar-gate and consumption-time) → reject. sp-values inside
-     valid ranges are unconsumed by the certificates — accepted-trace
-     SUPERSET is sound by kernel checking (review-6 F-w semantics).
-  5. Review 15 on BOARD: audit, traps, honest inventory.
-- **New trusted mirror**: `Monomial.canonOK`/`MPoly.canonOK` +
-  soundness (TypesOrder) — the canonicity `decide` ticket the
-  Semantics docstring promised; used by all step-consumption lanes.
+- **F3/F4 walk** (`Walk.lean`, `nlsat_refute`): bridged input clauses,
+  per-learned-cid RUP (`by decide` + `upRefutes_sound`), F2 arith
+  discharges, final bundle ⇒ `False`. Grammar gate (G4): `precheck`
+  rejects bundles whose steps fail `grammarOK` (native).
+- **Discharge completeness** (R-series complete): zero-product close
+  with native `factorM` + kernel identity check; multi-factor /
+  even-parity / negChain / chain-in-branch extraction and splitting.
+- **Census slice (G4)** — all five items: grammarOK decidable mirror;
+  root-atom extraction + rootDefiniteClose + kernel-checked reducer
+  (`coeffsOfValue`); **step-fact collection**
+  (`Refute.collectStepFacts`) — linear/Thom cross-links, degenerate
+  reroute, encoding-free lane, all lanes pinned incl. le/ge Thom
+  (review-15 addendum: fuel `thomDisjunctive` table verified
+  cell-by-cell vs `Semantics.thomFormula`); F-w corruption probes;
+  review 15 close-out. Fuel budget clause-shaped × 2^thomOrs.
+- **Data**: machine-generated WalkTests snapshot defs; four end-to-end
+  walks + probes; Refute-level fixtures for every production lane.
 
-**Imported fixtures (all pinned, RefuteTests + WalkTests)**: thom
-const lane (x²−2), thom clause lane (multivariate by-value
-discPoly-of reconstruction), linear lt/eq/ge/le table, degenerate
-reroute const-lc + non-const-lc (clause lane), encoding-free foreign
-bilinear, xl end-to-end walk fixture + load-bearing + grammar-gate
-variants, per-fixture load-bearing negative probes.
+## Next: nla-19b — full checker glue → M3 *(1–2 sessions)*
 
-## Next: 19b (pseudoDivision/factorSplit identities → M3)
+Per DESIGN-endgame §2.5: **`pseudoDivision` per-instance ring
+identities + parity cases.** Scope (already on the board):
 
-Per DESIGN-endgame §2 the census slice closes G4; the roadmap is:
-**19b** (G5 — pseudoDivision/factorSplit per-instance ring identities
-+ parity cases → M3; `ordering_139` is the standing end-to-end target
-if its trace stays in fragment), **12e** (G6 — integer
-branch-and-bound: search-side port of z3's nra/nlsat branch policy as
-trace steps; checker-side each split is an omega-trivial disjunction),
-**nla-14** (the `nonlinear_arith` tactic: L1 saturate → L2/L3
-search+check, `withLayerHeartbeats`, Int→Real atom mapping; owns the
-F-y alignment contract), **nla-15** (tactus wiring, ~½ session),
-**nla-16** (parity harness over the workspace corpus; gate = zero
-sites Z3 closes that we don't; owns G8/G9/G10 measurement; M6 closes
-here). Tier B (G7, rootGeneric deg ≥ 3) stays via the S1 lane (11a
-resultants ∥ 11c root continuity — the long pole). Parked
-candidates: R-q rootCount-evaluation lane (const-coefficient deg-2
-count contradictions — see review 15's honest inventory), sq=0 Thom
-fixture (grammar admits; production supports; orthogonal to R-q).
+- **R7 is why:** pseudoDivision is NOT safe to ignore — the simplify
+  cluster REWRITES literals (the A3 rebuilt-literal sites :471/:1194
+  with kind-flip + neg fold, A4 lc ineq :1259, A5 lc diseq :1261 —
+  the A-tier provenance enumeration), and the identity can be the
+  semantic link the final derivation needs. v0 currently rejects such
+  bundles (`isV0` gate at Walk.lean + `preform`); F5 emission already
+  emits the steps (undischarged).
+- **factorSplit identity is NOT in this slice**: R6 (board, approved)
+  — ignoring factorSplit steps loses NO coverage; don't pull it
+  forward.
+- **What to build** (extend grammar + coverage *in the same pattern*
+  as the census slice, per the 19a design note):
+  1. `grammarOK`/`Grammar` extension for `pseudoDivision` steps
+     (payload shape, from the F5 emission + z3 source), preference
+     for decide-grade tickets like the item-1/3 pattern — watch the
+     kernel-reduction trap (the `coeffsIn` wall keeps `grammarOK`'s
+     decide version of poly-equality checks kernel-incomputable;
+     construct with the `coeffsOfValue` reducer, as
+     `mkLinearRootGrammar` does).
+  2. Trusted Discharge theorems: the pseudo-remainder sign-invariance
+     identity (board G5 row names it: "verified pseudo-remainder sign
+     invariance") — the numeric content of
+     `pseudoDivisionCore` (12d.1b-i, `Nlsat/MPolyOps.lean`, done);
+     per-instance `evalP` ring identities (closure via the evalP
+     simp set, same idiom as `zeroProductClose`'s `ring` hop).
+  3. Refute-side consumption: rewritten/merged literal handling —
+     the simplify cluster's literal can arrive REBUILT (A3: kind-flip
+     + neg fold), so `extractFacts` must normalize rebuilt literals
+     against the step payloads (this is the genuinely new extraction
+     work; pinned per shape with the F2-seam decode discipline).
+  4. Lift the `isV0` pseudoDivision gate once 1–3 are pinned; boards
+     have warned mitigation: pin which emission shapes each acceptance
+     driver actually emits (keep `intBranch` gated → 12e).
+- **Standing targets:** `ordering_139` (the L1-open specimen,
+  degree-3 cross products) **if** its trace stays in fragment; else
+  the first fully-quadratic census row. End-to-end acceptance:
+  census-shaped goal through search → trace → checked theorem.
+- **Effort estimate (2026-08-10):** 1–2 sessions; risk concentrated in
+  (3) — rebuilt-literal extraction is new-shape work, the rest is
+  established idiom.
+
+## Roadmap after 19b
+
+**12e** (G6 → M4, 1–2 sessions): integer branch-and-bound — port z3's
+integer branching policy (`x ≤ ⌊v⌋ ∨ x ≥ ⌈v⌉`) as trace steps;
+checker-side each split is an omega-trivial disjunction, so this is
+mostly search-side; confirm the exact branch site (nra_solver.cpp /
+nlsat's mk_branch analogue) before porting. Then L2's polynomial atoms
+only invariant at the frontend boundary.
+**nla-14** (2–3 sessions): the `nonlinear_arith` front-end tactic —
+L1 fast path → L2/L3 search+check, `withLayerHeartbeats` (per-layer
+fresh budget, never fraction-of-remaining), Int→Real mapping,
+hypothesis selection; owns F-y. Largest remaining piece; candidate
+for a small standalone first slice (hypothesis ingestion + atom
+mapping).
+**nla-15** (~½ session): tactus wiring. **nla-16** (1–2 sessions +
+findings): parity harness over the workspace corpus; gate = zero
+sites Z3 closes that we don't; owns G8/G9/G10 measurement. **M6
+closes there.**
+**Tier B** (G7, rootGeneric deg ≥ 3, 3–6 sessions, high variance):
+the S1 lane — nla-11a resultants ∥ 11c root continuity — the long
+pole; defer unless 16's measurement shows the corpus needs it.
+
+Total-to-M6 estimate (2026-08-10): **~6–10 sessions**.
+
+Parked (owners on the board): L1 hardening (nla-07b meta-Buchberger
+2–3 sessions, nla-06, nla-21, nla-22 — none block M3, all block
+calling L1 port-complete for M5's writeup), nla-30, nla-31
+termination proofs (refineNzBound first), M5 containment writeup
+(~½ session), R-q rootCount-evaluation lane, sq=0 Thom fixture.
 
 ## Session mechanics (F3/F4 workflow)
 
@@ -125,24 +131,22 @@ fixture (grammar admits; production supports; orthogonal to R-q).
   after. **Corrupted-trace probes must keep the goal's input list =
   the corrupted trace's REFERENCED inputs.**
 - **Scratch probes**: `scratch_*.lean` is gitignored EXCEPT
-  `scratch_dump.lean`/`scratch_probe.lean` (tracked intentionally).
-  Name throwaways accordingly.
+  `scratch_dump.lean`/`scratch_probe.lean`.
 - Full build: `lake build` (green = 7612 jobs); module-scoped:
   `lake build LeanNonlinearArith.Nlsat.X`.
 - Refute-level pinning for step work: `nlsat_arith_valid_steps`
-  (takes the steps term, runs F2 including step-fact collection);
-  `nlsat_arith_valid` is the no-steps variant.
+  (steps term + F2 incl. step-fact collection); `nlsat_arith_valid`
+  for the no-steps variant.
 
 ## Traps / lessons
 
 Reviews 3–14 (kept): `Meta.evalExpr` of a bare FUNCTION const
 mis-evaluates (full applications fine); `mkApp` applies to leading
-implicit binders (use `mkAppM`; `mkAppM f #[]` needs `mkAppOptM` +
-pins); `Classical.byContradiction : (¬p → False) → p`; `lemma` is a
-reserved word (anonymous `⟨steps, lemma⟩` TraceBundle literals);
-tactic-quotation simp sets elaborate at runtime; **wf-compiled
-`MPoly.mul`/`add` do NOT reduce under kernel whnf/rfl/decide**
-(ride equation-lemma bridges: `MPoly.add_cons_cons_*`,
+implicit binders (`mkAppM`; `mkAppM f #[]` → `mkAppOptM` + pins);
+`lemma` is a reserved word (anonymous `⟨steps, lemma⟩` TraceBundle
+literals); tactic-quotation simp sets elaborate at runtime;
+**wf-compiled `MPoly.mul`/`add` do NOT reduce under kernel
+whnf/rfl/decide** (ride equation-lemma bridges: `MPoly.add_cons_cons_*`,
 `coeffsOf_go_cons`; two-hop congrArg + rfl-defeq; always
 withLocalDecl+mkLambdaFVars for congr lambdas; `absurd`'s Sort
 binder needs pinning); `List.mem_cons` binder order (element LAST);
@@ -154,40 +158,18 @@ into the clause); `#guard_msgs (drop error)` takes the DOCSTRING —
 use `/- -/` on rejection probes; `let mut` doesn't mutate across
 `.withContext do` — thread values out.
 
-Review 15 additions (G4 census):
-- **`matches` is a reserved word** (like `lemma`).
-- **No `ToExpr RootKind`/`ToExpr TraceStep`** — hand-quote
-  (`rootKindToExpr`/`thomStepToExpr` in Refute.lean).
-- **`mkAppM ``decide` does NOT synthesize the `Decidable` instance** —
-  use `mkAppOptM … #[some goal, none]`; `grammarOK` on the
-  `coeffsIn` route is kernel-incomputable (`MPoly.add` wall) — the
-  linear grammar ticket is CONSTRUCTED from the reducer +
-  `coeffsOf_getElem!_eq`, not decided.
-- **`Eq.trans` cannot serve as Prop transport through a congrArg'd
-  prop-family** — `Eq.mpr` is the combinator (the hAs nível error);
-  `Or.inr`/`Or.inl` under `mkAppM` need side-Prop pins (`mkAppOptM`)
-  or HOU mvars linger ("result contains metavariables").
-- **`v < 0` is a Prop, `decide (v < 0)` the Bool** (`mkNeg := v < 0`
-  silently becomes Prop-typed).
-- **`OfNat.ofNat`'s raw literal is Nat** (`toExpr (1 : Nat)`, not
-  `(1 : Int)` — the value-side close then fails oddly).
-- **`whnf`-indexing into `em`-projections can panic** (index out of
-  bounds) — rebuild `IneqAtom.Holds` propositions natively instead
-  (hand-quoted `IneqKind` + structure ctor).
-- Polarity table for the linear collapse: `eq/lt/gt →` emitted
-  polarity true (`¬SHolds = ¬¬Holds`, route `Iff.mp not_not`),
-  `le/ge →` false (`¬Holds`, route `mt (Iff.mpr …)`). The inversion
-  was caught by the lt fixture — pin both routes.
-- Split-fuel budgets must count step-produced Or carriers: review-11
-  clause-based fuel now `× 2^(matched disjunctive thomOrs)`.
-- `Grammar.linearRoot`'s implicit `{j, i, p, mkNeg, lcFact}` binders
-  need `mkAppOptM` pinning or `?lcFact`'s match can't reduce.
-
-## Roadmap after 19b
-
-12e (G6 integer b&b), 14, 15, 16 (parity harness; M6). Tier B (G7,
-rootGeneric deg ≥ 3) via the S1 lane (11a resultants ∥ 11c root
-continuity — the long pole). Background/parked: L1 hardening (nla-07b
-meta-Buchberger, nla-06 simplex model, nla-21 shared atom space,
-nla-22 work-queues), nla-30, nla-31 termination proofs (refineNzBound
-first), M5 containment writeup, R-q rootCount let-evaluation lane.
+Review 15 additions (G4 census): `matches` is reserved; no
+`ToExpr RootKind`/`ToExpr TraceStep` (hand-quote); `mkAppM ``decide`
+doesn't synthesize the instance (`mkAppOptM … none`); `grammarOK`'s
+`coeffsIn` branch is kernel-incomputable (`MPoly.add` wall) — build
+the linear grammar ticket from the reducer + `coeffsOf_getElem!_eq`;
+`Eq.mpr` (NOT `Eq.trans`) for congrArg'd prop-family transports;
+`Or.inr` needs side-Prop pins under `mkAppM` (`mkAppOptM`);
+`v < 0` is a Prop, `decide (v < 0)` the Bool; `OfNat.ofNat` raw
+literal is Nat; `whnf`-indexing into em-projections can panic —
+rebuild `IneqAtom.Holds` natively; linear collapse polarity table:
+eq/lt/gt → `¬¬Holds` (route `Iff.mp not_not`), le/ge → `¬Holds`
+(route `mt (Iff.mpr …)`) — the inversion is real and the lt fixture
+caught it; split-fuel must count step-produced Ors (clause-part
+× 2^thomOrs); `Grammar.linearRoot` implicit binders need
+`mkAppOptM` pinning (its `?lcFact` match won't reduce otherwise).
