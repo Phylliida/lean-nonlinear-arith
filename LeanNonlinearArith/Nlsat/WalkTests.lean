@@ -436,4 +436,75 @@ example : ∀ ρ : Nat → ℝ,
     (∀ C ∈ [[⟨1, false⟩]], clauseHolds ρ rgAtomsBad C) → False := by
   nlsat_refute ⟨rgAtomsBad, rgClauses, rgBundles, rgFinal⟩
 
+/-! ## G4 census item 3 — the cross-links member, end-to-end through
+the walk
+
+Root bounds (`¬` literals in the clause) give OPAQUE `rootVal`
+comparisons; the arith lemma cannot close from the literals alone and
+NEEDS the bundle's thomQuadratic steps to transfer, via the Coverage
+iff, into the evaluated Thom region formulas. p = x0²−2; inputs
+`ρ 0 > root₁(p)`, `ρ 0 < root₂(p)`, `p ≥ 0` — empty jointly. -/
+
+private def xlPm2 : MPoly := [(1, [(0, 2)]), (-2, [])]
+
+private def xlAtoms : Array (Option Atom) :=
+  #[none,
+   some (.root ⟨.gt, 0, 1, xlPm2⟩),
+   some (.root ⟨.lt, 0, 2, xlPm2⟩),
+   some (.ineq ⟨.lt, [(xlPm2, false)]⟩)]
+
+private def xlClauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, false⟩], learned := false, deleted := false },
+   { lits := #[⟨2, false⟩], learned := false, deleted := false },
+   { lits := #[⟨3, true⟩], learned := false, deleted := false }]
+
+private def xlBundles : Array (Option TraceBundle) := #[none, none, none, none]
+
+private def xlFinal : TraceBundle :=
+  ⟨#[.resolution (.clause 1),
+      .cellBound .lower .gt 0 1 xlPm2, .thomQuadratic .gt 0 1 xlPm2 1 1 1 (-1),
+      .resolution (.clause 2),
+      .cellBound .upper .lt 0 2 xlPm2, .thomQuadratic .lt 0 2 xlPm2 1 1 0 (-1),
+      .resolution (.clause 3),
+      .resolution (.arith #[⟨1, false⟩, ⟨2, false⟩, ⟨3, true⟩] #[])], #[]⟩
+
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, false⟩], [⟨3, true⟩]],
+      clauseHolds ρ xlAtoms C) → False := by
+  nlsat_refute ⟨xlAtoms, xlClauses, xlBundles, xlFinal⟩
+
+/- Load-bearing: dropping the thomQuadratic steps leaves only the
+opaque bounds; the arith discharge fails, and the walk rejects. -/
+private def xlFinalNoSteps : TraceBundle :=
+  ⟨#[.resolution (.clause 1),
+      .cellBound .lower .gt 0 1 xlPm2,
+      .resolution (.clause 2),
+      .cellBound .upper .lt 0 2 xlPm2,
+      .resolution (.clause 3),
+      .resolution (.arith #[⟨1, false⟩, ⟨2, false⟩, ⟨3, true⟩] #[])], #[]⟩
+
+#guard_msgs (drop error) in
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, false⟩], [⟨3, true⟩]],
+      clauseHolds ρ xlAtoms C) → False := by
+  nlsat_refute ⟨xlAtoms, xlClauses, xlBundles, xlFinalNoSteps⟩
+
+/- Grammar-gate probe (precheck): `sq = 0` with `sp = −1` breaks the
+E1-pinned `sq = 0 → sp = 0` grammar condition — the bundle's steps
+fail `grammarOK` and the walk rejects at `precheck` (before any
+discharge work). -/
+private def xlFinalGrammarBad : TraceBundle :=
+  ⟨#[.resolution (.clause 1),
+      .cellBound .lower .gt 0 1 xlPm2, .thomQuadratic .gt 0 1 xlPm2 0 1 1 (-1),
+      .resolution (.clause 2),
+      .resolution (.clause 3),
+      .resolution (.arith #[⟨1, false⟩, ⟨2, false⟩, ⟨3, true⟩] #[])], #[]⟩
+
+#guard_msgs (drop error) in
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, false⟩], [⟨3, true⟩]],
+      clauseHolds ρ xlAtoms C) → False := by
+  nlsat_refute ⟨xlAtoms, xlClauses, xlBundles, xlFinalGrammarBad⟩
+
 end LeanNonlinearArith.Nlsat.Tests.Walk

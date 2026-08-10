@@ -477,4 +477,164 @@ example (ρ : Nat → ℝ) :
       (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, false⟩, ⟨4, true⟩, ⟨5, true⟩]) := by
   nlsat_arith_valid
 
+/-! ## G4 item 3 — the linearRoot family + item-4 F-w probes -/
+
+/-- Fixture 3 (linear family): q = x0 − 1. The cell upper bound
+`ρ 0 < root₁(q)` (the root is 1) contradicts `¬(q < 0)`. The
+`linearRoot` step converts the opaque bound through
+`coverage_linearRoot` into the emitted-literal comparison
+`evalP ρ q < 0`. Const-lc (`1`), `mkNeg = false`, `lcFact = none`. -/
+private def tlQ : MPoly := [(1, [(0, 1)]), (-1, [])]
+
+private def tlAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.lt, 0, 1, tlQ⟩),          -- 1: ρ 0 < root₁(q)
+    some (.ineq ⟨.lt, [(tlQ, false)]⟩)]     -- 2: q < 0
+
+private def tlSteps : Array TraceStep :=
+  #[.cellBound .upper .lt 0 1 tlQ, .linearRoot .lt 0 tlQ false none]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tlAtoms) (arithClause [] [⟨1, true⟩, ⟨2, false⟩]) := by
+  nlsat_arith_valid_steps tlSteps
+
+/- Load-bearing: without the step the bound is opaque `rootVal` data. -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tlAtoms) (arithClause [] [⟨1, true⟩, ⟨2, false⟩]) := by
+  nlsat_arith_valid
+
+/- F-w probe (mkNeg corrupt, const-lc): `mkNeg = true` contradicts the
+grammar's `mkNeg = decide (1 < 0)` (`tlSteps` at index 1) — the
+production's grammar reconstruction throws, the step skips, and the
+load-bearing clause rejects. -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tlAtoms) (arithClause [] [⟨1, true⟩, ⟨2, false⟩]) := by
+  nlsat_arith_valid_steps
+    #[.cellBound .upper .lt 0 1 tlQ, .linearRoot .lt 0 tlQ true none]
+
+/- F-w probe (sq corrupt, semantic): `sq = 0` keeps the grammar but
+fights the constant disc = 8 — the production's disc lane skips the
+step and the load-bearing clause rejects. -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tsAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, false⟩]) := by
+  nlsat_arith_valid_steps
+    #[.cellBound .lower .gt 0 1 tsPm2, .thomQuadratic .gt 0 1 tsPm2 0 1 1 (-1),
+      .cellBound .upper .lt 0 2 tsPm2, .thomQuadratic .lt 0 2 tsPm2 0 1 0 (-1)]
+
+/- F-w probe (sq=0 placeholder corrupt, grammar-BREAKING): the E1-pinned
+`sq = 0 → sp = 0` rule is violated (`sp = −1`) — the grammar ticket
+throws on the first step; semantic invisibility of sp itself is pinned
+below. Rejected via the same load-bearing argument. -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tsAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, false⟩]) := by
+  nlsat_arith_valid_steps
+    #[.cellBound .lower .gt 0 1 tsPm2, .thomQuadratic .gt 0 1 tsPm2 0 1 1 (-1),
+      .cellBound .upper .lt 0 2 tsPm2, .thomQuadratic .lt 0 2 tsPm2 0 1 (-1) (-1)]
+
+/- Corrupting sq to 0 AND restoring sp := 0 makes the payload
+grammar-clean again; the disc-lane mismatch still rejects the step —
+so an sq-corruption visible only semantically stays rejected. sp ITSELF
+(when sq > 0, everything in range) is not consumed by the
+discharge certificates: the accepted trace then still carries
+kernel-checked TRUE cross-links (review-6 F-w superset contract,
+documented — the walk accepts a superset of grammar-admitted traces). -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tsAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, false⟩]) := by
+  nlsat_arith_valid_steps
+    #[.cellBound .lower .gt 0 1 tsPm2, .thomQuadratic .gt 0 1 tsPm2 1 1 1 0,
+      .cellBound .upper .lt 0 2 tsPm2, .thomQuadratic .lt 0 2 tsPm2 1 1 0 0]
+
+/-! ## G4 item 3 — remaining linear kinds/polarities -/
+
+/-- The `mt` polarity route (`ge` maps to an `lt`-atom at polarity
+`false`): q = x0 − 1 with a `ge` lower bound (`ρ 0 ≥ 1` ⟺ `¬(q < 0)`)
+against the plain-variable upper bound `le` on x0 (`ρ 0 ≤ 0`). The kind
+`.ge` is reachable via `cellBound .lower` with kind `ge` (the
+full_dimensional openness family). -/
+private def tgX0 : MPoly := [(1, [(0, 1)])]
+
+private def tgAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.ge, 0, 1, tlQ⟩),           -- 1: ρ 0 ≥ root₁(q) = 1
+    some (.root ⟨.le, 0, 1, tgX0⟩)]          -- 2: ρ 0 ≤ root₁(x0) = 0
+
+private def tgSteps : Array TraceStep :=
+  #[.cellBound .lower .ge 0 1 tlQ, .linearRoot .ge 0 tlQ false none,
+    .cellBound .upper .le 0 1 tgX0, .linearRoot .le 0 tgX0 false none]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tgAtoms) (arithClause [] [⟨1, true⟩, ⟨2, true⟩]) := by
+  nlsat_arith_valid_steps tgSteps
+
+/-- The `.eq` kind (emitted polarity `true`): q = x0 − 1's unique root
+forces `ρ 0 = 1`, contradicted by the `q > 0` fact from the negated
+sign literal. -/
+private def teAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.eq, 0, 1, tlQ⟩),           -- 1: ρ 0 = root₁(q)
+    some (.ineq ⟨.gt, [(tlQ, false)]⟩)]      -- 2: q > 0
+
+private def teSteps : Array TraceStep :=
+  #[.cellBound .exact .eq 0 1 tlQ, .linearRoot .eq 0 tlQ false none]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ teAtoms) (arithClause [] [⟨1, true⟩, ⟨2, true⟩]) := by
+  nlsat_arith_valid_steps teSteps
+
+/-- The sa = 0 degenerate reroute (z3 :811-812, E1): the clause's root
+atom is on the deg-2 parent `tdP = x1·x0² + x0 − 1`; `A = x1` vanishes
+at the sample (the `A = 0` sign literal), so the emission reroutes to
+`mk_plinear_root` on the reduct `q = x0 − 1` with `lcFact = some (1, 1)`
+(the const-lc E1 case — no lc literal needed). The production
+transports the root comparison across
+`rootVal ρ 0 1 tdP = rootVal ρ 0 1 q` (`rootVal_eq_degenerate` + the
+coefficient links). -/
+private def tdP : MPoly := [(1, [(0, 2), (1, 1)]), (1, [(0, 1)]), (-1, [])]
+
+private def tdAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.lt, 0, 1, tdP⟩),           -- 1: ρ 0 < root₁(tdP)
+    some (.ineq ⟨.eq, [(tnA, false)]⟩),      -- 2: A = x1  (= 0 at the sample)
+    some (.ineq ⟨.lt, [(tlQ, false)]⟩)]      -- 3: q < 0
+
+private def tnA2 : MPoly := [(1, [])]
+
+private def tdSteps : Array TraceStep :=
+  #[.cellBound .upper .lt 0 1 tdP, .linearRoot .lt 0 tlQ false (some (tnA2, 1))]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tdAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, false⟩]) := by
+  nlsat_arith_valid_steps tdSteps
+
+/- The vanishing-A fact is load-bearing for the transport: without the
+`A = 0` literal the step skips (sound) and the clause rejects. -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ tdAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨3, false⟩]) := by
+  nlsat_arith_valid_steps tdSteps
+
+/-- The encoding-free lane (foreign traces): `p = 2·x0 − 4`, root 2 — a
+`rootGeneric`-shaped clause with NO encoding step: deg-1 const-lc
+converts unconditionally. `ρ 0 > root₁(p) = 2` contradicts
+`p ≤ 0` (the `gt` literal failing). -/
+private def fxP : MPoly := [(2, [(0, 1)]), (-4, [])]
+
+private def fxAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.gt, 0, 1, fxP⟩),           -- 1: ρ 0 > root₁(p)
+    some (.ineq ⟨.gt, [(fxP, false)]⟩)]      -- 2: p > 0
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ fxAtoms) (arithClause [] [⟨1, true⟩, ⟨2, false⟩]) := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

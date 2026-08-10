@@ -736,13 +736,6 @@ def mkCoeFactEq (hcsPrf : Expr) (cs : List MPoly) (k : Nat)
   let t2 ← mkAppM ``congrArg #[lam2, hget]
   mkAppM ``Eq.trans #[t1, t2]
 
-/-- Transport a proof of the VALUE side `P(cs[k]!)` to the ACCESSOR
-side `P((coeffsOf p y)[k]!)` (Prop-valued `F`). -/
-def mkTransportedFact (hcsPrf : Expr) (cs : List MPoly) (k : Nat)
-    (F : Expr → MetaM Expr) (hVal : Expr) : MetaM Expr := do
-  let t ← mkCoeFactEq hcsPrf cs k F
-  mkAppM ``Eq.mpr #[t, hVal]
-
 /-- Same two-hop transport as `mkValueFact`, but the value-side proof is
 SUPPLIED (the clause-literal lanes — no numeric close needed). -/
 def mkValueFactOf (hcsPrf : Expr) (cs : List MPoly)
@@ -789,7 +782,7 @@ Kernel `decide` cannot go through `grammarOK`'s `coeffsIn` branch (the
 `MPoly.add` wf-compilation wall), so the coefficient evidence chain is
 built from the reducer + `coeffsOf_getElem!_eq`. Throws on
 payload/grammar inconsistency (sound skip — the caller catches). -/
-unsafe def mkLinearRootGrammar (y : Var) (p : MPoly) (mkNeg : Bool)
+unsafe def mkLinearRootGrammar (k : RootKind) (y : Var) (p : MPoly) (mkNeg : Bool)
     (lcFact : Option (MPoly × Int)) : TacticM Expr := do
   let pE := toExpr p; let yE := toExpr y
   let hdeg ← mkDecideProof
@@ -811,10 +804,11 @@ unsafe def mkLinearRootGrammar (y : Var) (p : MPoly) (mkNeg : Bool)
     let lam ← withLocalDecl `x BinderInfo.default (mkConst ``MPoly) fun xE => do
       mkLambdaFVars #[xE] (← mkAppM ``Eq
         #[(← mkAppM ``MPoly.asConst? #[xE]), someVE])
-    let ha ← mkAppM ``Eq.trans #[(← mkAppM ``congrArg #[lam, harr]), hAs]
+    -- congrArg on the prop-family: (asConst? lhs = some v) = (asConst? rhs = some v)
+    let ha ← mkAppM ``Eq.mpr #[(← mkAppM ``congrArg #[lam, harr]), hAs]
     let hv ← mkDecideProof (← mkAppM ``Ne #[toExpr v, toExpr (0 : Int)])
     let ltE ← mkAppM ``LT.lt #[toExpr v, toExpr (0 : Int)]
-    let decideE ← mkAppM ``decide #[ltE]
+    let decideE ← mkAppOptM ``decide #[some ltE, none]
     let hmk ← mkAppM ``Eq.symm
       #[← mkDecideProof (← mkAppM ``Eq #[decideE, toExpr mkNeg])]
     let motiveE ← withLocalDecl `v0 BinderInfo.default (mkConst ``Int) fun v0E => do
@@ -824,13 +818,15 @@ unsafe def mkLinearRootGrammar (y : Var) (p : MPoly) (mkNeg : Bool)
           ← mkAppM ``Option.some #[v0E]]
       let hvNe ← mkAppM ``Ne #[v0E, toExpr (0 : Int)]
       let hlt ← mkAppM ``LT.lt #[v0E, toExpr (0 : Int)]
-      let hdec0 ← mkAppM ``decide #[hlt]
+      let hdec0 ← mkAppOptM ``decide #[some hlt, none]
       let hmkT ← mkAppM ``Eq #[toExpr mkNeg, hdec0]
       mkLambdaFVars #[v0E] (← mkAppM ``And #[asC, ← mkAppM ``And #[hvNe, hmkT]])
     let hAnd ← mkAppM ``And.intro #[ha, ← mkAppM ``And.intro #[hv, hmk]]
     let hcond ← mkAppOptM ``Exists.intro
       #[none, some motiveE, some (toExpr v), some hAnd]
-    mkAppM ``Grammar.linearRoot #[hdeg, hcond]
+    mkAppOptM ``Grammar.linearRoot
+      #[some (rootKindToExpr k), some yE, some pE, some (toExpr mkNeg),
+        some (toExpr lcFact), hdeg, hcond]
   | some (c, s) => do
     unless c1 == c do
       throwError "mkLinearRootGrammar: lcFact poly is not the lc"
@@ -838,7 +834,7 @@ unsafe def mkLinearRootGrammar (y : Var) (p : MPoly) (mkNeg : Bool)
     let hc ← mkAppM ``Eq.symm #[harr]
     let hsne ← mkDecideProof (← mkAppM ``Ne #[sE, toExpr (0 : Int)])
     let hmk ← mkAppM ``Eq.symm #[← mkDecideProof (← mkAppM ``Eq
-      #[(← mkAppM ``decide #[← mkAppM ``LT.lt #[sE, toExpr (0 : Int)]]),
+      #[(← mkAppOptM ``decide #[some (← mkAppM ``LT.lt #[sE, toExpr (0 : Int)]), none]),
         toExpr mkNeg])]
     -- the const-sign conjunct: ∀ v, c.asConst? = some v → s = Int.sign v
     let hsig ← withLocalDecl `v BinderInfo.default (mkConst ``Int) fun vE0 => do
@@ -872,7 +868,9 @@ unsafe def mkLinearRootGrammar (y : Var) (p : MPoly) (mkNeg : Bool)
           mkLambdaFVars #[vE0, hE] body
     let hcond ← mkAppM ``And.intro
       #[hc, ← mkAppM ``And.intro #[hsne, ← mkAppM ``And.intro #[hmk, hsig]]]
-    mkAppM ``Grammar.linearRoot #[hdeg, hcond]
+    mkAppOptM ``Grammar.linearRoot
+      #[some (rootKindToExpr k), some yE, some pE, some (toExpr mkNeg),
+        some (toExpr lcFact), hdeg, hcond]
 
 /-- The lc-sign evidence lambda for `coverage_linearRoot`:
 `∀ c s, lcFact = some (c, s) → c.asConst? = none → signMatches s (evalP
@@ -958,24 +956,13 @@ unsafe def mkHlcLambda (ρ : Expr) (lcFact : Option (MPoly × Int)) : TacticM Ex
               some tgt, hconf, hne]
           mkLambdaFVars #[cvE, svE, h1E, h2E] body
 
-/-- linearRoot step consumption: for a root fact `⟨k, y, i, p⟩` encoded
-by a `linearRoot` step, convert the root comparison into the step's
-emitted-literal sign comparison (a plain ℝ fact the glue consumes).
-Skips (throws) on any missing evidence — grammar, canonicity, or the
-non-const lc lane's clause fact. -/
-unsafe def linearStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
-    (k : RootKind) (y : Var) (i : Nat) (p : MPoly) (mkNeg : Bool)
-    (lcFact : Option (MPoly × Int)) (hfvR : FVarId) : TacticM MVarId := do
-  let pE := toExpr p
-  let hOK ← mkDecideProof
-    (← mkAppM ``Eq #[mkApp (mkConst ``MPoly.canonOK) pE, mkConst ``true])
-  let hcan ← mkAppM ``MPoly.canonOK_sound #[pE, hOK]
-  let hgram ← mkLinearRootGrammar y p mkNeg lcFact
-  let hlc ← mkHlcLambda ρ lcFact
-  let hcov ← mkAppM ``coverage_linearRoot
-    #[ρ, rootKindToExpr k, toExpr y, toExpr i, pE, toExpr mkNeg, toExpr lcFact,
-      hgram, hcan, hlc]
-  let hcmp ← mkAppM ``And.right #[mkFVar hfvR]
+/-- Shared tail of the linearRoot productions: given the coverage
+iftarget (`hcmp : rootCmp k (ρ y) (rootVal ρ y i p)`) plus the step's
+grammar/canonicity/lc evidence, derive and note the emitted-literal
+comparison. -/
+unsafe def linearProduceTail (mvar : MVarId) (ρ : Expr) (n : Nat)
+    (k : RootKind) (p : MPoly) (mkNeg : Bool) (lcFact : Option (MPoly × Int))
+    (hcmp hcov : Expr) : TacticM MVarId := do
   let hSL ← mkAppM ``Iff.mpr #[hcov, hcmp]
   -- collapse `¬ SHolds` to the comparison (emitted atom computed
   -- natively via `linearRootEmitted` = (k.toIneqSign, parity fold))
@@ -988,18 +975,165 @@ unsafe def linearStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
     | IneqKind.eq => mkAppM ``holds_single_eq #[ρ, qE]
   let hcomp ←
     if !lsign then
-      -- polarity `false`: ¬ SHolds ρ a false = ¬ Holds — mt of the
-      -- single-factor collapse
-      mkAppM ``mt #[(← mkAppM ``Iff.mpr #[lem]), hSL]
-    else do
-      -- polarity `true`: ¬ ¬ Holds → Holds → the comparison
-      let propE := (← inferType hSL).getAppArgs[0]!
+      -- polarity `true`: ¬ SHolds ρ a true = ¬ ¬ Holds — forward the
+      -- double negation, then the single-factor collapse. The Holds
+      -- proposition is rebuilt natively (the em projections would
+      -- otherwise have to survive a whnf chain).
+      let kE' := match k' with
+        | IneqKind.lt => mkConst ``IneqKind.lt
+        | IneqKind.gt => mkConst ``IneqKind.gt
+        | IneqKind.eq => mkConst ``IneqKind.eq
+      let fsE := toExpr [(q, false)]
+      let atomE := mkApp2 (mkConst ``IneqAtom.mk) kE' fsE
+      let propE ← mkAppM ``IneqAtom.Holds #[ρ, atomE]
       let hH ← mkAppM ``Iff.mp
         #[(← mkAppOptM ``Classical.not_not #[some propE]), hSL]
       mkAppM ``Iff.mp #[lem, hH]
+    else do
+      -- polarity `false`: ¬ SHolds ρ a false = ¬ Holds — mt of the
+      -- single-factor collapse
+      mkAppM ``mt #[(← mkAppM ``Iff.mpr #[lem]), hSL]
   let hsN := Name.mkSimple s!"hS{n}"
   let (_, mvar') ← mvar.note hsN hcomp none
   pure mvar'
+
+/-- linearRoot step consumption: for a root fact `⟨k, y, i, p⟩` encoded
+by a `linearRoot` step, convert the root comparison into the step's
+emitted-literal sign comparison (a plain ℝ fact the glue consumes).
+Skips (throws) on any missing evidence — grammar, canonicity, or the
+non-const lc lane's clause fact. -/
+unsafe def linearStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
+    (k : RootKind) (y : Var) (i : Nat) (p : MPoly) (mkNeg : Bool)
+    (lcFact : Option (MPoly × Int)) (hfvR : FVarId) : TacticM MVarId := do
+  let pE := toExpr p
+  let hOK ← mkDecideProof
+    (← mkAppM ``Eq #[mkApp (mkConst ``MPoly.canonOK) pE, mkConst ``true])
+  let hcan ← mkAppM ``MPoly.canonOK_sound #[pE, hOK]
+  let hgram ← mkLinearRootGrammar k y p mkNeg lcFact
+  let hlc ← mkHlcLambda ρ lcFact
+  let hcov ← mkAppM ``coverage_linearRoot
+    #[ρ, rootKindToExpr k, toExpr y, toExpr i, pE, toExpr mkNeg, toExpr lcFact,
+      hgram, hcan, hlc]
+  let hcmp ← mkAppM ``And.right #[mkFVar hfvR]
+  linearProduceTail mvar ρ n k p mkNeg lcFact hcmp hcov
+
+/-- The sa = 0 degenerate reroute (z3 `mk_quadratic_root` :811-812, E1):
+the clause's root atom is on the PARENT `p` (deg 2 in `y`), the step is
+`linearRoot` on the reduct `q = B·y + C` (`lcFact` = some `(c, s)`).
+The vanishing-A evidence comes from the clause's `A = 0` sign literal;
+the coefficient links `q`'s two coefficients are the parent's (natively
+checked, kernel-chained). -/
+unsafe def linearStepProduceDeg (mvar : MVarId) (ρ : Expr) (n : Nat)
+    (k : RootKind) (y : Var) (i : Nat) (parent q : MPoly) (mkNeg : Bool)
+    (lcFact : Option (MPoly × Int)) (hfvR : FVarId) : TacticM MVarId := do
+  let pE := toExpr parent; let yE := toExpr y; let iE := toExpr i; let qE := toExpr q
+  let (cs, hcsPrf) ← coeffsOfValue y parent
+  let (csQ, hcsPrfQ) ← coeffsOfValue y q
+  unless cs.length == 3 && csQ.length == 2 && cs[1]! == csQ[1]! && cs[0]! == csQ[0]! do
+    throwError "linearStepProduceDeg: q is not the reduct of the parent"
+  let A := cs[2]!
+  let valAccsP : Nat → MetaM Expr := fun k => pure (toExpr (cs[k]!))
+  let zR ← mkRealZero
+  -- the vanishing-A fact from the clause's `A = 0` sign literal
+  let hcompA ←
+    match ← findSignFact ρ A with
+    | none => throwError "linearStepProduceDeg: no clause A = 0 fact"
+    | some (0, hcomp, _) => pure hcomp
+    | some (sgn, _, _) =>
+      throwError "linearStepProduceDeg: A fact has sign {sgn} ≠ 0"
+  let hA0 ← mkValueFactOf hcsPrf cs (fun accs => do
+      mkAppM ``Eq #[← mkAppM ``Check.evalP #[ρ, ← accs 2], zR])
+    valAccsP hcompA
+  let hdeg2 ← mkDecideProof
+    (← mkAppM ``Eq #[← mkAppM ``MPoly.degreeIn #[pE, yE], toExpr (2 : Nat)])
+  let hdeg1 ← mkDecideProof
+    (← mkAppM ``Eq #[← mkAppM ``MPoly.degreeIn #[qE, yE], toExpr (1 : Nat)])
+  let hdeg ← mkAppM ``rootVal_eq_degenerate #[ρ, yE, iE, pE, hdeg2, hA0]
+  -- coefficient links: evalP of the parent's [j]! = evalP of q's [j]!
+  let link (j : Nat) : MetaM Expr := do
+    let hP ← mkCoeFactEq hcsPrf cs j (fun v => mkAppM ``Check.evalP #[ρ, v])
+    let hQ ← mkCoeFactEq hcsPrfQ csQ j (fun v => mkAppM ``Check.evalP #[ρ, v])
+    mkAppM ``Eq.trans #[hP, ← mkAppM ``Eq.symm #[hQ]]
+  let link0 ← link 0
+  let link1 ← link 1
+  -- hdiv : -Cp0 / Cp1 = -Cq0 / Cq1 (both divisions over the ACCESSOR
+  -- forms, nested two-leg congruence so the middle terms match)
+  let negL ← withLocalDecl `x BinderInfo.default (mkConst ``Real) fun xE => do
+    mkLambdaFVars #[xE] (← mkAppM ``Neg.neg #[xE])
+  let hnegc ← mkAppM ``congrArg #[negL, link0]
+  let coeP1E ← mkAppM ``Check.evalP #[ρ, ← mkIdxGet (← mkAppM ``Check.coeffsOf #[pE, yE]) 1]
+  let coeQ0E ← mkAppM ``Check.evalP #[ρ, ← mkIdxGet (← mkAppM ``Check.coeffsOf #[qE, yE]) 0]
+  let divL1 ← withLocalDecl `x BinderInfo.default (mkConst ``Real) fun xE => do
+    mkLambdaFVars #[xE] (← mkAppM ``HDiv.hDiv #[xE, coeP1E])
+  let hdiv1 ← mkAppM ``congrArg #[divL1, hnegc]
+  let negCoeQ0E ← mkAppM ``Neg.neg #[coeQ0E]
+  let divL2 ← withLocalDecl `x BinderInfo.default (mkConst ``Real) fun xE => do
+    mkLambdaFVars #[xE] (← mkAppM ``HDiv.hDiv #[negCoeQ0E, xE])
+  let hdiv2 ← mkAppM ``congrArg #[divL2, link1]
+  let hdiv ← mkAppM ``Eq.trans #[hdiv1, hdiv2]
+  let htailQ ← mkAppM ``rootVal_eq_linear #[ρ, yE, iE, qE, hdeg1]
+  let hrv ← mkAppM ``Eq.trans
+    #[(← mkAppM ``Eq.trans #[hdeg, hdiv]), ← mkAppM ``Eq.symm #[htailQ]]
+  -- transport the root comparison across the rootVal equality
+  let cmpL ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+    mkLambdaFVars #[zE]
+      (mkAppN (mkConst ``rootCmp) #[rootKindToExpr k, mkApp ρ yE, zE])
+  let hcmp' ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[cmpL, hrv]),
+    (← mkAppM ``And.right #[mkFVar hfvR])]
+  let hOK ← mkDecideProof
+    (← mkAppM ``Eq #[mkApp (mkConst ``MPoly.canonOK) qE, mkConst ``true])
+  let hcan ← mkAppM ``MPoly.canonOK_sound #[qE, hOK]
+  let hgram ← mkLinearRootGrammar k y q mkNeg lcFact
+  let hlc ← mkHlcLambda ρ lcFact
+  let hcov ← mkAppM ``coverage_linearRoot
+    #[ρ, rootKindToExpr k, yE, iE, qE, toExpr mkNeg, toExpr lcFact,
+      hgram, hcan, hlc]
+  linearProduceTail mvar ρ n k q mkNeg lcFact hcmp' hcov
+
+/-- The encoding-free lane (foreign traces, grammar-free): a deg-1 root
+fact with a CONSTANT nonzero lead coefficient converts unconditionally
+via `rootVal_eq_linear` + `linearRoot_discharge` — no bundle step
+needed. (z3's own production routes const-lc deg-1 roots through
+`mk_linear_root`, so this region is foreign-trace defense; the
+non-const skip is sound.) -/
+unsafe def rootGenericLinearProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
+    (k : RootKind) (y : Var) (i : Nat) (p : MPoly) (hfvR : FVarId) :
+    TacticM MVarId := do
+  let pE := toExpr p; let yE := toExpr y; let iE := toExpr i
+  unless p.degreeIn y == 1 && i == 1 do
+    throwError "rootGenericLinearProduce: not a deg-1 root-1 fact"
+  let (cs, hcsPrf) ← coeffsOfValue y p
+  unless cs.length == 2 do
+    throwError "rootGenericLinearProduce: coefficient count {cs.length} ≠ 2"
+  let some v := cs[1]!.asConst?
+    | throwError "rootGenericLinearProduce: lc is not const"
+  unless v != 0 do
+    throwError "rootGenericLinearProduce: lc is zero"
+  let mkNeg := decide (v < 0)
+  let hOK ← mkDecideProof
+    (← mkAppM ``Eq #[mkApp (mkConst ``MPoly.canonOK) pE, mkConst ``true])
+  let hcan ← mkAppM ``MPoly.canonOK_sound #[pE, hOK]
+  let hdeg ← mkDecideProof
+    (← mkAppM ``Eq #[← mkAppM ``MPoly.degreeIn #[pE, yE], toExpr (1 : Nat)])
+  let oneR ← mkAppOptM ``OfNat.ofNat
+    #[some (mkConst ``Real), some (toExpr (1 : Nat)), none]
+  let negOneR ← mkAppM ``Neg.neg #[oneR]
+  let mult := if mkNeg then negOneR else oneR
+  let hAq ← mkValueFact hcsPrf cs
+    (fun accs => do
+      let ev ← mkAppM ``Check.evalP #[ρ, ← accs 1]
+      let mulT ← mkAppM ``HMul.hMul #[mult, ev]
+      mkAppM ``LT.lt #[(← mkRealZero), mulT])
+    (fun k => pure (toExpr (cs[k]!)))
+  let hiff ← mkAppM ``linearRoot_discharge
+    #[ρ, rootKindToExpr k, yE, pE, toExpr mkNeg, hdeg, hcan, hAq]
+  let hrveq ← mkAppM ``rootVal_eq_linear #[ρ, yE, iE, pE, hdeg]
+  let cmpL ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+    mkLambdaFVars #[zE]
+      (mkAppN (mkConst ``rootCmp) #[rootKindToExpr k, mkApp ρ yE, zE])
+  let hcmp' ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[cmpL, hrveq]),
+    (← mkAppM ``And.right #[mkFVar hfvR])]
+  linearProduceTail mvar ρ n k p mkNeg none hcmp' hiff
 
 /-- The grammar prop for a thomQuadratic step: coefficient-free (degree
 + sign ranges only), so the plain `grammarOK` decide ticket works. -/
@@ -1161,6 +1295,14 @@ unsafe def thomStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
   setGoals saved
   pure gnew
 
+/-- Native reduct check for the sa = 0 reroute (`:811-812`): `q` is the
+`B·y + C` truncation of the deg-2 parent `p` (the [1]/[0] coefficients
+agree by value). -/
+def reductMatch (y : Var) (p q : MPoly) : Bool :=
+  let csR := p.coeffsIn y
+  let csQ := q.coeffsIn y
+  csR.size == 3 && csQ.size == 2 && csR[1]! == csQ[1]! && csR[0]! == csQ[0]!
+
 /-- Step-fact collection (G4 census slice, item 3): for each encoding
 step the bundle carries (preceding the `.arith` marker), match its root
 atom against the extracted root facts and produce the cross-link
@@ -1171,17 +1313,37 @@ unsafe def collectStepFacts (mvar : MVarId) (ρ : Expr) (steps : Array TraceStep
     (rootFacts : Array (RootKind × Var × Nat × MPoly × FVarId)) : TacticM MVarId := do
   let mut mvar := mvar
   let mut n : Nat := 0
+  -- encoding-free lane (foreign traces): every deg-1 root fact with a
+  -- const lc converts via rootVal_eq_linear without any step
+  for (k, y, i, p, hfvR) in rootFacts do
+    if p.degreeIn y == 1 && i == 1 then
+      mvar ← mvar.withContext do
+        try
+          rootGenericLinearProduce mvar ρ n k y i p hfvR
+        catch _ =>
+          pure mvar
+      n := n + 1
   for step in steps do
     match step with
-    | .linearRoot k y p mkNeg lcFact => do
+    | .linearRoot k y q mkNeg lcFact => do
       let matched := rootFacts.filter fun (kR, yR, _, pR, _) =>
-        kR == k && yR == y && pR == p
+        kR == k && yR == y && pR == q
       for (_, _, iR, _, hfvR) in matched do
         mvar ← mvar.withContext do
           try
-            linearStepProduce mvar ρ n k y iR p mkNeg lcFact hfvR
-          catch e =>
-            dbg_trace "collectStepFacts: linearStepProduce skipped: {← e.toMessageData.toString}"
+            linearStepProduce mvar ρ n k y iR q mkNeg lcFact hfvR
+          catch _ =>
+            pure mvar
+        n := n + 1
+      -- the sa = 0 degenerate reroute (mk_quadratic_root :811-812): the
+      -- linearRoot step is on the reduct of a deg-2 parent
+      let reducts := rootFacts.filter fun (kR, yR, _, pR, _) =>
+        kR == k && yR == y && pR.degreeIn yR == 2 && reductMatch yR pR q
+      for (_, _, iR, pR, hfvR) in reducts do
+        mvar ← mvar.withContext do
+          try
+            linearStepProduceDeg mvar ρ n k y iR pR q mkNeg lcFact hfvR
+          catch _ =>
             pure mvar
         n := n + 1
     | .thomQuadratic k y i p sq sa spd sp => do
@@ -1191,8 +1353,7 @@ unsafe def collectStepFacts (mvar : MVarId) (ρ : Expr) (steps : Array TraceStep
         mvar ← mvar.withContext do
           try
             thomStepProduce mvar ρ n k y i p sq sa spd sp hfvR
-          catch e =>
-            dbg_trace "collectStepFacts: thomStepProduce skipped: {← e.toMessageData.toString}"
+          catch _ =>
             pure mvar
         n := n + 1
     | _ => pure ()
@@ -1307,8 +1468,9 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
   -- member). The bundle's encoding steps convert the extracted root
   -- facts' opaque `rootVal` comparisons into glue-ready first-order
   -- facts. Productions only ADD facts; missing evidence skips soundly.
-  if !steps.isEmpty then
-    mvar ← collectStepFacts mvar ρ steps rootFacts
+  -- (Runs even with no steps: the encoding-free lane handles foreign
+  -- deg-1 root facts.)
+  mvar ← collectStepFacts mvar ρ steps rootFacts
   -- G1 zero-product close (review 7, F-v) + R-b multi-eq-positive
   -- branch (review 9): before the simp/ring_nf mangling, while the
   -- h_f facts are still `evalP` comparisons. Shape-gated; no-op on
