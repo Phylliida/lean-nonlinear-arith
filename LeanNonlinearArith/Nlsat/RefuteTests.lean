@@ -224,4 +224,53 @@ example (ρ : Nat → ℝ) :
       (arithClause [⟨1, false⟩, ⟨2, true⟩] []) := by
   nlsat_arith_valid
 
+/-! ## R-b/R-a (review 9) — multi-eq-positive zero-product + conditional
+sign-collapse -/
+
+private def rXm1 : MPoly := [(1, [(0, 1)]), (-1, [])]
+private def rXp1 : MPoly := [(1, [(0, 1)]), (1, [])]
+private def rQuad : MPoly := [(1, [(0, 2)]), (-1, [])]   -- x0²-1
+
+private def rAtoms : Array (Option Atom) :=
+  #[none,
+    some (.ineq ⟨.eq, [(rXm1, false), (rXp1, false)]⟩),   -- 1: multi eq
+    some (.ineq ⟨.eq, [(rXm1, false)]⟩),                  -- 2: x0-1 = 0
+    some (.ineq ⟨.eq, [(rXp1, false)]⟩),                  -- 3: x0+1 = 0
+    some (.ineq ⟨.lt, [(rXm1, false), (rXp1, false)]⟩),   -- 4: multi lt
+    some (.ineq ⟨.lt, [(rQuad, false)]⟩)]                 -- 5: x0²-1 < 0
+
+/-- R-b: `¬(x0=1 ∨ x0=-1) ∨ x0-1 = 0 ∨ x0+1 = 0` — the multi-eq-POSITIVE
+fact (`List.prod` of values = 0) + per-factor diseqs close via
+`listEvalProd_ne_zero` — no factorization needed (the factors are
+given). -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ rAtoms) [⟨1, true⟩, ⟨2, false⟩, ⟨3, false⟩] := by
+  nlsat_arith_valid
+
+/-- R-a: the negative multi-factor lt literal collapses to
+`¬((x0-1)(x0+1) < 0)` (both factors known nonzero via literals 2/3),
+contradicting the `x0²-1 < 0` fact from literal 5. Clause:
+`holds(4) ∨ x0-1=0 ∨ x0+1=0 ∨ ¬(x0²-1 < 0)`. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ rAtoms)
+      [⟨4, false⟩, ⟨2, false⟩, ⟨3, false⟩, ⟨5, true⟩] := by
+  nlsat_arith_valid
+
+private def rXm2 : MPoly := [(1, [(0, 1)]), (-2, [])]
+
+private def rAtoms3 : Array (Option Atom) :=
+  #[none,
+    some (.ineq ⟨.eq, [(rXm1, false), (rXp1, false), (rXm2, false)]⟩),
+    some (.ineq ⟨.eq, [(rXm1, false)]⟩),
+    some (.ineq ⟨.eq, [(rXp1, false)]⟩),
+    some (.ineq ⟨.eq, [(rXm2, false)]⟩)]
+
+/-- R-b at degree 3 — glue-UNREACHABLE (the product is degree 3,
+beyond nlinarith's pairwise round), so this green pin exercises the
+`listEvalProd_ne_zero` branch necessarily. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ rAtoms3)
+      [⟨1, true⟩, ⟨2, false⟩, ⟨3, false⟩, ⟨4, false⟩] := by
+  nlsat_arith_valid
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

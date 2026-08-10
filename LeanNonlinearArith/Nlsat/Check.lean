@@ -424,29 +424,32 @@ theorem holds_single_gt (ρ : Nat → ℝ) (q : MPoly) :
   simp [IneqAtom.Holds, oddProd]
   exact ne_of_gt
 
-/-! ## Multi-factor / even-parity collapses (G2/G3, design review 7) -/
-
-/-- Product of ALL factor polys (parity-blind — for `eq`, multiplicity
-is irrelevant: `Holds ⟨.eq, fs⟩ ⟺ some factor vanishes ⟺ the product
-vanishes). -/
-def factorProd : List (MPoly × Bool) → MPoly
-  | [] => [(1, [])]
-  | (f, _) :: fs => MPoly.mul f (factorProd fs)
-
-theorem evalP_factorProd (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
-    evalP ρ (factorProd fs) = (fs.map fun f => evalP ρ f.1).prod := by
-  induction fs with
-  | nil => simp [factorProd, evalP, evalM]
-  | cons f fs ih => simp [factorProd, evalP_mul, ih]
+/-! ## Multi-factor / even-parity collapses (G2/G3, design review 7;
+R-b restatement, review 9) -/
 
 /-- Positive multi-factor `eq` fact: some factor vanishes ⟹ the product
-vanishes. -/
+of the factor VALUES vanishes. Stated as a `List.prod` over
+`fs.map Prod.fst` — no `MPoly.mul` in the type, so the fact is
+defeq-clean for the zero-product index (R-b; the `factorProd` fold hit
+the `MPoly.mul` kernel-reduction trap). -/
 theorem holds_multi_eq_prod (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
-    IneqAtom.Holds ρ ⟨.eq, fs⟩ → evalP ρ (factorProd fs) = 0 := by
+    IneqAtom.Holds ρ ⟨.eq, fs⟩ → ((fs.map Prod.fst).map (evalP ρ)).prod = 0 := by
   intro h
   rcases h with ⟨f, hf, hz⟩
-  rw [evalP_factorProd]
-  exact List.prod_eq_zero (List.mem_map.mpr ⟨f, hf, hz⟩)
+  exact List.prod_eq_zero (List.mem_map.mpr ⟨f.1, List.mem_map.mpr ⟨f, hf, rfl⟩, hz⟩)
+
+/-- The converse direction for the zero-product close (R-b): if no
+factor vanishes, the product of values is nonzero. -/
+theorem listEvalProd_ne_zero (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    (∀ f ∈ fs.map Prod.fst, evalP ρ f ≠ 0) →
+      ((fs.map Prod.fst).map (evalP ρ)).prod ≠ 0 := by
+  intro h
+  apply List.prod_ne_zero
+  intro ha
+  obtain ⟨f, hf, hz⟩ := List.mem_map.mp ha
+  obtain ⟨g, hg, hgf⟩ := List.mem_map.mp hf
+  subst hgf
+  exact h g.1 (List.mem_map.mpr ⟨g, hg, rfl⟩) hz
 
 /-- Negative multi-factor `eq` fact (z3's `add_zero_assumption`
 composite `∏ pᵢ ≠ 0`): no factor vanishes. Quantified over the
@@ -478,6 +481,28 @@ theorem holds_multi_allNe_gt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
   fun h f hf => by
     obtain ⟨g, hg, rfl⟩ := List.mem_map.mp hf
     exact h.1 g hg
+
+/-- R-a (review 9): a negative multi-factor sign literal COLLAPSES to
+the negated sign when every factor is independently known nonzero
+(¬(A ∧ B) with A discharged). Without the side condition the shape is
+disjunctive and stays skipped. -/
+theorem holds_multi_neg_sign_lt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    ¬ IneqAtom.Holds ρ ⟨.lt, fs⟩ → (∀ f ∈ fs.map Prod.fst, evalP ρ f ≠ 0) →
+      ¬ oddProd ρ fs < 0 := by
+  intro h hne hs
+  apply h
+  refine ⟨?_, hs⟩
+  intro f hf
+  exact hne f.1 (List.mem_map.mpr ⟨f, hf, rfl⟩)
+
+theorem holds_multi_neg_sign_gt (ρ : Nat → ℝ) (fs : List (MPoly × Bool)) :
+    ¬ IneqAtom.Holds ρ ⟨.gt, fs⟩ → (∀ f ∈ fs.map Prod.fst, evalP ρ f ≠ 0) →
+      ¬ 0 < oddProd ρ fs := by
+  intro h hne hs
+  apply h
+  refine ⟨?_, hs⟩
+  intro f hf
+  exact hne f.1 (List.mem_map.mpr ⟨f, hf, rfl⟩)
 
 /-! ## The linearRoot discharge (z3 `mk_linear_root` :861-878) -/
 
