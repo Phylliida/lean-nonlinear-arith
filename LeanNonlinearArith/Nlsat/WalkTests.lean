@@ -507,4 +507,102 @@ example : ∀ ρ : Nat → ℝ,
       clauseHolds ρ xlAtoms C) → False := by
   nlsat_refute ⟨xlAtoms, xlClauses, xlBundles, xlFinalGrammarBad⟩
 
+
+/-! ## ordering_139 — the L1-open specimen walked end-to-end (post-writeback-fix)
+
+Machine-generated snapshot (scratch_dump.lean `goO139`, 2026-08-10):
+the 6-var transitivity-of-fractions problem
+`a·db ≤ b·da, b·dc ≤ c·db, da/db/dc > 0 ⊢ a·dc ≤ c·da` refuted by the
+solver in 6 conflicts (z3-4.12.5's exact count). Trace in INTERNAL
+variable order (reorder live). What it exercises for the first time on
+a REAL refutation (not synthetic fixtures): a production `rootGeneric`
+step (deg-1 with vanishing-lc at the sample — the census's predicted
+reachable case), production cellBound/linearRoot cross-links feeding
+`collectStepFacts`, factorSplit bundles, a 5-learned-clause RUP DAG
+with pure-resolution nodes, and all six input clauses referenced.
+-/
+
+private def o139Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.gt, [([((-1), [(0, 1), (4, 1)]), (1, [(1, 1), (3, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([((-1), [(1, 1), (5, 1)]), (1, [(2, 1), (4, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(1, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(2, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([((-1), [(0, 1), (5, 1)]), (1, [(2, 1), (3, 1)])], false)]⟩),
+   some (.root ⟨.gt, 4, 1, [(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])], false)]⟩)]
+
+private def o139Clauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, true⟩], learned := false, deleted := false },
+   { lits := #[⟨2, true⟩], learned := false, deleted := false },
+   { lits := #[⟨3, false⟩], learned := false, deleted := false },
+   { lits := #[⟨4, false⟩], learned := false, deleted := false },
+   { lits := #[⟨5, false⟩], learned := false, deleted := false },
+   { lits := #[⟨6, false⟩], learned := false, deleted := false },
+   { lits := #[⟨3, true⟩, ⟨4, true⟩, ⟨5, true⟩, ⟨7, true⟩], learned := true, deleted := false },
+   { lits := #[⟨3, true⟩, ⟨4, true⟩, ⟨8, true⟩], learned := true, deleted := false },
+   { lits := #[⟨3, true⟩, ⟨4, true⟩, ⟨5, true⟩], learned := true, deleted := false },
+   { lits := #[⟨3, true⟩, ⟨4, true⟩], learned := true, deleted := false },
+   { lits := #[⟨3, true⟩], learned := true, deleted := false }]
+
+private def o139Bundles : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   none,
+   none,
+   none,
+   none,
+   none,
+   some ⟨#[.resolution (.clause 6),
+      .factorSplit [((-1), [(1, 1)])] #[[((-1), [(1, 1)])]] #[],
+      .factorSplit [((-1), [(0, 1)])] #[[((-1), [(0, 1)])]] #[],
+      .factorSplit [(1, [(0, 1), (2, 1), (4, 1)]), ((-1), [(1, 1), (2, 1), (3, 1)])] #[[(1, [(2, 1)])], [(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])]] #[],
+      .rootGeneric .gt 4 1 [(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])],
+      .cellBound .lower .gt 4 1 [(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])],
+      .factorSplit [(1, [(0, 1)])] #[[(1, [(0, 1)])]] #[],
+      .linearRoot .gt 2 [(1, [(2, 1)])] false none,
+      .cellBound .lower .gt 2 1 [(1, [(2, 1)])],
+      .linearRoot .gt 1 [((-1), [(1, 1)])] true none,
+      .cellBound .lower .gt 1 1 [((-1), [(1, 1)])],
+      .linearRoot .gt 0 [((-1), [(0, 1)])] true none,
+      .cellBound .lower .gt 0 1 [((-1), [(0, 1)])],
+      .resolution (.arith #[⟨2, true⟩, ⟨6, false⟩] #[⟨7, true⟩, ⟨5, true⟩, ⟨4, true⟩, ⟨3, true⟩]),
+      .resolution (.clause 2)], #[⟨3, true⟩, ⟨4, true⟩, ⟨5, true⟩, ⟨7, true⟩]⟩,
+   some ⟨#[.resolution (.clause 6),
+      .factorSplit [((-1), [(1, 1)])] #[[((-1), [(1, 1)])]] #[],
+      .factorSplit [((-1), [(0, 1)])] #[[((-1), [(0, 1)])]] #[],
+      .factorSplit [(1, [(0, 1), (2, 1), (4, 1)]), ((-1), [(1, 1), (2, 1), (3, 1)])] #[[(1, [(2, 1)])], [(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])]] #[[(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])]],
+      .linearRoot .gt 1 [((-1), [(1, 1)])] true none,
+      .cellBound .lower .gt 1 1 [((-1), [(1, 1)])],
+      .linearRoot .gt 0 [((-1), [(0, 1)])] true none,
+      .cellBound .lower .gt 0 1 [((-1), [(0, 1)])],
+      .resolution (.arith #[⟨2, true⟩, ⟨6, false⟩] #[⟨8, true⟩, ⟨4, true⟩, ⟨3, true⟩]),
+      .resolution (.clause 2)], #[⟨3, true⟩, ⟨4, true⟩, ⟨8, true⟩]⟩,
+   some ⟨#[.resolution (.clause 8),
+      .factorSplit [((-1), [(0, 1)])] #[[((-1), [(0, 1)])]] #[],
+      .factorSplit [(1, [(0, 1)])] #[[(1, [(0, 1)])]] #[],
+      .linearRoot .gt 0 [((-1), [(0, 1)])] true none,
+      .cellBound .lower .gt 0 1 [((-1), [(0, 1)])],
+      .resolution (.arith #[⟨1, true⟩, ⟨8, true⟩, ⟨7, true⟩] #[⟨3, true⟩]),
+      .resolution (.clause 7),
+      .resolution (.clause 1)], #[⟨3, true⟩, ⟨4, true⟩, ⟨5, true⟩]⟩,
+   some ⟨#[.resolution (.clause 9),
+      .resolution (.clause 5)], #[⟨3, true⟩, ⟨4, true⟩]⟩,
+   some ⟨#[.resolution (.clause 10),
+      .resolution (.clause 4)], #[⟨3, true⟩]⟩]
+
+private def o139Final : TraceBundle :=
+  ⟨#[.resolution (.clause 11),
+      .resolution (.clause 3)], #[]⟩
+
+/-- End-to-end: the ordering_139 refutation walked from all six
+referenced input clauses. (Positive since the G11 lane — cid 7's
+arith member consumes the production `rootGeneric` deg-1 non-const-lc
+step through `linearRootNonconstPos_discharge`.) -/
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, true⟩], [⟨2, true⟩], [⟨3, false⟩], [⟨4, false⟩],
+      [⟨5, false⟩], [⟨6, false⟩]], clauseHolds ρ o139Atoms C) → False := by
+  nlsat_refute ⟨o139Atoms, o139Clauses, o139Bundles, o139Final⟩
 end LeanNonlinearArith.Nlsat.Tests.Walk

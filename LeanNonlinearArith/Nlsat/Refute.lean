@@ -93,6 +93,11 @@ inductive FactKind where
     -- (the pair `i ≤ rootCount ∧ rootCmp`) — the definite-disc close
     -- (`rootDefiniteClose`) consumes the count side; step-fact
     -- collection (`collectStepFacts`) consumes the comparison side
+  | negRoot (k : RootKind) (y : Var) (i : Nat) (p : MPoly)
+    -- G11: positive-polarity root literal in the clause (`¬atom`
+    -- failing): the fact is `¬ RootAtom.Holds ρ ⟨k, y, i, p⟩` —
+    -- the `negRootDeg1Produce` lane converts it into the
+    -- `(A = 0) ∨ ¬rootCmp` disjunction for the findOr splitter
   | other
 
 /-- The fact-extraction for one literal: ℝ-level fact proof terms with
@@ -178,12 +183,15 @@ def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
     -- G4 root atoms (z3's `mk_root_atom` always arrives negated). The
     -- pair fact (count bound + rootCmp) is the extraction; the
     -- definite-disc close consumes it. Positive-polarity root literals
-    -- (`¬atom` failing) stay skipped — sound.
-    if !l.neg then return []
+    -- (`¬atom` failing) extract the `¬ Holds` fact (G11 — the
+    -- deg-1 lane converts it to a plain disjunction).
     let aE := mkApp IE (toExpr l.bvar)
-    let nn ← mkAppOptM ``Classical.not_not #[some aE]
-    let hH ← mkAppM ``Iff.mp #[nn, h_i]
-    return [(hH, .rootPair k y i p)]
+    if l.neg then
+      let nn ← mkAppOptM ``Classical.not_not #[some aE]
+      let hH ← mkAppM ``Iff.mp #[nn, h_i]
+      return [(hH, .rootPair k y i p)]
+    else
+      return [(h_i, .negRoot k y i p)]
 
 /-- The diseq fact for factor `f`, converting from a sign-flipped
 fact on `-f` if needed (`evalP_neg` + `neg_ne_zero`; `MPoly.neg`
@@ -1133,6 +1141,149 @@ unsafe def rootGenericLinearProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
     (← mkAppM ``And.right #[mkFVar hfvR])]
   linearProduceTail mvar ρ n k p mkNeg hcmp' hiff
 
+/-- The production `rootGeneric` lane (G11): a `rootGeneric` bundle
+step on a deg-1 poly, matched to an extracted root fact `(k, y, 1, p)`
+— the vanishing-**non-const**-lc production case (o139's cid 7, the
+case review 15's production-unreachability argument missed; the
+encoding-free lane deliberately skips non-const lcs). Converts the
+opaque root comparison through the uniform identity
+(`linearNonconst_aux`, sign-matched `S·(A·y + C)` form): with a clause
+sign fact for the lead, `linearRootNonconst{Pos,Neg}_discharge` gives
+the direct first-order comparison `0 ⋈ evalP ρ p` (z3's own
+`mk_linear_root` encoding shape); without one,
+`linearRootNonconst_disjunction` gives the two-sign Or the findOr
+splitter consumes. Const-lc throws (the encoding-free lane's region —
+no duplication). -/
+unsafe def rootGenericStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
+    (k : RootKind) (y : Var) (i : Nat) (p : MPoly) (hfvR : FVarId) :
+    TacticM MVarId := do
+  let pE := toExpr p; let yE := toExpr y; let iE := toExpr i
+  unless p.degreeIn y == 1 && i == 1 do
+    throwError "rootGenericStepProduce: not a deg-1 root-1 fact"
+  let (cs, hcsPrf) ← coeffsOfValue y p
+  unless cs.length == 2 do
+    throwError "rootGenericStepProduce: coefficient count {cs.length} ≠ 2"
+  let aPoly := cs[1]!
+  if aPoly.asConst?.isSome then
+    throwError "rootGenericStepProduce: const lc is the encoding-free lane's region"
+  let hdeg ← mkDecideProof
+    (← mkAppM ``Eq #[← mkAppM ``MPoly.degreeIn #[pE, yE], toExpr (1 : Nat)])
+  let hOK ← mkDecideProof
+    (← mkAppM ``Eq #[mkApp (mkConst ``MPoly.canonOK) pE, mkConst ``true])
+  let hcan ← mkAppM ``MPoly.canonOK_sound #[pE, hOK]
+  let hholds ← mkAppM ``And.left #[mkFVar hfvR]
+  -- the comparison, transported through rootVal_eq_linear
+  let hrveq ← mkAppM ``rootVal_eq_linear #[ρ, yE, iE, pE, hdeg]
+  let cmpL ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+    mkLambdaFVars #[zE]
+      (mkAppN (mkConst ``rootCmp) #[rootKindToExpr k, mkApp ρ yE, zE])
+  let hcmp' ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[cmpL, hrveq]),
+    (← mkAppM ``And.right #[mkFVar hfvR])]
+  -- the lead's sign fact decides the lane (accessor-spelling antecedents
+  -- via the two-hop reducer bridge, as in the thom lane)
+  let hAE ← mkCoeFactEq hcsPrf cs 1 (fun v => mkAppM ``Check.evalP #[ρ, v])
+  let zR ← mkRealZero
+  match ← findSignFact ρ aPoly with
+  | none =>
+    let hdisj ← mkAppM ``linearRootNonconst_disjunction
+      #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, hholds, hcmp']
+    let (_, mv) ← mvar.note (Name.mkSimple s!"hS{n}") hdisj none
+    pure mv
+  | some (0, _, _) =>
+    -- a clause `A = 0` fact contradicts `ne_of_one_le_rootCount_deg1`;
+    -- nothing to add — the glue closes via that diseq clash
+    pure mvar
+  | some (sgn, hcomp, _vE) =>
+    unless sgn == 1 || sgn == -1 do throwError "rootGenericStepProduce: sign {sgn}"
+    -- transport the sign fact from concrete-poly to accessor spelling
+    let cmpA ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+      if sgn == 1 then
+        mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zR, zE])
+      else
+        mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zE, zR])
+    let hcmpA ← mkAppM ``Eq.mpr #[(← mkAppM ``congrArg #[cmpA, hAE]), hcomp]
+    let hiff ←
+      if sgn == 1 then
+        mkAppM ``linearRootNonconstPos_discharge
+          #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, hholds, hcmpA]
+      else
+        mkAppM ``linearRootNonconstNeg_discharge
+          #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, hholds, hcmpA]
+    let hnew ← mkAppM ``Iff.mp #[hiff, hcmp']
+    let (_, mv) ← mvar.note (Name.mkSimple s!"hS{n}") hnew none
+    pure mv
+
+/-- The negative-side lane (G11): a positive-in-clause root literal at
+deg 1 (`negRoot` fact, `¬ RootAtom.Holds`) converts into a plain
+disjunction — `negHolds_deg1_disjunction` gives `(A = 0) ∨ ¬rootCmp`,
+then the two disjuncts are brought into glue form on the spot: the
+A-side via the reducer bridge (accessor → concrete coeff poly), the
+comparison side via `Iff.not` on `linearNonconst_aux` when the lead
+has a clause sign fact (else left `rootCmp`-negated, the documented
+weak fallback). No deferred discharge at split time: the findOr
+splitter's branches get plain first-order facts. Not matched to any
+step — the conversion is semantic. -/
+unsafe def negRootDeg1Produce (mvar : MVarId) (ρ : Expr) (n : Nat)
+    (k : RootKind) (y : Var) (i : Nat) (p : MPoly) (hfvN : FVarId) :
+    TacticM MVarId := do
+  let pE := toExpr p; let yE := toExpr y
+  unless p.degreeIn y == 1 && i == 1 do
+    throwError "negRootDeg1Produce: not a deg-1 root-1 fact"
+  let (cs, hcsPrf) ← coeffsOfValue y p
+  unless cs.length == 2 do
+    throwError "negRootDeg1Produce: coefficient count {cs.length} ≠ 2"
+  let aPoly := cs[1]!
+  let hdeg ← mkDecideProof
+    (← mkAppM ``Eq #[← mkAppM ``MPoly.degreeIn #[pE, yE], toExpr (1 : Nat)])
+  let hOK ← mkDecideProof
+    (← mkAppM ``Eq #[mkApp (mkConst ``MPoly.canonOK) pE, mkConst ``true])
+  let hcan ← mkAppM ``MPoly.canonOK_sound #[pE, hOK]
+  let hdisj ← mkAppM ``negHolds_deg1_disjunction
+    #[ρ, rootKindToExpr k, yE, pE, hdeg, mkFVar hfvN]
+  let zR ← mkRealZero
+  -- first disjunct: accessor → concrete coeff poly spelling; take the
+  -- accessor spelling from the disjunction's own LHS type
+  let hAE ← mkCoeFactEq hcsPrf cs 1 (fun v => mkAppM ``Check.evalP #[ρ, v])
+  let eqL ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+    mkLambdaFVars #[zE] (← mkAppM ``Eq #[zE, zR])
+  let (_, disjArgs) := (← inferType hdisj).getAppFnArgs
+  let lhsE := disjArgs[1]!
+  let f0 ← withLocalDecl `hz BinderInfo.default lhsE fun hzE => do
+    let t ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[eqL, hAE]), hzE]
+    mkLambdaFVars #[hzE] t
+  -- second disjunct: sign-locked `Iff.not` conversion, else identity
+  let nrcTy := disjArgs[2]!
+  let f2 ← do
+    match ← findSignFact ρ aPoly with
+    | some (sgn, hcomp, _) =>
+      if sgn == 1 || sgn == -1 then do
+        -- accessor-form sign evidence, then aux + Iff.not
+        let cmpA ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+          if sgn == 1 then
+            mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zR, zE])
+          else
+            mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zE, zR])
+        let hcmpA ← mkAppM ``Eq.mpr #[(← mkAppM ``congrArg #[cmpA, hAE]), hcomp]
+        let sE ← if sgn == 1 then
+          mkAppOptM ``OfNat.ofNat #[some (mkConst ``Real), some (toExpr (1 : Nat)), none]
+        else
+          mkAppM ``Neg.neg #[← mkAppOptM ``OfNat.ofNat
+            #[some (mkConst ``Real), some (toExpr (1 : Nat)), none]]
+        let hiff ← mkAppM ``linearNonconst_aux
+          #[ρ, rootKindToExpr k, yE, pE, sE, hdeg, hcan, hcmpA]
+        let hniff ← mkAppM ``Iff.not #[hiff]
+        withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
+          mkLambdaFVars #[hzE] (← mkAppM ``Iff.mp #[hniff, hzE])
+      else
+        withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
+          mkLambdaFVars #[hzE] hzE
+      else
+        withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
+          mkLambdaFVars #[hzE] hzE
+  let hnew ← mkAppM ``Or.imp #[f0, f2, hdisj]
+  let (_, mv) ← mvar.note (Name.mkSimple s!"hN{n}") hnew none
+  pure mv
+
 /-- The grammar prop for a thomQuadratic step: coefficient-free (degree
 + sign ranges only), so the plain `grammarOK` decide ticket works. -/
 def mkThomGrammar (k : RootKind) (y : Var) (i : Nat) (p : MPoly)
@@ -1373,6 +1524,18 @@ unsafe def collectStepFacts (mvar : MVarId) (ρ : Expr) (steps : Array TraceStep
           catch _ =>
             pure mvar
         n := n + 1
+    -- G11: the production rootGeneric lane (deg-1, non-const lc —
+    -- matched by (k, y, i, p); other degrees/kinds have no lane)
+    | .rootGeneric k y i p => do
+      let matched := rootFacts.filter fun (kR, yR, iR, pR, _) =>
+        kR == k && yR == y && iR == i && pR == p
+      for (_, _, _, _, hfvR) in matched do
+        mvar ← mvar.withContext do
+          try
+            rootGenericStepProduce mvar ρ n k y i p hfvR
+          catch _ =>
+            pure mvar
+        n := n + 1
     | _ => pure ()
   pure (mvar, steps.foldl (fun acc s =>
     match s with
@@ -1424,6 +1587,8 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
   let mut prodEqFacts : Array (List (MPoly × Bool) × FVarId) := #[]
   let mut chainFacts : Array (FVarId × List (MPoly × Bool)) := #[]
   let mut rootFacts : Array (RootKind × Var × Nat × MPoly × FVarId) := #[]
+  -- G11: positive-polarity root literals (the `¬ Holds` side)
+  let mut negRootFacts : Array (RootKind × Var × Nat × MPoly × FVarId) := #[]
   for l in CV do
     -- everything that typechecks terms mentioning context fvars must
     -- run in the CURRENT mvar's local context (hFvar, noted facts)
@@ -1446,10 +1611,11 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
       | some (some a) =>
         mvar1.withContext do
           match (← extractFacts ρ IE (mkFVar h_iFvar) l a) with
-          | [] => pure (mvar1, true, ((#[], #[], #[], #[], #[]) :
+          | [] => pure (mvar1, true, ((#[], #[], #[], #[], #[], #[]) :
               Array (MPoly × FVarId) × Array (MPoly × FVarId) ×
               Array (List (MPoly × Bool) × FVarId) ×
               Array (FVarId × List (MPoly × Bool)) ×
+              Array (RootKind × Var × Nat × MPoly × FVarId) ×
               Array (RootKind × Var × Nat × MPoly × FVarId)))
           | facts =>
             let mut mv := mvar1
@@ -1458,6 +1624,7 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
             let mut prods : Array (List (MPoly × Bool) × FVarId) := #[]
             let mut chs : Array (FVarId × List (MPoly × Bool)) := #[]
             let mut roots : Array (RootKind × Var × Nat × MPoly × FVarId) := #[]
+            let mut nroots : Array (RootKind × Var × Nat × MPoly × FVarId) := #[]
             for (fact, kind) in facts do
               let (hfv, mv') ← mv.note `h_f fact none
               mv := mv'
@@ -1467,8 +1634,9 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
               | .eqProdZero fs => prods := prods.push (fs, hfv)
               | .negChain fs => chs := chs.push (hfv, fs)
               | .rootPair k y i p => roots := roots.push (k, y, i, p, hfv)
+              | .negRoot k y i p => nroots := nroots.push (k, y, i, p, hfv)
               | .other => pure ()
-            pure (mv, false, (eqs, neqs, prods, chs, roots))
+            pure (mv, false, (eqs, neqs, prods, chs, roots, nroots))
       | _ =>
         throwError "nlsat_arith_valid: literal {repr l} is undecodable in the atom table"
     mvar := mvar'
@@ -1480,7 +1648,29 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
     diseqFacts := diseqFacts ++ factInfo.2.1
     prodEqFacts := prodEqFacts ++ factInfo.2.2.1
     chainFacts := chainFacts ++ factInfo.2.2.2.1
-    rootFacts := rootFacts ++ factInfo.2.2.2.2
+    rootFacts := rootFacts ++ factInfo.2.2.2.2.1
+    negRootFacts := negRootFacts ++ factInfo.2.2.2.2.2
+  -- "eq × bare-variable" lift (the o139 cid-8 lesson): nlinarith only
+  -- pairs HYPOTHESES — it cannot multiply an equality by a free
+  -- variable. CAD-derived contradictions routinely need exactly that
+  -- (multiply `y0·y4 = y1·y3` by y2 to route a strict inequality
+  -- through it). Noting the var-scaled variants directly as hypotheses
+  -- makes them available to the linear+pair-product cone. Sound via
+  -- congrArg + `zero_mul`.
+  let mut scaleCounter := 0
+  for (_, hfv) in eqFacts do
+    for v in vars.eraseDup do
+      let vv := mkApp ρ (toExpr v)
+      let mvar' ← mvar.withContext do
+        let lam ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+          mkLambdaFVars #[zE] (← mkAppM ``HMul.hMul #[zE, vv])
+        let t ← mkAppM ``congrArg #[lam, mkFVar hfv]
+        let h0 ← mkAppM ``zero_mul #[vv]
+        let scaled ← mkAppM ``Eq.trans #[t, h0]
+        let (_, mv) ← mvar.note (Name.mkSimple s!"hXS{scaleCounter}") scaled none
+        pure mv
+      mvar := mvar'
+      scaleCounter := scaleCounter + 1
   -- sq_nonneg hints per occurring variable (nlinarith's nonlinear leaf)
   for v in vars.eraseDup do
     mvar ← mvar.withContext do
@@ -1495,6 +1685,15 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
   -- deg-1 root facts.)
   let (mvarC, thomOrs) ← collectStepFacts mvar ρ steps rootFacts
   mvar := mvarC
+  -- G11 negative side: positive-in-clause root literals (deg-1 lane;
+  -- step-independent semantic conversion). Produces the
+  -- `negHolds_deg1_disjunction` splits. Misses skip soundly.
+  let mut n : Nat := 0
+  for (k, y, i, p, hfvN) in negRootFacts do
+    mvar ← mvar.withContext do
+      try negRootDeg1Produce mvar ρ n k y i p hfvN
+      catch _ => pure mvar
+    n := n + 1
   -- G1 zero-product close (review 7, F-v) + R-b multi-eq-positive
   -- branch (review 9): before the simp/ring_nf mangling, while the
   -- h_f facts are still `evalP` comparisons. Shape-gated; no-op on

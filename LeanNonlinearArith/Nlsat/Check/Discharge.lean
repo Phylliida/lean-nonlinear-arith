@@ -815,6 +815,121 @@ theorem rootCount_zero_of_deg1_lc_zero (ρ : Nat → ℝ) (y : Var) (p : MPoly)
   unfold rootCount
   rw [if_pos hdeg, if_neg (fun h => h hA)]
 
+/-- One-le-rootCount forces a nonvanishing lead at deg-1 (the deg-1
+count if-cascade, G11 lane antecedent). -/
+theorem ne_of_one_le_rootCount_deg1 (ρ : Nat → ℝ) (y : Var) (p : MPoly)
+    (hdeg : p.degreeIn y = 1) (h : 1 ≤ rootCount ρ y p) :
+    evalP ρ ((coeffsOf p y)[1]!) ≠ 0 := by
+  intro hn
+  rw [rootCount_zero_of_deg1_lc_zero ρ y p hdeg hn] at h
+  exact absurd h (by decide)
+
+/-- G11 uniform identity: for deg-1 with a nonvanishing lead, the
+linear root comparison is equivalent to the sign-matched full-poly
+comparison, with `S·A > 0` choosing which side of `0` the scaled poly
+lands on — both lead signs collapse into one form (the comparison
+flip and the multiplication by the same-sign `S` cancel in the
+`S·A > 0` denominator). z3's `mk_linear_root` encoding is the
+sign-conditional special case of this identity (:861-878, kind-remap +
+`mk_neg`); this is the uniform form consumed by the production
+`rootGeneric` (non-encoded, vanishing-lc) lane — see
+`linearRootNonconst{Pos,Neg}_discharge`. -/
+theorem linearNonconst_aux (ρ : Nat → ℝ) (k : RootKind) (y : Var) (p : MPoly)
+    (S : ℝ) (hdeg : p.degreeIn y = 1) (hcan : MPoly.Canon p)
+    (hSA : (0 : ℝ) < S * evalP ρ ((coeffsOf p y)[1]!)) :
+    rootCmp k (ρ y) (rootVal ρ y 1 p) ↔
+      rootCmp k (S * evalP ρ p) 0 := by
+  have hA : evalP ρ ((coeffsOf p y)[1]!) ≠ 0 := fun h => by
+    rw [h] at hSA; simp at hSA
+  have hS : S ≠ 0 := fun h => by rw [h] at hSA; simp at hSA
+  rw [rootVal_eq_linear ρ y 1 p hdeg, evalP_linear_form ρ y p hdeg hcan]
+  have hD : (0 : ℝ) < S * evalP ρ ((coeffsOf p y)[1]!) := hSA
+  have hDn : S * evalP ρ ((coeffsOf p y)[1]!) ≠ 0 := ne_of_gt hD
+  have hrw : -evalP ρ ((coeffsOf p y)[0]!) / evalP ρ ((coeffsOf p y)[1]!) =
+      -(evalP ρ ((coeffsOf p y)[0]!) * S) /
+        (S * evalP ρ ((coeffsOf p y)[1]!)) := by
+    field_simp [hS, hA, hDn]
+  rw [hrw]
+  cases k
+  · simp only [rootCmp]
+    rw [eq_div_iff hDn]
+    constructor <;> intro h <;> ring_nf at h ⊢ <;> linarith
+  · simp only [rootCmp]
+    rw [lt_div_iff₀ hD]
+    constructor <;> intro h <;> ring_nf at h ⊢ <;> linarith
+  · simp only [rootCmp]
+    rw [div_lt_iff₀ hD]
+    constructor <;> intro h <;> ring_nf at h ⊢ <;> linarith
+  · simp only [rootCmp]
+    rw [le_div_iff₀ hD]
+    constructor <;> intro h <;> ring_nf at h ⊢ <;> linarith
+  · simp only [rootCmp]
+    rw [div_le_iff₀ hD]
+    constructor <;> intro h <;> ring_nf at h ⊢ <;> linarith
+
+/-- The positive-lead instance of the `rootGeneric` deg-1 uniform
+identity (G11). -/
+theorem linearRootNonconstPos_discharge (ρ : Nat → ℝ) (k : RootKind) (y : Var)
+    (p : MPoly) (hdeg : p.degreeIn y = 1) (hcan : MPoly.Canon p)
+    (_hholds : 1 ≤ rootCount ρ y p)
+    (hApos : (0 : ℝ) < evalP ρ ((coeffsOf p y)[1]!)) :
+    rootCmp k (ρ y) (rootVal ρ y 1 p) ↔ rootCmp k (evalP ρ p) 0 := by
+  have h := linearNonconst_aux ρ k y p (1 : ℝ) hdeg hcan (by
+    simpa [one_mul] using hApos)
+  simpa [one_mul] using h
+
+/-- The negative-lead instance (G11). -/
+theorem linearRootNonconstNeg_discharge (ρ : Nat → ℝ) (k : RootKind) (y : Var)
+    (p : MPoly) (hdeg : p.degreeIn y = 1) (hcan : MPoly.Canon p)
+    (_hholds : 1 ≤ rootCount ρ y p)
+    (hAneg : evalP ρ ((coeffsOf p y)[1]!) < (0 : ℝ)) :
+    rootCmp k (ρ y) (rootVal ρ y 1 p) ↔ rootCmp k (-evalP ρ p) 0 := by
+  have h := linearNonconst_aux ρ k y p (-1 : ℝ) hdeg hcan (by
+    have : (0 : ℝ) < -evalP ρ ((coeffsOf p y)[1]!) := neg_pos.mpr hAneg
+    simpa [neg_one_mul] using this)
+  simpa [neg_one_mul] using h
+
+/-- The two-sign disjunction form (G11): without a clause sign fact for
+the lead, the root comparison yields a sign-conditional disjunction
+the Or-splitting glue consumes. -/
+theorem linearRootNonconst_disjunction (ρ : Nat → ℝ) (k : RootKind) (y : Var)
+    (p : MPoly) (hdeg : p.degreeIn y = 1) (hcan : MPoly.Canon p)
+    (hholds : 1 ≤ rootCount ρ y p) :
+    rootCmp k (ρ y) (rootVal ρ y 1 p) →
+      ((0 : ℝ) < evalP ρ ((coeffsOf p y)[1]!) ∧ rootCmp k (evalP ρ p) 0) ∨
+      (evalP ρ ((coeffsOf p y)[1]!) < (0 : ℝ) ∧ rootCmp k (-evalP ρ p) 0) := by
+  intro h
+  have hAnz := ne_of_one_le_rootCount_deg1 ρ y p hdeg hholds
+  rcases lt_trichotomy (evalP ρ ((coeffsOf p y)[1]!)) 0 with hA | hA | hA
+  · exact Or.inr ⟨hA,
+      (linearRootNonconstNeg_discharge ρ k y p hdeg hcan hholds hA).mp h⟩
+  · exact absurd hA hAnz
+  · exact Or.inl ⟨hA,
+      (linearRootNonconstPos_discharge ρ k y p hdeg hcan hholds hA).mp h⟩
+
+/-- Deg-1 with nonvanishing lead ⇒ exactly one root (the other side
+of `rootCount_zero_of_deg1_lc_zero`). -/
+theorem rootCount_one_of_deg1_lc_ne (ρ : Nat → ℝ) (y : Var) (p : MPoly)
+    (hdeg : p.degreeIn y = 1) (hA : evalP ρ ((coeffsOf p y)[1]!) ≠ 0) :
+    rootCount ρ y p = 1 := by
+  unfold rootCount
+  rw [if_pos hdeg, if_pos hA]
+
+/-- The negated-`Holds` disjunction at deg 1 (G11's negative side):
+from the count if-form, `¬ Holds` splits into the vanishing-lead case
+or the comparison failing — both plain glue facts, no deferred
+discharge needed at split time. -/
+theorem negHolds_deg1_disjunction (ρ : Nat → ℝ) (k : RootKind) (y : Var)
+    (p : MPoly) (hdeg : p.degreeIn y = 1)
+    (h : ¬ RootAtom.Holds ρ ⟨k, y, 1, p⟩) :
+    evalP ρ ((coeffsOf p y)[1]!) = (0 : ℝ) ∨
+      ¬ rootCmp k (ρ y) (rootVal ρ y 1 p) := by
+  by_cases hc : (⟨k, y, 1, p⟩ : RootAtom).i ≤ rootCount ρ y p
+  · exact Or.inr (fun hcmp => h ⟨hc, hcmp⟩)
+  · exact Or.inl (by
+      by_contra hA
+      exact hc (le_of_eq (rootCount_one_of_deg1_lc_ne ρ y p hdeg hA).symm))
+
 /-- Deg-2 with both `A` and `B` vanishing ⇒ no roots (the
 constant-in-`y` degenerate; `A = 0, B ≠ 0` counts 1). -/
 theorem rootCount_zero_of_deg2_lc_zero (ρ : Nat → ℝ) (y : Var) (p : MPoly)

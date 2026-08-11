@@ -1,199 +1,132 @@
-# HANDOFF — 2026-08-10 (reviews 3–15 done; G4 census COMPLETE; NEXT = 19b → M3)
+# HANDOFF — 2026-08-10 (eve; o139 divergence RESOLVED as real port bug;
+G11 lane MID-FLIGHT — Refute.lean has ~6 compile errors to finish)
 
-Read first: `DESIGN-endgame.md` (master plan — §0 finish line, §2
-critical path, §8 standing directives), then `BOARD.md` — the
-nla-19a entry has design reviews 3–15, the G1–G10 gap inventory, the
-F1–F5 decisions, all landing blocks. Memory file
-`verus-cad/memory/project_tactus_nonlinear_port.md` has the session
-history. Build: Nix `lake` on PATH (not elan); `lake build` green
-(7612 jobs, commit 60b0038).
+Read first: `DESIGN-endgame.md`, then `BOARD.md` — newest entries:
+"nla-19b plan `boarded`" (4 slices), **"nla-19b Slice 0 `done`"**,
+**"nla-19b Slice 0 addendum"** (writeback bug analysis). Build system:
+Nix `lake` on PATH (not elan); full build was green at 7612 jobs,
+commit `d9d5df1`. **Working tree RIGHT NOW: `Refute.lean` FAILS to
+build (~6 errors, all in `negRootDeg1Produce`'s new body I just
+patched — rerun `lake build LeanNonlinearArith.Nlsat.Refute`, read,
+fix; nothing else touched).**
 
-**Source-of-truth rule (unchanged): all ports cite
-`git show z3-4.12.5:<path>` (repo: `verus-cad/z3`), never the working
-tree.**
+**Source-of-truth rule: all ports cite `git show z3-4.12.5:<path>`
+(repo `verus-cad/z3`), never the working tree.** Standing directive
+(Danielle): cover ALL cases no matter how rare.
 
-**Standing directive (Danielle, 2026-08-09): cover ALL cases no matter
-how rare — never defer a known gap with "until it shows up in
-practice".**
+## This session's arc (3 bodies of work, one unfinished)
 
-## Where we are
+**1) nla-19b planning + Slice 0 recon (DONE, committed).** 19b plan on
+BOARD (4 slices: live recon → grammar+sign-transfer → Refute
+consumption → gate lift+acceptance). Decision point 1 RESOLVED with
+Danielle: structural-only grammar + per-instance ring-identity
+discharge (zeroProductClose idiom, native Q + kernel `ring` close);
+d-parity never trusted; cost model recorded (rare-fire, heartbeat-
+budgeted). Slice 0: drivers pd1/pd2/pd3/pd4/pd6 added to
+`scratch_dump.lean` (all refute); census + R-a..R-i findings on BOARD:
+path (e) `normalizeLit` UNREACHABLE for in-core simplify ((c)/(d)
+only); reorder live in dumps (read modulo permutation); const-drops
+create empty-factor atoms never in clauses; all 4 lc-assumption lanes +
+lcConst lane witnessed; parity quadrant witnessed (d odd/lc<0 flip,
+d even no-flip). Unexercised: (c) keep-original, x2eq, isEven=true,
+d≥3.
 
-The discharge layer is complete through the **G4 census slice**
-(reviews 3–15). No un-owned known gaps remain; the last
-`extractFacts` skip class (root atoms) is closed.
+**2) o139 search divergence → REAL PORT BUG + fix (DONE, committed
+`d9d5df1`).** ordering_139 raw-form hung (>60 min); z3-4.12.5 built
+from the audited checkout (worktree `/tmp/z3-4.12.5`, `make -j shell`)
+refutes in 28 ms / 6 conflicts / param-parity confirmed. Bisect:
+mockExplain → search is fast (17 ms); >280 s inside ONE real
+`Explain.explain` call; dbgTrace journal (reverted, never committed)
+showed `project`'s todo cycling forever. **Root cause:
+`Explain.project`'s in-loop `removeMaxPolys` dropped the state todo
+writeback** (z3 mutates `m_todo` in place at
+nlsat_explain.cpp:1011; pre-loop call wrote back, in-loop one didn't).
+Any projection inserting polys mid-loop (bilinear resultants) cycled.
+2-line fix + z3's `m_todo.reset()` on the all_univ break mirrored;
+regression pin in `ExplainTests` (o139 end-to-end, `conflicts == 6`);
+full build green 7612 ZERO snapshot churn; o139 refutes in ~15–45 ms
+with EXACTLY z3's 6 conflicts. First live fidelity bug found by recon;
+latent because prior drivers never inserted mid-loop.
 
-- **F3/F4 walk** (`Walk.lean`, `nlsat_refute`): bridged input clauses,
-  per-learned-cid RUP (`by decide` + `upRefutes_sound`), F2 arith
-  discharges, final bundle ⇒ `False`. Grammar gate (G4): `precheck`
-  rejects bundles whose steps fail `grammarOK` (native).
-- **Discharge completeness** (R-series complete): zero-product close
-  with native `factorM` + kernel identity check; multi-factor /
-  even-parity / negChain / chain-in-branch extraction and splitting.
-- **Census slice (G4)** — all five items: grammarOK decidable mirror;
-  root-atom extraction + rootDefiniteClose + kernel-checked reducer
-  (`coeffsOfValue`); **step-fact collection**
-  (`Refute.collectStepFacts`) — linear/Thom cross-links, degenerate
-  reroute, encoding-free lane, all lanes pinned incl. le/ge Thom
-  (review-15 addendum: fuel `thomDisjunctive` table verified
-  cell-by-cell vs `Semantics.thomFormula`); F-w corruption probes;
-  review 15 close-out. Fuel budget clause-shaped × 2^thomOrs.
-- **Data**: machine-generated WalkTests snapshot defs; four end-to-end
-  walks + probes; Refute-level fixtures for every production lane.
+**3) Walk o139 end-to-end (IN FLIGHT — this is where we are).** o139's
+full refutation is v0 (all bundles isV0, no pseudoDivision/intBranch,
+one deg-1 rootGeneric, no S1-gate). Snapshot pasted into
+`WalkTests.lean` (`o139Atoms/Clauses/Bundles/Final` + positive example,
+goal = all 6 referenced inputs `[[⟨1,true⟩],[⟨2,true⟩],[⟨3,false⟩],
+[⟨4,false⟩],[⟨5,false⟩],[⟨6,false⟩]]`, machine-generated). The walk
+advanced bundle-by-bundle; **cid 7 closes, cid 8 closes, cid 9 is the
+current edge.** What landed en route (all committed? NO — Discharge/
+Refute/WalkTests changes are UNCOMMITTED except where noted):
 
-## Next: nla-19b — full checker glue → M3 *(1–2 sessions)*
+- **G11 = production rootGeneric deg-1 non-const-lc lane** (census's
+  "production-unreachable" claim falsified by o139 cid 7).
+  Trusted (in `Check/Discharge.lean`, module GREEN):
+  `ne_of_one_le_rootCount_deg1`, `linearNonconst_aux` (uniform
+  identity `rootCmp k Y (−C/A) ⟺ rootCmp k (S·(A·Y+C)) 0` for
+  `S·A > 0`, all 5 kinds), `linearRootNonconst{Pos,Neg}_discharge`,
+  `linearRootNonconst_disjunction`, `rootCount_one_of_deg1_lc_ne`,
+  `negHolds_deg1_disjunction` (`¬Holds ⟺ (A=0) ∨ ¬rootCmp`).
+- Meta (in `Refute.lean`): `rootGenericStepProduce` (positive side;
+  sign fact for lead via `findSignFact` → Pos/Neg discharge;
+  disjunction fallback) + `.rootGeneric` arm in `collectStepFacts`;
+  `extractFacts` negative arm (`negRoot` FactKind, `¬ Holds` fact for
+  positive-in-clause root literals) + `negRootFacts` index (tuple is
+  now 6-wide) + `negRootDeg1Produce` (negative side: disjunction +
+  Or.imp into glue form — accessor bridged concrete, `Iff.not` on aux
+  when sign fact present).
+- **eq × bare-var lift** (`proveClauseSat`, before sq hints): notes
+  `evalP ρ q * ρ v = 0` per eq fact × per clause var — nlinarith can't
+  multiply an equality by a free variable (cid-8 lesson); sound via
+  congrArg + `zero_mul`.
+- Refute-level repros of cid 7 + cid 8 arith members: BOTH CLOSE
+  (scratch_g11.lean, gitignored, KEEP — folds into RefuteTests as
+  fixtures with load-bearing no-step probes).
+- **cid 9 status:** negRoot lane written; the ~6 compile errors I
+  patched last (mkFVar on withLocalDecl fvars, getAppFnArgs tuple
+  destructure) were theoretical fixes — `lake build
+  LeanNonlinearArith.Nlsat.Refute` reported 6 errors remaining when
+  context ran out; NOT diagnosed yet, all contained in
+  `negRootDeg1Produce`. Then: WalkTests o139 → full build → pins
+  (fixture-ize scratch_g11's cid7/cid8 into RefuteTests) → board +
+  memory → commit.
+- Cid 9's validity argument (for whoever continues): clause
+  [⟨3,true⟩,⟨1,false⟩,⟨8,false⟩,⟨7,false⟩]: all-fail ⟹ x0>0,
+  x1x3−x0x4 ≤ 0, x0x4−x1x3 ≠ 0 ⟹ x0x4−x1x3 > 0 ⟺ (A = x0 > 0, Pos
+  discharge) atom7 HOLDS vs the negRoot literal. The disjunction's
+  branch (A=0) dies on the x0>0 sign fact when f0/f2 conversion lands;
+  branch ¬cmp needs the Iff.not-aux conversion — both coded, unbuilt.
 
-**Slice 0 DONE (2026-08-10, see BOARD "nla-19b Slice 0"):**
-simplify-cluster drivers pd1/pd2/pd3/pd4/pd6 in `scratch_dump.lean`
-(all refute; payloads + paths censused); structural findings R-a..R-i
-(reorder live in pd3; **path (e) `normalizeLit` is UNREACHABLE for
-in-core simplify — (c)/(d) only; (e) is x2eq-lower-stage-only**;
-const-drops create empty atoms never in clauses; all four lc lanes +
-lcConst lane witnessed; parity quadrant complete).
+## Roadmap (unchanged) and where 19b picks up
 
-**Slice 0 addendum — o139 divergence RESOLVED as a REAL port bug**
-(BOARD addendum has the full analysis): `Explain.project`'s in-loop
-`removeMaxPolys` dropped the state writeback (z3's `m_todo` is
-mutated in place at nlsat_explain.cpp:1011); projections that insert
-polys mid-loop (bilinear resultants) cycled forever. Fixed (2 lines),
-regression pin in `ExplainTests` (o139 end-to-end, `conflicts == 6`),
-full build green 7612 jobs with zero snapshot churn, and **o139 now
-refutes in ~15-45ms with EXACTLY z3-4.12.5's conflict count (6)** —
-z3-4.12.5 built from the audited checkout settles it (unsat, 28ms).
-**Every o139 bundle is isV0 ∧ non-S1-gated: o139's full refutation
-is v0-walkable TODAY** — standing target restored as an acceptance
-candidate alongside pd1 (o139: 6-var/6-conflict/12-clause DAG with
-rootGeneric-fragment + cellBound + linearRoot + factorSplit; pd1:
-canonical quadratic pseudoDivision). Unexercised lanes for Slice 2
-synthetics: (c) keep-original, (e)/x2eq, isEven=true, d≥3.
+19b remaining slices (BOARD "plan `boarded`"): **Slice 1** grammar +
+trusted pseudo-remainder sign-transfer (per-instance `ring` identity
+idiom as in decision 1); **Slice 2** Refute rebuilt-literal
+consumption (pd drivers' payloads are the shape space; pd1's own walk
+is gated until then); **Slice 3** isV0-gate lift (pseudoDivision only,
+intBranch stays) + acceptance = pd1 AND o139 walked. Then 12e (G6) →
+14 → 15 → 16; total-to-M6 ~6–10 sessions.
 
-Per DESIGN-endgame §2.5: **`pseudoDivision` per-instance ring
-identities + parity cases.** Scope (already on the board):
+Session mechanics + traps: HANDOFF F3/F4 section (same commit) still
+accurate about dump/refresh recipes; NEW traps this session: (1) full
+`lean --run` output is BLOCK-BUFFERED when redirected — a
+mid-harness hang looks like an earlier driver's hang; flush between
+drivers or use separate files. (2) `read_file` tool flaked on
+`Check/Semantics.lean` (binary-detect; context work-arounds: sed/grep
+or hermes execute_code). (3) `(0:ℝ)` annotation required in Statements
+with accessor subterms (the ↑0 cast trap — hit twice). (4) Nothing
+matches on `match … | pat | guard =>` — guards are nested `if`s.
+(5) z3's `todo_set` in_set is current-contents-only (don't invent
+sticky dedup). (6) nlinarith can't multiply an equality by a free
+variable — the eq×var lift is the house answer now.
 
-- **R7 is why:** pseudoDivision is NOT safe to ignore — the simplify
-  cluster REWRITES literals (the A3 rebuilt-literal sites :471/:1194
-  with kind-flip + neg fold, A4 lc ineq :1259, A5 lc diseq :1261 —
-  the A-tier provenance enumeration), and the identity can be the
-  semantic link the final derivation needs. v0 currently rejects such
-  bundles (`isV0` gate at Walk.lean + `preform`); F5 emission already
-  emits the steps (undischarged).
-- **factorSplit identity is NOT in this slice**: R6 (board, approved)
-  — ignoring factorSplit steps loses NO coverage; don't pull it
-  forward.
-- **What to build** (extend grammar + coverage *in the same pattern*
-  as the census slice, per the 19a design note):
-  1. `grammarOK`/`Grammar` extension for `pseudoDivision` steps
-     (payload shape, from the F5 emission + z3 source), preference
-     for decide-grade tickets like the item-1/3 pattern — watch the
-     kernel-reduction trap (the `coeffsIn` wall keeps `grammarOK`'s
-     decide version of poly-equality checks kernel-incomputable;
-     construct with the `coeffsOfValue` reducer, as
-     `mkLinearRootGrammar` does).
-  2. Trusted Discharge theorems: the pseudo-remainder sign-invariance
-     identity (board G5 row names it: "verified pseudo-remainder sign
-     invariance") — the numeric content of
-     `pseudoDivisionCore` (12d.1b-i, `Nlsat/MPolyOps.lean`, done);
-     per-instance `evalP` ring identities (closure via the evalP
-     simp set, same idiom as `zeroProductClose`'s `ring` hop).
-  3. Refute-side consumption: rewritten/merged literal handling —
-     the simplify cluster's literal can arrive REBUILT (A3: kind-flip
-     + neg fold), so `extractFacts` must normalize rebuilt literals
-     against the step payloads (this is the genuinely new extraction
-     work; pinned per shape with the F2-seam decode discipline).
-  4. Lift the `isV0` pseudoDivision gate once 1–3 are pinned; boards
-     have warned mitigation: pin which emission shapes each acceptance
-     driver actually emits (keep `intBranch` gated → 12e).
-- **Standing targets:** `ordering_139` (the L1-open specimen,
-  degree-3 cross products) **if** its trace stays in fragment; else
-  the first fully-quadratic census row. End-to-end acceptance:
-  census-shaped goal through search → trace → checked theorem.
-- **Effort estimate (2026-08-10):** 1–2 sessions; risk concentrated in
-  (3) — rebuilt-literal extraction is new-shape work, the rest is
-  established idiom.
+Commits this session: `6d4c887` (Slice 0 + o139 divergence finding),
+`d9d5df1` (writeback fix + o139 ExplainTests pin + docs). Uncommitted:
+`Check/Discharge.lean` (G11 lemmas, green), `Nlsat/Refute.lean` (G11
+lanes + eq×var lift, BUILD BROKEN as noted), `Nlsat/WalkTests.lean`
+(o139 snapshot + example; builds only after Refute is green).
 
-## Roadmap after 19b
-
-**12e** (G6 → M4, 1–2 sessions): integer branch-and-bound — port z3's
-integer branching policy (`x ≤ ⌊v⌋ ∨ x ≥ ⌈v⌉`) as trace steps;
-checker-side each split is an omega-trivial disjunction, so this is
-mostly search-side; confirm the exact branch site (nra_solver.cpp /
-nlsat's mk_branch analogue) before porting. Then L2's polynomial atoms
-only invariant at the frontend boundary.
-**nla-14** (2–3 sessions): the `nonlinear_arith` front-end tactic —
-L1 fast path → L2/L3 search+check, `withLayerHeartbeats` (per-layer
-fresh budget, never fraction-of-remaining), Int→Real mapping,
-hypothesis selection; owns F-y. Largest remaining piece; candidate
-for a small standalone first slice (hypothesis ingestion + atom
-mapping).
-**nla-15** (~½ session): tactus wiring. **nla-16** (1–2 sessions +
-findings): parity harness over the workspace corpus; gate = zero
-sites Z3 closes that we don't; owns G8/G9/G10 measurement. **M6
-closes there.**
-**Tier B** (G7, rootGeneric deg ≥ 3, 3–6 sessions, high variance):
-the S1 lane — nla-11a resultants ∥ 11c root continuity — the long
-pole; defer unless 16's measurement shows the corpus needs it.
-
-Total-to-M6 estimate (2026-08-10): **~6–10 sessions**.
-
-Parked (owners on the board): L1 hardening (nla-07b meta-Buchberger
-2–3 sessions, nla-06, nla-21, nla-22 — none block M3, all block
-calling L1 port-complete for M5's writeup), nla-30, nla-31
-termination proofs (refineNzBound first), M5 containment writeup
-(~½ session), R-q rootCount-evaluation lane, sq=0 Thom fixture.
-
-## Session mechanics (F3/F4 workflow)
-
-- **Adding a dump case**: copy a `goN` in `scratch_dump.lean`'s
-  `DumpDriver` (init, mkVar per var, mkIneqLiteral per atom, mkClause
-  per input unit clause, `Solver.check (Solver.resolve
-  Explain.explain)`), add `printSnap "<name>"` in main,
-  `lake env lean --run scratch_dump.lean`. Output is paste-ready
-  `private def`s (anonymous `⟨steps, lemma⟩` form — `lemma` is
-  reserved). Goal input list for `nlsat_refute` = referenced input
-  clauses in cid order.
-- **Probe debugging**: `#guard_msgs (drop error)` swallows messages —
-  copy to a scratch, strip the guards, `lake env lean` it, delete
-  after. **Corrupted-trace probes must keep the goal's input list =
-  the corrupted trace's REFERENCED inputs.**
-- **Scratch probes**: `scratch_*.lean` is gitignored EXCEPT
-  `scratch_dump.lean`/`scratch_probe.lean`.
-- Full build: `lake build` (green = 7612 jobs); module-scoped:
-  `lake build LeanNonlinearArith.Nlsat.X`.
-- Refute-level pinning for step work: `nlsat_arith_valid_steps`
-  (steps term + F2 incl. step-fact collection); `nlsat_arith_valid`
-  for the no-steps variant.
-
-## Traps / lessons
-
-Reviews 3–14 (kept): `Meta.evalExpr` of a bare FUNCTION const
-mis-evaluates (full applications fine); `mkApp` applies to leading
-implicit binders (`mkAppM`; `mkAppM f #[]` → `mkAppOptM` + pins);
-`lemma` is a reserved word (anonymous `⟨steps, lemma⟩` TraceBundle
-literals); tactic-quotation simp sets elaborate at runtime;
-**wf-compiled `MPoly.mul`/`add` do NOT reduce under kernel
-whnf/rfl/decide** (ride equation-lemma bridges: `MPoly.add_cons_cons_*`,
-`coeffsOf_go_cons`; two-hop congrArg + rfl-defeq; always
-withLocalDecl+mkLambdaFVars for congr lambdas; `absurd`'s Sort
-binder needs pinning); `List.mem_cons` binder order (element LAST);
-`List.dedup` kernel-reduces on literals (`List.mem_dedup` the bridge);
-evalTactic mangles assign the goal mvar (take `← getMainGoal` after);
-mathlib nlinarith internals (ONE product round, equality hyps pair
-with everything); the arith-clause polarity inversion (`core` inverts
-into the clause); `#guard_msgs (drop error)` takes the DOCSTRING —
-use `/- -/` on rejection probes; `let mut` doesn't mutate across
-`.withContext do` — thread values out.
-
-Review 15 additions (G4 census): `matches` is reserved; no
-`ToExpr RootKind`/`ToExpr TraceStep` (hand-quote); `mkAppM ``decide`
-doesn't synthesize the instance (`mkAppOptM … none`); `grammarOK`'s
-`coeffsIn` branch is kernel-incomputable (`MPoly.add` wall) — build
-the linear grammar ticket from the reducer + `coeffsOf_getElem!_eq`;
-`Eq.mpr` (NOT `Eq.trans`) for congrArg'd prop-family transports;
-`Or.inr` needs side-Prop pins under `mkAppM` (`mkAppOptM`);
-`v < 0` is a Prop, `decide (v < 0)` the Bool; `OfNat.ofNat` raw
-literal is Nat; `whnf`-indexing into em-projections can panic —
-rebuild `IneqAtom.Holds` natively; linear collapse polarity table:
-eq/lt/gt → `¬¬Holds` (route `Iff.mp not_not`), le/ge → `¬Holds`
-(route `mt (Iff.mpr …)`) — the inversion is real and the lt fixture
-caught it; split-fuel must count step-produced Ors (clause-part
-× 2^thomOrs); `Grammar.linearRoot` implicit binders need
-`mkAppOptM` pinning (its `?lcFact` match won't reduce otherwise).
+Memory file (`verus-cad/memory/project_tactus_nonlinear_port.md`) NOT
+updated this session — next session's close should carry: the
+writeback-bug story (method: mock bisect → cap timing → dbgTrace
+journal → source line-comparison), decision-1 resolution, Slice 0
+census facts, G11 lane arc.

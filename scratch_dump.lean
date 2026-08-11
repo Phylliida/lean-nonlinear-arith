@@ -418,6 +418,9 @@ def main : IO Unit := do
   let (r15, s15) := (DumpDriverPD.goPd6.run Solver.empty : Option LBool × Solver)
   IO.println s!"pd6 result: {repr r15}"
   printSnap "pd6" s15
+  let (r16, s16) := (DumpDriverPD.goO139.run Solver.empty : Option LBool × Solver)
+  IO.println s!"o139 result: {repr r16}"
+  printSnap "o139" s16
   (← IO.getStdout).flush
   -- o139 (6-var CAD search) moved to scratch_o139.lean — it is the
   -- long pole, run separately.
