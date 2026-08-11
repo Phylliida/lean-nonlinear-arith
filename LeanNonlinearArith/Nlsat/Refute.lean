@@ -736,7 +736,13 @@ def mkCoeFactEq (hcsPrf : Expr) (cs : List MPoly) (k : Nat)
   let lam ← withLocalDecl `z BinderInfo.default zTy fun zE => do
     mkLambdaFVars #[zE] (← F (← mkIdxGet zE k))
   let t1 ← mkAppM ``congrArg #[lam, hcsPrf]
-  let hget ← proveByRefl (← mkIdxGet (toExpr cs) k) (toExpr cs[k]!)
+  let hget0 ← proveByRefl (← mkIdxGet (toExpr cs) k) (toExpr cs[k]!)
+  -- Pin the proof's type to `cs[k]!-listget = cs[k]!-MPoly`: the raw
+  -- refl term's INTRINSIC type keeps the list-get redex spelling, and
+  -- an `evalP` application of that redex stalls the mangle's
+  -- simp-unfold downstream (the equations only fire on cons literals)
+  let hget ← mkExpectedTypeHint hget0
+    (← mkAppM ``Eq #[← mkIdxGet (toExpr cs) k, toExpr cs[k]!])
   let mpty := mkConst ``MPoly
   let lam2 ← withLocalDecl `x BinderInfo.default mpty fun xE => do
     mkLambdaFVars #[xE] (← F xE)
@@ -1195,7 +1201,10 @@ unsafe def rootGenericStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
     pure mvar
   | some (sgn, hcomp, _vE) =>
     unless sgn == 1 || sgn == -1 do throwError "rootGenericStepProduce: sign {sgn}"
-    -- transport the sign fact from concrete-poly to accessor spelling
+    -- transport the sign fact from concrete-poly to accessor spelling:
+    -- hAE : accessor = concrete and `Eq.mpr` transports BACKWARD
+    -- (β → α), taking the concrete-spelled clause fact to the
+    -- accessor spelling the discharges want
     let cmpA ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
       if sgn == 1 then
         mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zR, zE])
@@ -1218,9 +1227,10 @@ deg 1 (`negRoot` fact, `¬ RootAtom.Holds`) converts into a plain
 disjunction — `negHolds_deg1_disjunction` gives `(A = 0) ∨ ¬rootCmp`,
 then the two disjuncts are brought into glue form on the spot: the
 A-side via the reducer bridge (accessor → concrete coeff poly), the
-comparison side via `Iff.not` on `linearNonconst_aux` when the lead
-has a clause sign fact (else left `rootCmp`-negated, the documented
-weak fallback). No deferred discharge at split time: the findOr
+comparison side via `Iff.not` on the sign-matched
+`linearRootNonconst{Pos,Neg}_discharge` when the lead has a clause sign
+fact (else left `rootCmp`-negated, the documented weak fallback). No
+deferred discharge at split time: the findOr
 splitter's branches get plain first-order facts. Not matched to any
 step — the conversion is semantic. -/
 unsafe def negRootDeg1Produce (mvar : MVarId) (ρ : Expr) (n : Nat)
@@ -1242,44 +1252,58 @@ unsafe def negRootDeg1Produce (mvar : MVarId) (ρ : Expr) (n : Nat)
     #[ρ, rootKindToExpr k, yE, pE, hdeg, mkFVar hfvN]
   let zR ← mkRealZero
   -- first disjunct: accessor → concrete coeff poly spelling; take the
-  -- accessor spelling from the disjunction's own LHS type
+  -- accessor spelling from the disjunction's own LHS type (`Or`'s args
+  -- are #[A, B]: [0]! = accessor-eq, [1]! = the ¬rootCmp disjunct)
   let hAE ← mkCoeFactEq hcsPrf cs 1 (fun v => mkAppM ``Check.evalP #[ρ, v])
   let eqL ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
     mkLambdaFVars #[zE] (← mkAppM ``Eq #[zE, zR])
   let (_, disjArgs) := (← inferType hdisj).getAppFnArgs
-  let lhsE := disjArgs[1]!
+  let lhsE := disjArgs[0]!
   let f0 ← withLocalDecl `hz BinderInfo.default lhsE fun hzE => do
+    -- hAE : accessor = concrete, so `Eq.mp` transports hz (accessor-eq)
+    -- to the concrete coeff-poly spelling the glue's sign facts use
     let t ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[eqL, hAE]), hzE]
     mkLambdaFVars #[hzE] t
   -- second disjunct: sign-locked `Iff.not` conversion, else identity
-  let nrcTy := disjArgs[2]!
+  let nrcTy := disjArgs[1]!
   let f2 ← do
     match ← findSignFact ρ aPoly with
     | some (sgn, hcomp, _) =>
       if sgn == 1 || sgn == -1 then do
-        -- accessor-form sign evidence, then aux + Iff.not
+        -- accessor-form sign evidence (the same reducer bridge as
+        -- rootGenericStepProduce), then the sign-matched discharge
         let cmpA ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
           if sgn == 1 then
             mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zR, zE])
           else
             mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zE, zR])
+        -- hAE : accessor = concrete; `Eq.mpr` transports BACKWARD, so
+        -- the concrete-spelled clause sign fact lands in the accessor
+        -- spelling the discharges want (same idiom as
+        -- rootGenericStepProduce)
         let hcmpA ← mkAppM ``Eq.mpr #[(← mkAppM ``congrArg #[cmpA, hAE]), hcomp]
-        let sE ← if sgn == 1 then
-          mkAppOptM ``OfNat.ofNat #[some (mkConst ``Real), some (toExpr (1 : Nat)), none]
-        else
-          mkAppM ``Neg.neg #[← mkAppOptM ``OfNat.ofNat
-            #[some (mkConst ``Real), some (toExpr (1 : Nat)), none]]
-        let hiff ← mkAppM ``linearNonconst_aux
-          #[ρ, rootKindToExpr k, yE, pE, sE, hdeg, hcan, hcmpA]
+        -- lc ≠ 0 ⟹ rootCount = 1 (the discharges' `_hholds` argument)
+        let hAne ←
+          if sgn == 1 then mkAppM ``ne_of_gt #[hcmpA]
+          else mkAppM ``ne_of_lt #[hcmpA]
+        let hrc ← mkAppM ``rootCount_one_of_deg1_lc_ne #[ρ, yE, pE, hdeg, hAne]
+        let hle ← mkAppM ``le_of_eq #[← mkAppM ``Eq.symm #[hrc]]
+        let hiff ←
+          if sgn == 1 then
+            mkAppM ``linearRootNonconstPos_discharge
+              #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, hle, hcmpA]
+          else
+            mkAppM ``linearRootNonconstNeg_discharge
+              #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, hle, hcmpA]
         let hniff ← mkAppM ``Iff.not #[hiff]
         withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
           mkLambdaFVars #[hzE] (← mkAppM ``Iff.mp #[hniff, hzE])
       else
         withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
           mkLambdaFVars #[hzE] hzE
-      else
-        withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
-          mkLambdaFVars #[hzE] hzE
+    | none =>
+      withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
+        mkLambdaFVars #[hzE] hzE
   let hnew ← mkAppM ``Or.imp #[f0, f2, hdisj]
   let (_, mv) ← mvar.note (Name.mkSimple s!"hN{n}") hnew none
   pure mv

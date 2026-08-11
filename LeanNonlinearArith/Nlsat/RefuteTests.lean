@@ -695,4 +695,114 @@ example (ρ : Nat → ℝ) :
       (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, true⟩, ⟨4, true⟩]) := by
   nlsat_arith_valid_steps tqSteps
 
+/-! ## G11 — the o139 production lanes (rootGeneric deg-1 non-const-lc)
+
+Fixtures from the ordering_139 refutation's walk (the WalkTests o139
+snapshot, post-writeback-fix): cid 7 is the FIRST live case of the
+production `rootGeneric` lane at deg 1 with a non-const lead (the
+census's "production-unreachable" claim falsified); cid 9 is the
+negative-side sibling — a positive-in-clause root literal (`negRoot`
+fact, `¬ Holds`) converted semantically by `negRootDeg1Produce` into
+the `(A = 0) ∨ ¬rootCmp` disjunction, no step consumed. -/
+
+/-- The o139 atom table (transitivity-of-fractions, internal order). -/
+private def g11Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.gt, [([((-1), [(0, 1), (4, 1)]), (1, [(1, 1), (3, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([((-1), [(1, 1), (5, 1)]), (1, [(2, 1), (4, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(1, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(2, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([((-1), [(0, 1), (5, 1)]), (1, [(2, 1), (3, 1)])], false)]⟩),
+   some (.root ⟨.gt, 4, 1, [(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])], false)]⟩)]
+
+/-- cid 7's pre-arith steps (bundle 7 of the o139 trace). -/
+private def g11Cid7Steps : Array TraceStep :=
+  #[.factorSplit [((-1), [(1, 1)])] #[[((-1), [(1, 1)])]] #[],
+    .factorSplit [((-1), [(0, 1)])] #[[((-1), [(0, 1)])]] #[],
+    .factorSplit [(1, [(0, 1), (2, 1), (4, 1)]), ((-1), [(1, 1), (2, 1), (3, 1)])]
+      #[[(1, [(2, 1)])], [(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])]] #[],
+    .rootGeneric .gt 4 1 [(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])],
+    .cellBound .lower .gt 4 1 [(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])],
+    .factorSplit [(1, [(0, 1)])] #[[(1, [(0, 1)])]] #[],
+    .linearRoot .gt 2 [(1, [(2, 1)])] false none,
+    .cellBound .lower .gt 2 1 [(1, [(2, 1)])],
+    .linearRoot .gt 1 [((-1), [(1, 1)])] true none,
+    .cellBound .lower .gt 1 1 [((-1), [(1, 1)])],
+    .linearRoot .gt 0 [((-1), [(0, 1)])] true none,
+    .cellBound .lower .gt 0 1 [((-1), [(0, 1)])]]
+
+/-- cid 7's arith member — the `rootGeneric .gt 4 1` step's cross-link
+through `linearRootNonconstPos_discharge` carries the close (the lead
+`A = x0`'s sign fact comes from the clause's own `⟨3, true⟩`). -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g11Atoms)
+      (arithClause [] [⟨7, true⟩, ⟨5, true⟩, ⟨4, true⟩, ⟨3, true⟩,
+        ⟨2, false⟩, ⟨6, true⟩]) := by
+  nlsat_arith_valid_steps g11Cid7Steps
+
+/- Load-bearing: dropping the steps leaves the rootPair fact opaque
+(`rootVal` comparisons the glue can't use) — the discharge fails. -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g11Atoms)
+      (arithClause [] [⟨7, true⟩, ⟨5, true⟩, ⟨4, true⟩, ⟨3, true⟩,
+        ⟨2, false⟩, ⟨6, true⟩]) := by
+  nlsat_arith_valid_steps #[]
+
+/-- cid 8's pre-arith steps (bundle 8 of the o139 trace). -/
+private def g11Cid8Steps : Array TraceStep :=
+  #[.factorSplit [((-1), [(1, 1)])] #[[((-1), [(1, 1)])]] #[],
+    .factorSplit [((-1), [(0, 1)])] #[[((-1), [(0, 1)])]] #[],
+    .factorSplit [(1, [(0, 1), (2, 1), (4, 1)]), ((-1), [(1, 1), (2, 1), (3, 1)])]
+      #[[(1, [(2, 1)])], [(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])]]
+      #[[(1, [(0, 1), (4, 1)]), ((-1), [(1, 1), (3, 1)])]],
+    .linearRoot .gt 1 [((-1), [(1, 1)])] true none,
+    .cellBound .lower .gt 1 1 [((-1), [(1, 1)])],
+    .linearRoot .gt 0 [((-1), [(0, 1)])] true none,
+    .cellBound .lower .gt 0 1 [((-1), [(0, 1)])]]
+
+/-- cid 8's arith member — the eq × bare-var lift's home: the `eq` fact
+`x0·x4 − x1·x3 = 0` must be multiplied through free variables for the
+contradiction (nlinarith can't). No root literals, so the steps are
+inert here (step-free also closes — pinned as documentation). -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g11Atoms)
+      (arithClause [] [⟨8, true⟩, ⟨4, true⟩, ⟨3, true⟩, ⟨2, false⟩,
+        ⟨6, true⟩]) := by
+  nlsat_arith_valid_steps g11Cid8Steps
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g11Atoms)
+      (arithClause [] [⟨8, true⟩, ⟨4, true⟩, ⟨3, true⟩, ⟨2, false⟩,
+        ⟨6, true⟩]) := by
+  nlsat_arith_valid_steps #[]
+
+/-- cid 9's arith member — the negRoot lane: `⟨7, false⟩` extracts
+`¬ Holds` for the deg-1 root atom on `p = x0·x4 − x1·x3` (lead `A = x0`,
+non-const); `negRootDeg1Produce` converts it to
+`(evalP ρ x0 = 0) ∨ ¬rootCmp .gt (evalP ρ p) 0` — the `A = 0` branch
+dies on the clause's `x0 > 0` sign fact, the comparison branch
+contradicts the other literals' `x1·x3 − x0·x4 < 0` (from `≤ 0` + `≠ 0`).
+Step-independent (semantic conversion), so step-free also closes. -/
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g11Atoms)
+      (arithClause [] [⟨3, true⟩, ⟨1, false⟩, ⟨8, false⟩, ⟨7, false⟩]) := by
+  nlsat_arith_valid_steps g11Cid8Steps
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g11Atoms)
+      (arithClause [] [⟨3, true⟩, ⟨1, false⟩, ⟨8, false⟩, ⟨7, false⟩]) := by
+  nlsat_arith_valid_steps #[]
+
+/- Load-bearing: dropping the root literal leaves a SATISFIABLE ineq
+core (`x0 = 1`, `x1·x3 − x0·x4 = −1`) — the negRoot lane's conversion
+is what carries the close, so the discharge must fail. -/
+#guard_msgs (drop error) in
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g11Atoms)
+      (arithClause [] [⟨3, true⟩, ⟨1, false⟩, ⟨8, false⟩]) := by
+  nlsat_arith_valid_steps #[]
+
 end LeanNonlinearArith.Nlsat.Tests.Refute
