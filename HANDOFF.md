@@ -48,16 +48,23 @@ simplify-cluster drivers pd1/pd2/pd3/pd4/pd6 in `scratch_dump.lean`
 (reorder live in pd3; **path (e) `normalizeLit` is UNREACHABLE for
 in-core simplify — (c)/(d) only; (e) is x2eq-lower-stage-only**;
 const-drops create empty atoms never in clauses; all four lc lanes +
-lcConst lane witnessed; parity quadrant complete). **Standing-target
-RESOLVED: M3 acceptance driver = pd1** (`x1−x0²=0 ∧ x1<0`;
-in-fragment, fully quadratic, pseudoDivision-bearing, multi-bundle
-DAG). **NEW ITEM (search-side, 12c/explain territory, NOT 19b):
-ordering_139 raw-form search diverges** — our port ≥60 min/5.8 GB
-killed twice; z3 4.16 classic config (`nlsat.lws=false
-nlsat.randomize=false`) refutes instantly (6 conflicts, param parity
-confirmed; front-end preprocessing caveat open). Debug recipe on
-board. Unexercised lanes for Slice 2 synthetics: (c) keep-original,
-(e)/x2eq, isEven=true, d≥3.
+lcConst lane witnessed; parity quadrant complete).
+
+**Slice 0 addendum — o139 divergence RESOLVED as a REAL port bug**
+(BOARD addendum has the full analysis): `Explain.project`'s in-loop
+`removeMaxPolys` dropped the state writeback (z3's `m_todo` is
+mutated in place at nlsat_explain.cpp:1011); projections that insert
+polys mid-loop (bilinear resultants) cycled forever. Fixed (2 lines),
+regression pin in `ExplainTests` (o139 end-to-end, `conflicts == 6`),
+full build green 7612 jobs with zero snapshot churn, and **o139 now
+refutes in ~15-45ms with EXACTLY z3-4.12.5's conflict count (6)** —
+z3-4.12.5 built from the audited checkout settles it (unsat, 28ms).
+**Every o139 bundle is isV0 ∧ non-S1-gated: o139's full refutation
+is v0-walkable TODAY** — standing target restored as an acceptance
+candidate alongside pd1 (o139: 6-var/6-conflict/12-clause DAG with
+rootGeneric-fragment + cellBound + linearRoot + factorSplit; pd1:
+canonical quadratic pseudoDivision). Unexercised lanes for Slice 2
+synthetics: (c) keep-original, (e)/x2eq, isEven=true, d≥3.
 
 Per DESIGN-endgame §2.5: **`pseudoDivision` per-instance ring
 identities + parity cases.** Scope (already on the board):

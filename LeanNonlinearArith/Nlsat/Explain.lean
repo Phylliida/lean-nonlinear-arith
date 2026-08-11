@@ -583,12 +583,15 @@ partial def project (ps : Array MPoly) (maxX : Var) : ExplainM (Option Unit) := 
   let mut todo := todo0
   while true do
     if allUniv ps (x.getD 0) && todo.empty then
+      -- z3 :1002-1005: `m_todo.reset()` on the all_univ break
+      modify fun st => { st with todo := TodoSet.reset }
       break
     addLc ps (x.getD 0)
     pscDiscriminant ps (x.getD 0)
     pscResultant ps (x.getD 0)
     if (← get).todo.empty then break
     let (x', ps', todo') := (← get).todo.removeMaxPolys
+    modify fun st => { st with todo := todo' }
     match x' with
     | none => break
     | some xv =>

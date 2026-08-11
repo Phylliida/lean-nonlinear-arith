@@ -681,4 +681,49 @@ private def x1sqM2 : MPoly := MPoly.sub (MPoly.mul x1 x1) (MPoly.ofInt 2)
   let r ← addCellLits #[x1sqM2] 1
   return r == none && (← get).result == #[])
 
+/-! ## project todo writeback regression (2026-08-10, the o139 divergence)
+
+`Explain.project`'s inner `removeMaxPolys` dropped the state writeback
+(z3 mutates `m_todo` in place at :1011): any projection that INSERTED
+polys mid-loop (bilinear resultants do) re-processed the same todo
+members forever — ordering_139's first conflict never finished. Every
+other explain call in the suite empties the todo at the pre-loop
+writeback, which is why this survived all reviews. Pin: the full
+ordering_139 problem end-to-end through `check` with the production
+explain — refuted in 6 conflicts, matching z3-4.12.5's count exactly
+(28 ms, built from the audited checkout). -/
+
+private def x2 : MPoly := MPoly.ofVar 2
+private def x3 : MPoly := MPoly.ofVar 3
+private def x4 : MPoly := MPoly.ofVar 4
+private def x5 : MPoly := MPoly.ofVar 5
+
+-- ordering_139: a·db ≤ b·da, b·dc ≤ c·db, da/db/dc > 0 ⊢ a·dc ≤ c·da
+#guard Solver.run' (do
+  Solver.init
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let _ ← mkVar false
+  let pHab := MPoly.sub (MPoly.mul x0 x4) (MPoly.mul x1 x3)
+  let pHbc := MPoly.sub (MPoly.mul x1 x5) (MPoly.mul x2 x4)
+  let pNeg := MPoly.sub (MPoly.mul x0 x5) (MPoly.mul x2 x3)
+  let lhab ← mkIneqLiteral ⟨.gt, [(pHab, false)]⟩
+  let lhbc ← mkIneqLiteral ⟨.gt, [(pHbc, false)]⟩
+  let lda ← mkIneqLiteral ⟨.gt, [(x3, false)]⟩
+  let ldb ← mkIneqLiteral ⟨.gt, [(x4, false)]⟩
+  let ldc ← mkIneqLiteral ⟨.gt, [(x5, false)]⟩
+  let lneg ← mkIneqLiteral ⟨.gt, [(pNeg, false)]⟩
+  let _ ← mkClause #[lhab.negate] false
+  let _ ← mkClause #[lhbc.negate] false
+  let _ ← mkClause #[lda] false
+  let _ ← mkClause #[ldb] false
+  let _ ← mkClause #[ldc] false
+  let _ ← mkClause #[lneg] false
+  let r ← Solver.check (Solver.resolve explain)
+  let s ← get
+  return r == some .false && s.conflicts == 6)
+
 end LeanNonlinearArith.Nlsat.Tests
