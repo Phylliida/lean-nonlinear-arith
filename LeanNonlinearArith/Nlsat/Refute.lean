@@ -97,7 +97,8 @@ inductive FactKind where
     -- G11: positive-polarity root literal in the clause (`¬atom`
     -- failing): the fact is `¬ RootAtom.Holds ρ ⟨k, y, i, p⟩` —
     -- the `negRootDeg1Produce` lane converts it into the
-    -- `(A = 0) ∨ ¬rootCmp` disjunction for the findOr splitter
+    -- `(A = 0) ∨ ¬rootCmp` disjunction (or the full trichotomy when
+    -- the lead's sign isn't a clause fact) for the findOr splitter
   | other
 
 /-- The fact-extraction for one literal: ℝ-level fact proof terms with
@@ -749,6 +750,34 @@ def mkCoeFactEq (hcsPrf : Expr) (cs : List MPoly) (k : Nat)
   let t2 ← mkAppM ``congrArg #[lam2, hget]
   mkAppM ``Eq.trans #[t1, t2]
 
+/-- Identity proof function on a proposition (for `Or.imp`/`And.imp`
+components that keep their spelling). -/
+def idLam (ty : Expr) : MetaM Expr :=
+  withLocalDecl `hz BinderInfo.default ty fun hzE => mkLambdaFVars #[hzE] hzE
+
+/-- The two lead-sign proof transports for the deg-1 lanes:
+`((0 < acc) → (0 < conc), (acc < 0) → (conc < 0))`, where `hAE` is the
+`mkCoeFactEq` bridge `evalP ρ (coeffsOf p y)[1]! = evalP ρ cs[1]!`.
+Needed because the accessor redex stalls the mangle's `evalP`
+simp-unfold, leaving an opaque atom where the dead-end split leaf was
+supposed to die on the sign conjunct (review F-ii). -/
+def mkSignTransports (ρ pE yE : Expr) (hAE : Expr) : MetaM (Expr × Expr) := do
+  let accE ← mkIdxGet (← mkAppM ``Check.coeffsOf #[pE, yE]) 1
+  let accValE ← mkAppM ``Check.evalP #[ρ, accE]
+  let zR ← mkRealZero
+  let posLam ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+    mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zR, zE])
+  let negLam ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+    mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zE, zR])
+  -- hAE : accessor = concrete; `Eq.mp` transports FORWARD (acc → conc)
+  let posTr ← withLocalDecl `hz BinderInfo.default
+    (← mkAppM ``LT.lt #[zR, accValE]) fun hzE => do
+    mkLambdaFVars #[hzE] (← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[posLam, hAE]), hzE])
+  let negTr ← withLocalDecl `hz BinderInfo.default
+    (← mkAppM ``LT.lt #[accValE, zR]) fun hzE => do
+    mkLambdaFVars #[hzE] (← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[negLam, hAE]), hzE])
+  pure (posTr, negTr)
+
 /-- Same two-hop transport as `mkValueFact`, but the value-side proof is
 SUPPLIED (the clause-literal lanes — no numeric close needed). -/
 def mkValueFactOf (hcsPrf : Expr) (cs : List MPoly)
@@ -1193,12 +1222,34 @@ unsafe def rootGenericStepProduce (mvar : MVarId) (ρ : Expr) (n : Nat)
   | none =>
     let hdisj ← mkAppM ``linearRootNonconst_disjunction
       #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, hholds, hcmp']
-    let (_, mv) ← mvar.note (Name.mkSimple s!"hS{n}") hdisj none
+    -- the sign conjuncts' accessor redex stalls the mangle's evalP
+    -- unfold — and the dead-end leaf dies ON the sign conjunct, so
+    -- transport both to the concrete spelling (review F-ii)
+    let (posTr, negTr) ← mkSignTransports ρ pE yE hAE
+    let (_, dArgs) := (← inferType hdisj).getAppFnArgs
+    let (_, a0) := dArgs[0]!.getAppFnArgs
+    let (_, a1) := dArgs[1]!.getAppFnArgs
+    let g2 ← mkAppM ``And.imp #[posTr, ← idLam a0[1]!]
+    let g3 ← mkAppM ``And.imp #[negTr, ← idLam a1[1]!]
+    let hnew ← mkAppM ``Or.imp #[g2, g3, hdisj]
+    let (_, mv) ← mvar.note (Name.mkSimple s!"hS{n}") hnew none
     pure mv
   | some (0, _, _) =>
-    -- a clause `A = 0` fact contradicts `ne_of_one_le_rootCount_deg1`;
-    -- nothing to add — the glue closes via that diseq clash
-    pure mvar
+    -- a clause `A = 0` fact contradicts `ne_of_one_le_rootCount_deg1`
+    -- (the Holds pair's count side forces the lead nonzero). Note the
+    -- lead's `< 0 ∨ > 0` trichotomy in the concrete spelling: the bare
+    -- diseq is invisible to linarith, but the findOr splitter consumes
+    -- the Or and each branch dies on the `A = 0` fact. (Review F-i:
+    -- the previous "nothing to add — the glue closes via that diseq
+    -- clash" comment overclaimed; NOTHING produced the diseq, and
+    -- `rootDefiniteClose` only covers the literal-zero lc.)
+    let hAne ← mkAppM ``ne_of_one_le_rootCount_deg1 #[ρ, yE, pE, hdeg, hholds]
+    let neL ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+      mkLambdaFVars #[zE] (← mkAppM ``Ne #[zE, zR])
+    let hAneC ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[neL, hAE]), hAne]
+    let htri ← mkAppM ``lt_or_gt_of_ne #[hAneC]
+    let (_, mv) ← mvar.note (Name.mkSimple s!"hS{n}") htri none
+    pure mv
   | some (sgn, hcomp, _vE) =>
     unless sgn == 1 || sgn == -1 do throwError "rootGenericStepProduce: sign {sgn}"
     -- transport the sign fact from concrete-poly to accessor spelling:
@@ -1229,8 +1280,9 @@ then the two disjuncts are brought into glue form on the spot: the
 A-side via the reducer bridge (accessor → concrete coeff poly), the
 comparison side via `Iff.not` on the sign-matched
 `linearRootNonconst{Pos,Neg}_discharge` when the lead has a clause sign
-fact (else left `rootCmp`-negated, the documented weak fallback). No
-deferred discharge at split time: the findOr
+fact (else the full trichotomy fallback `negHolds_deg1_trichotomy` —
+review F-ii; a clause `A = 0` fact makes the literal vacuous and the
+lane skips). No deferred discharge at split time: the findOr
 splitter's branches get plain first-order facts. Not matched to any
 step — the conversion is semantic. -/
 unsafe def negRootDeg1Produce (mvar : MVarId) (ρ : Expr) (n : Nat)
@@ -1264,49 +1316,68 @@ unsafe def negRootDeg1Produce (mvar : MVarId) (ρ : Expr) (n : Nat)
     -- to the concrete coeff-poly spelling the glue's sign facts use
     let t ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[eqL, hAE]), hzE]
     mkLambdaFVars #[hzE] t
-  -- second disjunct: sign-locked `Iff.not` conversion, else identity
+  -- second disjunct: sign-locked `Iff.not` conversion; the no-sign-fact
+  -- case takes the full trichotomy fallback (review F-ii — z3 emits the
+  -- deg-1 non-const-lc root atom with NO lc guard, so the sign is not
+  -- structurally present in the clause)
   let nrcTy := disjArgs[1]!
-  let f2 ← do
-    match ← findSignFact ρ aPoly with
-    | some (sgn, hcomp, _) =>
-      if sgn == 1 || sgn == -1 then do
-        -- accessor-form sign evidence (the same reducer bridge as
-        -- rootGenericStepProduce), then the sign-matched discharge
-        let cmpA ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
-          if sgn == 1 then
-            mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zR, zE])
-          else
-            mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zE, zR])
-        -- hAE : accessor = concrete; `Eq.mpr` transports BACKWARD, so
-        -- the concrete-spelled clause sign fact lands in the accessor
-        -- spelling the discharges want (same idiom as
-        -- rootGenericStepProduce)
-        let hcmpA ← mkAppM ``Eq.mpr #[(← mkAppM ``congrArg #[cmpA, hAE]), hcomp]
-        -- lc ≠ 0 ⟹ rootCount = 1 (the discharges' `_hholds` argument)
-        let hAne ←
-          if sgn == 1 then mkAppM ``ne_of_gt #[hcmpA]
-          else mkAppM ``ne_of_lt #[hcmpA]
-        let hrc ← mkAppM ``rootCount_one_of_deg1_lc_ne #[ρ, yE, pE, hdeg, hAne]
-        let hle ← mkAppM ``le_of_eq #[← mkAppM ``Eq.symm #[hrc]]
-        let hiff ←
-          if sgn == 1 then
-            mkAppM ``linearRootNonconstPos_discharge
-              #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, hle, hcmpA]
-          else
-            mkAppM ``linearRootNonconstNeg_discharge
-              #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, hle, hcmpA]
-        let hniff ← mkAppM ``Iff.not #[hiff]
-        withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
-          mkLambdaFVars #[hzE] (← mkAppM ``Iff.mp #[hniff, hzE])
-      else
-        withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
-          mkLambdaFVars #[hzE] hzE
-    | none =>
-      withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
-        mkLambdaFVars #[hzE] hzE
-  let hnew ← mkAppM ``Or.imp #[f0, f2, hdisj]
-  let (_, mv) ← mvar.note (Name.mkSimple s!"hN{n}") hnew none
-  pure mv
+  let fallback : TacticM MVarId := do
+    let h3 ← mkAppM ``negHolds_deg1_trichotomy
+      #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, mkFVar hfvN]
+    -- f0 transports the `A = 0` disjunct; the sign conjuncts of the
+    -- two sign disjuncts go through the same bridge (their accessor
+    -- redex stalls the mangle — review F-ii)
+    let (posTr, negTr) ← mkSignTransports ρ pE yE hAE
+    let (_, args3) := (← inferType h3).getAppFnArgs
+    let (_, rArgs) := args3[1]!.getAppFnArgs
+    let (_, c1) := rArgs[0]!.getAppFnArgs
+    let (_, c2) := rArgs[1]!.getAppFnArgs
+    let g2 ← mkAppM ``And.imp #[posTr, ← idLam c1[1]!]
+    let g3 ← mkAppM ``And.imp #[negTr, ← idLam c2[1]!]
+    let hnew ← mkAppM ``Or.imp #[f0, (← mkAppM ``Or.imp #[g2, g3]), h3]
+    let (_, mv) ← mvar.note (Name.mkSimple s!"hN{n}") hnew none
+    pure mv
+  match ← findSignFact ρ aPoly with
+  | some (0, _, _) =>
+    -- a clause `A = 0` fact makes the literal VACUOUS (`¬ Holds` holds
+    -- trivially: the root count is 0) — the other literals carry the
+    -- close; noting the disjunction would only buy a wasted split
+    pure mvar
+  | some (sgn, hcomp, _) =>
+    if sgn == 1 || sgn == -1 then do
+      -- accessor-form sign evidence (the same reducer bridge as
+      -- rootGenericStepProduce), then the sign-matched discharge
+      let cmpA ← withLocalDecl `z BinderInfo.default (mkConst ``Real) fun zE => do
+        if sgn == 1 then
+          mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zR, zE])
+        else
+          mkLambdaFVars #[zE] (← mkAppM ``LT.lt #[zE, zR])
+      -- hAE : accessor = concrete; `Eq.mpr` transports BACKWARD, so
+      -- the concrete-spelled clause sign fact lands in the accessor
+      -- spelling the discharges want (same idiom as
+      -- rootGenericStepProduce)
+      let hcmpA ← mkAppM ``Eq.mpr #[(← mkAppM ``congrArg #[cmpA, hAE]), hcomp]
+      -- lc ≠ 0 ⟹ rootCount = 1 (the discharges' `_hholds` argument)
+      let hAne ←
+        if sgn == 1 then mkAppM ``ne_of_gt #[hcmpA]
+        else mkAppM ``ne_of_lt #[hcmpA]
+      let hrc ← mkAppM ``rootCount_one_of_deg1_lc_ne #[ρ, yE, pE, hdeg, hAne]
+      let hle ← mkAppM ``le_of_eq #[← mkAppM ``Eq.symm #[hrc]]
+      let hiff ←
+        if sgn == 1 then
+          mkAppM ``linearRootNonconstPos_discharge
+            #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, hle, hcmpA]
+        else
+          mkAppM ``linearRootNonconstNeg_discharge
+            #[ρ, rootKindToExpr k, yE, pE, hdeg, hcan, hle, hcmpA]
+      let hniff ← mkAppM ``Iff.not #[hiff]
+      let f2 ← withLocalDecl `hz BinderInfo.default nrcTy fun hzE => do
+        mkLambdaFVars #[hzE] (← mkAppM ``Iff.mp #[hniff, hzE])
+      let hnew ← mkAppM ``Or.imp #[f0, f2, hdisj]
+      let (_, mv) ← mvar.note (Name.mkSimple s!"hN{n}") hnew none
+      pure mv
+    else fallback -- dead defense (findSignFact returns 0/±1 only)
+  | none => fallback
 
 /-- The grammar prop for a thomQuadratic step: coefficient-free (degree
 + sign ranges only), so the plain `grammarOK` decide ticket works. -/

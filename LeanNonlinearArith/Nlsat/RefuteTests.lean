@@ -805,4 +805,72 @@ example (ρ : Nat → ℝ) :
       (arithClause [] [⟨3, true⟩, ⟨1, false⟩, ⟨8, false⟩]) := by
   nlsat_arith_valid_steps #[]
 
+/-! ### G11 close-out review (F-i/F-ii) — the sign-fact-free corners
+
+z3 emits the deg-1 non-const-lc root atom with NO lc guard
+(`add_root_literal` falls through both `mk_linear_root`'s const check
+and `mk_quadratic_root`, then adds the bare atom,
+nlsat_explain.cpp:725-737), so the lead's sign is not structurally
+present in the clause. The next three pins cover the corners that
+inspection found under-covered: the positive side with a clause
+`A = 0` fact (F-i: the diseq is materialized as the findOr-consumable
+trichotomy), and both sides with NO sign fact at all (F-ii: the
+negative side's `negHolds_deg1_trichotomy`; the positive side's
+pre-existing `linearRootNonconst_disjunction`, previously unpinned). -/
+
+/-- `pZ = x1·x0 + 1` (root in var 0: `−1/x1`, non-const lead `A = x1`). -/
+private def g11zP : MPoly := [(1, [(0, 1), (1, 1)]), (1, [])]
+private def g11zA : MPoly := [(1, [(1, 1)])]                -- the lead x1
+private def g11zX0 : MPoly := [(1, [(0, 1)])]               -- x0
+private def g11zX0p1 : MPoly := [(1, [(0, 1)]), (1, [])]    -- x0 + 1
+private def g11zX1m1 : MPoly := [(1, [(1, 1)]), (-1, [])]   -- x1 − 1
+private def g11zPm1 : MPoly := [(1, [(0, 1), (1, 1)]), ((-1), [])]  -- x1·x0 − 1
+
+/-- F-i: positive root literal (deg-1 non-const lead) + a clause
+`A = 0` fact. Holds forces `1 ≤ rootCount`, hence `A ≠ 0` — the lane
+notes the concrete-spelled `< 0 ∨ > 0` trichotomy and both branches
+die on the `A = 0` fact. -/
+private def g11zAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.gt, 0, 1, g11zPm1⟩),          -- 1: ρ 0 > root₁(x1·x0 − 1)
+    some (.ineq ⟨.eq, [(g11zA, false)]⟩)]                          -- 2: x1 = 0
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g11zAtoms) (arithClause [] [⟨1, true⟩, ⟨2, true⟩]) := by
+  nlsat_arith_valid_steps #[.rootGeneric .gt 0 1 g11zPm1]
+
+/-- F-ii (negative side): the negRoot literal with NO clause sign fact
+for the lead. All-fail gives `¬Holds ∧ x0 > 0 ∧ x1 > 1`; the
+`negHolds_deg1_trichotomy` fallback splits
+`A = 0 ∨ (0 < A ∧ ¬rootCmp (evalP p) 0) ∨ (A < 0 ∧ …)`: the `A = 0`
+and `A < 0` leaves die on `x1 > 1`, the `0 < A` leaf's converted
+`¬(x1·x0 + 1 > 0)` dies on the product bound (`x0 > 0 ∧ x1 > 1 ⟹
+x1·x0 + 1 > 1`). Pre-F-ii the opaque fallback rejected this. -/
+private def g11tAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.gt, 0, 1, g11zP⟩),            -- 1: ρ 0 > root₁(x1·x0 + 1)
+    some (.ineq ⟨.gt, [(g11zX0, false)]⟩),      -- 2: x0 > 0
+    some (.ineq ⟨.gt, [(g11zX1m1, false)]⟩)]    -- 3: x1 − 1 > 0
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g11tAtoms)
+      (arithClause [] [⟨1, false⟩, ⟨2, true⟩, ⟨3, true⟩]) := by
+  nlsat_arith_valid_steps #[]
+
+/-- The positive-side sibling (the `linearRootNonconst_disjunction`
+two-sign fallback, previously unpinned): all-fail gives
+`Holds ∧ x0 < −1 ∧ x1 > 1`; the `0 < A` disjunct's converted
+`x1·x0 + 1 > 0` dies on the product bound (`x0 < −1 ∧ x1 > 1 ⟹
+x1·x0 + 1 < 0`), the `A < 0` disjunct on `x1 > 1`. -/
+private def g11uAtoms : Array (Option Atom) :=
+  #[none,
+    some (.root ⟨.gt, 0, 1, g11zP⟩),            -- 1: ρ 0 > root₁(x1·x0 + 1)
+    some (.ineq ⟨.lt, [(g11zX0p1, false)]⟩),    -- 2: x0 + 1 < 0
+    some (.ineq ⟨.gt, [(g11zX1m1, false)]⟩)]    -- 3: x1 − 1 > 0
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ g11uAtoms)
+      (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, true⟩]) := by
+  nlsat_arith_valid_steps #[.rootGeneric .gt 0 1 g11zP]
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

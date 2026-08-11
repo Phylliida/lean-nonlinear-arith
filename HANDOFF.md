@@ -100,6 +100,15 @@ d9d5df1 still accurate for dump/refresh recipes)
 - `proveByRefl`'s refl term has the INTRINSIC type `a = a`, not the
   ascribed `a = b` — pin with `mkExpectedTypeHint` when the endpoint
   spelling matters downstream (simp/mangle).
+- Disjunction lemmas' sign CONJUNCTS are accessor-spelled
+  (`evalP ρ (coeffsOf …)[k]!`); the redex stalls the mangle's evalP
+  unfold and the dead-end split leaf dies ON that conjunct — transport
+  to the concrete spelling at note time (`mkSignTransports`,
+  review F-ii). The leaf-dump recipe: temporarily log the lctx in
+  `closeWithSplits`' failure arm.
+- Inline step payloads in `nlsat_arith_valid_steps #[…]` with empty
+  monomials (`(-1), []`) leave metavariables at `evalExpr` — use
+  named `MPoly` defs (type ascription guides elaboration).
 - `(0:ℝ)` annotation required in Statements with accessor subterms
   (the ↑0 cast trap — hit twice). `getAppFnArgs` on `Or A B` gives
   `#[A, B]` (head excluded).

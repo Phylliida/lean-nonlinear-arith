@@ -930,6 +930,33 @@ theorem negHolds_deg1_disjunction (ρ : Nat → ℝ) (k : RootKind) (y : Var)
       by_contra hA
       exact hc (le_of_eq (rootCount_one_of_deg1_lc_ne ρ y p hdeg hA).symm))
 
+/-- The negative-side three-way (G11, close-out review F-ii): a `¬ Holds`
+fact at deg 1 expands to the lead's trichotomy with the two sign
+branches converted to first-order comparisons — the negative analogue
+of `linearRootNonconst_disjunction`, needing no clause sign fact (z3
+emits the deg-1 non-const-lc root atom with NO lc guard — `mk_linear_root`
+fails its const check and `add_root_literal` adds the bare atom at
+nlsat_explain.cpp:725-737 — so the sign is not structurally present). -/
+theorem negHolds_deg1_trichotomy (ρ : Nat → ℝ) (k : RootKind) (y : Var)
+    (p : MPoly) (hdeg : p.degreeIn y = 1) (hcan : MPoly.Canon p)
+    (h : ¬ RootAtom.Holds ρ ⟨k, y, 1, p⟩) :
+    evalP ρ ((coeffsOf p y)[1]!) = (0 : ℝ) ∨
+      ((0 : ℝ) < evalP ρ ((coeffsOf p y)[1]!) ∧ ¬ rootCmp k (evalP ρ p) 0) ∨
+      (evalP ρ ((coeffsOf p y)[1]!) < (0 : ℝ) ∧ ¬ rootCmp k (-evalP ρ p) 0) := by
+  rcases negHolds_deg1_disjunction ρ k y p hdeg h with hA | hcmp
+  · exact Or.inl hA
+  · rcases lt_trichotomy (evalP ρ ((coeffsOf p y)[1]!)) 0 with hA | hA | hA
+    · exact Or.inr (Or.inr ⟨hA, by
+        have hrc := rootCount_one_of_deg1_lc_ne ρ y p hdeg (ne_of_lt hA)
+        exact (Iff.not (linearRootNonconstNeg_discharge ρ k y p hdeg hcan
+          (le_of_eq hrc.symm) hA)).mp hcmp⟩)
+    · exact Or.inl hA
+    · exact Or.inr (Or.inl ⟨hA, by
+        have hrc := rootCount_one_of_deg1_lc_ne ρ y p hdeg (ne_of_gt hA)
+        exact (Iff.not (linearRootNonconstPos_discharge ρ k y p hdeg hcan
+          (le_of_eq hrc.symm) hA)).mp hcmp⟩)
+
+
 /-- Deg-2 with both `A` and `B` vanishing ⇒ no roots (the
 constant-in-`y` degenerate; `A = 0, B ≠ 0` counts 1). -/
 theorem rootCount_zero_of_deg2_lc_zero (ρ : Nat → ℝ) (y : Var) (p : MPoly)
