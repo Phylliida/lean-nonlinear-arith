@@ -42,6 +42,23 @@ The discharge layer is complete through the **G4 census slice**
 
 ## Next: nla-19b — full checker glue → M3 *(1–2 sessions)*
 
+**Slice 0 DONE (2026-08-10, see BOARD "nla-19b Slice 0"):**
+simplify-cluster drivers pd1/pd2/pd3/pd4/pd6 in `scratch_dump.lean`
+(all refute; payloads + paths censused); structural findings R-a..R-i
+(reorder live in pd3; **path (e) `normalizeLit` is UNREACHABLE for
+in-core simplify — (c)/(d) only; (e) is x2eq-lower-stage-only**;
+const-drops create empty atoms never in clauses; all four lc lanes +
+lcConst lane witnessed; parity quadrant complete). **Standing-target
+RESOLVED: M3 acceptance driver = pd1** (`x1−x0²=0 ∧ x1<0`;
+in-fragment, fully quadratic, pseudoDivision-bearing, multi-bundle
+DAG). **NEW ITEM (search-side, 12c/explain territory, NOT 19b):
+ordering_139 raw-form search diverges** — our port ≥60 min/5.8 GB
+killed twice; z3 4.16 classic config (`nlsat.lws=false
+nlsat.randomize=false`) refutes instantly (6 conflicts, param parity
+confirmed; front-end preprocessing caveat open). Debug recipe on
+board. Unexercised lanes for Slice 2 synthetics: (c) keep-original,
+(e)/x2eq, isEven=true, d≥3.
+
 Per DESIGN-endgame §2.5: **`pseudoDivision` per-instance ring
 identities + parity cases.** Scope (already on the board):
 

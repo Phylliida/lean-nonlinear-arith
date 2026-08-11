@@ -231,6 +231,141 @@ def goRootGen : SolverM (Option LBool) := do
 
 end DumpDriver
 
+/-! ## nla-19b Slice 0 — simplify-cluster recon drivers
+
+pd1: canonical Jovanović core `{x1 − x0² = 0, x1 < 0}` — const lc,
+non-const remainder (expect `pseudoDivision x1 (x1−x0²) 1 1 x0² 1 false`,
+path (e) rebuilt literal `x0² < 0`).
+pd2: lc non-const + const-remainder path (b) + A4 (lc ineq):
+`{x0 ≥ 1, x0·x1 − 1 = 0, x1 < 0}` — pseudo-remaind `x0·x1 = 1·(x0·x1−1)+1`,
+factor dropped, d odd & kind lt & !isEven ⇒ add_lc_ineq (x0 > 0).
+pd3: lc non-const quadratic eq + non-const remainder path (e):
+`{x0 > 0, x0 ≤ 1/2, x0·x1² − 1 = 0, x1²+x1 < 0}` (1/x0 ≥ 2 vs x1∈(−1,0)).
+pd4: kind flip (lcSign < 0): `{x0 ≤ −1, x0·x1 − 1 = 0, x1 > 0}` —
+d=1 odd, factor odd, lcSign = −1 ⇒ atomSign −1, const remainder drop,
+A4 with LT. -/
+
+namespace DumpDriverPD
+
+def x0 : MPoly := [(1, [(0, 1)])]
+def x1 : MPoly := [(1, [(1, 1)])]
+def pXm1 : MPoly := [(1, [(0, 1)]), (-1, [])]
+def pXp1 : MPoly := [(1, [(0, 1)]), (1, [])]
+def pEqLin : MPoly := [(1, [(1, 1)]), (-1, [(0, 2)])]        -- x1 − x0²
+def pEqMul : MPoly := [(1, [(1, 1), (0, 1)]), (-1, [])]     -- x0·x1 − 1
+def pEqMul2 : MPoly := [(1, [(1, 2), (0, 1)]), (-1, [])]    -- x0·x1² − 1
+def pX1sqX1 : MPoly := [(1, [(1, 2)]), (1, [(1, 1)])]       -- x1² + x1
+def pOm2 : MPoly := [(1, []), (-2, [(0, 1)])]               -- 1 − 2·x0
+
+def goPd1 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let le ← Solver.mkIneqLiteral ⟨.eq, [(pEqLin, false)]⟩
+  let lc ← Solver.mkIneqLiteral ⟨.lt, [(x1, false)]⟩
+  let _ ← Solver.mkClause #[le] false
+  let _ ← Solver.mkClause #[lc] false
+  Solver.check (Solver.resolve Explain.explain)
+
+def goPd2 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let lb ← Solver.mkIneqLiteral ⟨.lt, [(pXm1, false)]⟩   -- x0 ≥ 1
+  let le ← Solver.mkIneqLiteral ⟨.eq, [(pEqMul, false)]⟩
+  let lc ← Solver.mkIneqLiteral ⟨.lt, [(x1, false)]⟩
+  let _ ← Solver.mkClause #[lb.negate] false
+  let _ ← Solver.mkClause #[le] false
+  let _ ← Solver.mkClause #[lc] false
+  Solver.check (Solver.resolve Explain.explain)
+
+def goPd3 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let llo ← Solver.mkIneqLiteral ⟨.lt, [(x0, false)]⟩     -- x0 > 0
+  let lhi ← Solver.mkIneqLiteral ⟨.lt, [(pOm2, false)]⟩   -- x0 ≤ 1/2 (negated below)
+  let le ← Solver.mkIneqLiteral ⟨.eq, [(pEqMul2, false)]⟩
+  let lc ← Solver.mkIneqLiteral ⟨.lt, [(pX1sqX1, false)]⟩
+  let _ ← Solver.mkClause #[llo.negate] false
+  let _ ← Solver.mkClause #[lhi.negate] false   -- ¬(1−2x0 < 0) ⟺ 2·x0 ≤ 1
+  let _ ← Solver.mkClause #[le] false
+  let _ ← Solver.mkClause #[lc] false
+  Solver.check (Solver.resolve Explain.explain)
+
+def goPd4 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let lhi ← Solver.mkIneqLiteral ⟨.gt, [(pXp1, false)]⟩   -- x0 ≤ −1
+  let le ← Solver.mkIneqLiteral ⟨.eq, [(pEqMul, false)]⟩
+  let lc ← Solver.mkIneqLiteral ⟨.gt, [(x1, false)]⟩
+  let _ ← Solver.mkClause #[lhi.negate] false
+  let _ ← Solver.mkClause #[le] false
+  let _ ← Solver.mkClause #[lc] false
+  Solver.check (Solver.resolve Explain.explain)
+
+/-- Even-d parity witness (d = 2, lcSign = −1, NO kind flip — the
+discriminating cell of the :1132-1137 table): `{x0 ≤ −1, x0² ≤ 2,
+x0·x1 − 1 = 0, 2·x1² − 1 < 0}`. f = 2x1²−1 (deg 2), eq deg 1 ⟹ d = 2;
+identity x0²(2x1²−1) = Q·(x0·x1−1) + (2 − x0²): UNSAT since
+x0² ∈ [1,2] forces x1² = 1/x0² ≥ 1/2. -/
+def pTwoX1sqM1 : MPoly := [(2, [(1, 2)]), (-1, [])]         -- 2·x1² − 1
+def pX0sqM2 : MPoly := [(1, [(0, 2)]), (-2, [])]            -- x0² − 2
+
+def goPd6 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let llo ← Solver.mkIneqLiteral ⟨.gt, [(pXp1, false)]⟩     -- x0 ≤ −1
+  let lhi ← Solver.mkIneqLiteral ⟨.gt, [(pX0sqM2, false)]⟩  -- x0² ≤ 2
+  let le ← Solver.mkIneqLiteral ⟨.eq, [(pEqMul, false)]⟩
+  let lc ← Solver.mkIneqLiteral ⟨.lt, [(pTwoX1sqM1, false)]⟩
+  let _ ← Solver.mkClause #[llo.negate] false
+  let _ ← Solver.mkClause #[lhi.negate] false
+  let _ ← Solver.mkClause #[le] false
+  let _ ← Solver.mkClause #[lc] false
+  Solver.check (Solver.resolve Explain.explain)
+
+/-- ordering_139 as a real nlsat problem (6 vars, x0..x5 =
+a,b,c,da,db,dc): hypotheses hab: a·db ≤ b·da, hbc: b·dc ≤ c·db,
+da/db/dc > 0, negated goal a·dc − c·da > 0. Polls: multilinear input,
+but projection cross-products are the L1-open case — the Slice 0
+standing-target fragment check. -/
+def pA : MPoly := [(1, [(0, 1)])]
+def pB : MPoly := [(1, [(1, 1)])]
+def pC : MPoly := [(1, [(2, 1)])]
+def pDa : MPoly := [(1, [(3, 1)])]
+def pDb : MPoly := [(1, [(4, 1)])]
+def pDc : MPoly := [(1, [(5, 1)])]
+def pHab : MPoly := [(1, [(4, 1), (0, 1)]), (-1, [(3, 1), (1, 1)])] -- a·db − b·da
+def pHbc : MPoly := [(1, [(5, 1), (1, 1)]), (-1, [(4, 1), (2, 1)])] -- b·dc − c·db
+def pNeg : MPoly := [(1, [(5, 1), (0, 1)]), (-1, [(3, 1), (2, 1)])] -- a·dc − c·da
+
+def goO139 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkVar false
+  let lhab ← Solver.mkIneqLiteral ⟨.gt, [(pHab, false)]⟩  -- hab: a·db − b·da ≤ 0
+  let lhbc ← Solver.mkIneqLiteral ⟨.gt, [(pHbc, false)]⟩  -- hbc: b·dc − c·db ≤ 0
+  let lda ← Solver.mkIneqLiteral ⟨.gt, [(pDa, false)]⟩
+  let ldb ← Solver.mkIneqLiteral ⟨.gt, [(pDb, false)]⟩
+  let ldc ← Solver.mkIneqLiteral ⟨.gt, [(pDc, false)]⟩
+  let lneg ← Solver.mkIneqLiteral ⟨.gt, [(pNeg, false)]⟩  -- negated goal
+  let _ ← Solver.mkClause #[lhab.negate] false
+  let _ ← Solver.mkClause #[lhbc.negate] false
+  let _ ← Solver.mkClause #[lda] false
+  let _ ← Solver.mkClause #[ldb] false
+  let _ ← Solver.mkClause #[ldc] false
+  let _ ← Solver.mkClause #[lneg] false
+  Solver.check (Solver.resolve Explain.explain)
+
+end DumpDriverPD
+
 def printSnap (name : String) (s : Solver) : IO Unit := do
   match s.refutation with
   | none => IO.println s!"{name}: NO refutation"
@@ -268,3 +403,22 @@ def main : IO Unit := do
   let (r9, s9) := (DumpDriver.goRootGen.run Solver.empty : Option LBool × Solver)
   IO.println s!"rg result: {repr r9}"
   printSnap "rg" s9
+  let (r10, s10) := (DumpDriverPD.goPd1.run Solver.empty : Option LBool × Solver)
+  IO.println s!"pd1 result: {repr r10}"
+  printSnap "pd1" s10
+  let (r11, s11) := (DumpDriverPD.goPd2.run Solver.empty : Option LBool × Solver)
+  IO.println s!"pd2 result: {repr r11}"
+  printSnap "pd2" s11
+  let (r12, s12) := (DumpDriverPD.goPd3.run Solver.empty : Option LBool × Solver)
+  IO.println s!"pd3 result: {repr r12}"
+  printSnap "pd3" s12
+  let (r13, s13) := (DumpDriverPD.goPd4.run Solver.empty : Option LBool × Solver)
+  IO.println s!"pd4 result: {repr r13}"
+  printSnap "pd4" s13
+  let (r15, s15) := (DumpDriverPD.goPd6.run Solver.empty : Option LBool × Solver)
+  IO.println s!"pd6 result: {repr r15}"
+  printSnap "pd6" s15
+  (← IO.getStdout).flush
+  -- o139 (6-var CAD search) moved to scratch_o139.lean — it is the
+  -- long pole, run separately.
+
