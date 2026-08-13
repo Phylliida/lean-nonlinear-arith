@@ -644,10 +644,11 @@ private def pd1Final : TraceBundle :=
       .leafNumeric 0,
       .resolution (.arith #[⟨3, false⟩] #[])], #[]⟩
 
-/- Gate pins (native): the pd1 learned bundle is v0 post-lift;
-`intBranch` stays gated (12e). -/
+/- Gate pins (native): the pd1 learned bundle is v0 post-lift (19b
+Slice 3); an intBranch bundle is v0 too (12e — the last shape gate
+lifted; only the S1 fragment gate remains). -/
 #guard (pd1Bundles[3]!).get!.isV0 == true
-#guard (TraceBundle.mk #[.intBranch 0 (1/2 : Rat)] #[]).isV0 == false
+#guard (TraceBundle.mk #[.intBranch 0 7] #[]).isV0 == true
 
 /-- End-to-end: pd1 walked from both input clauses. The learned clause
 IS the rebuilt literal `x0² < 0`; its arith member is discharged with
@@ -709,4 +710,89 @@ private def pd1BundlesGrammarBad : Array (Option TraceBundle) :=
 example : ∀ ρ : Nat → ℝ,
     (∀ C ∈ [[⟨1, false⟩], [⟨2, false⟩]], clauseHolds ρ pd1Atoms C) → False := by
   nlsat_refute ⟨pd1Atoms, pd1Clauses, pd1BundlesGrammarBad, pd1Final⟩
+
+/-! ## 12e — int1 walked end-to-end (integer B&B; the last shape gate lifted)
+
+Machine-generated snapshot (scratch_dump.lean `goInt1`, 2026-08-13):
+`{x0² = 2}` over one INTEGER variable — UNSAT over ℤ, SAT over ℝ.
+The solver takes TWO B&B rounds (z3 `search_check`'s loop): the first
+witness lands near −√2 → `.intBranch 0 (-2)` (clause 2: `{x0 ≤ −2,
+x0 ≥ −1}`), restart; the second near +√2 → `.intBranch 0 1` (clause 3:
+`{x0 ≤ 1, x0 ≥ 2}`), restart; refutation. The branch clauses are
+INPUT-flagged (`learned = false` — z3's `mk_clause(…, false, nullptr)`)
+but carry bundles, so the walk's contract counts only clause 1 (the
+eq) as an input. The final bundle's three arith members mix branch
+literals with the eq (leafNumeric univariate conflicts). -/
+
+private def int1Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(0, 2)]), ((-2), [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 1)]), (2, [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)]), (1, [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 1)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)]), ((-2), [])], false)]⟩)]
+
+private def int1Clauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, false⟩], learned := false, deleted := false },
+   { lits := #[⟨2, true⟩, ⟨3, true⟩], learned := false, deleted := false },
+   { lits := #[⟨4, true⟩, ⟨5, true⟩], learned := false, deleted := false }]
+
+private def int1Bundles : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   some ⟨#[.intBranch 0 (-2)], #[⟨2, true⟩, ⟨3, true⟩]⟩,
+   some ⟨#[.intBranch 0 1], #[⟨4, true⟩, ⟨5, true⟩]⟩]
+
+private def int1Final : TraceBundle :=
+  ⟨#[.resolution (.clause 3),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨5, true⟩, ⟨1, false⟩] #[]),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨3, true⟩, ⟨1, false⟩, ⟨4, true⟩] #[]),
+      .resolution (.clause 2),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨1, false⟩, ⟨2, true⟩] #[]),
+      .resolution (.clause 1)], #[]⟩
+
+/-- End-to-end: int1 walked from the single input clause (the eq);
+the context's integrality hypothesis discharges both branch splits
+(12e decision 1). -/
+example : ∀ ρ : Nat → ℝ, (∃ n : ℤ, ρ 0 = (n : ℝ)) →
+    (∀ C ∈ [[⟨1, false⟩]], clauseHolds ρ int1Atoms C) → False := by
+  nlsat_refute ⟨int1Atoms, int1Clauses, int1Bundles, int1Final⟩
+
+/- Missing-integrality probe: the same walk WITHOUT the `∃ n : ℤ`
+hypothesis must reject — the branch splits are only valid at integral
+`ρ 0` (the goal is in fact unprovable without it: `ρ 0 = √2`
+satisfies the input clause). Sound rejection at the intBranch
+discharge. -/
+#guard_msgs (drop error) in
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩]], clauseHolds ρ int1Atoms C) → False := by
+  nlsat_refute ⟨int1Atoms, int1Clauses, int1Bundles, int1Final⟩
+
+/- Wrong-variable integrality probe: an `∃ n : ℤ` hyp for a DIFFERENT
+variable (ρ 1 — not even present in the problem) does not discharge
+the split on ρ 0 — the per-variable matching is load-bearing. -/
+#guard_msgs (drop error) in
+example : ∀ ρ : Nat → ℝ, (∃ n : ℤ, ρ 1 = (n : ℝ)) →
+    (∀ C ∈ [[⟨1, false⟩]], clauseHolds ρ int1Atoms C) → False := by
+  nlsat_refute ⟨int1Atoms, int1Clauses, int1Bundles, int1Final⟩
+
+/- Payload-mismatch probe (F-w): `lo = 5` with the clause still
+carrying `x ≤ −2 ∨ x ≥ −1` — the by-value decode rejects (the gt
+atom's poly is not `x − 5`). Note a garbage `lo` would still be a
+VALID split mathematically; this rejection is the clause/payload
+agreement gate (trace-shape fidelity), not soundness. -/
+private def int1BundlesBadLo : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   some ⟨#[.intBranch 0 5], #[⟨2, true⟩, ⟨3, true⟩]⟩,
+   some ⟨#[.intBranch 0 1], #[⟨4, true⟩, ⟨5, true⟩]⟩]
+
+#guard_msgs (drop error) in
+example : ∀ ρ : Nat → ℝ, (∃ n : ℤ, ρ 0 = (n : ℝ)) →
+    (∀ C ∈ [[⟨1, false⟩]], clauseHolds ρ int1Atoms C) → False := by
+  nlsat_refute ⟨int1Atoms, int1Clauses, int1BundlesBadLo, int1Final⟩
 end LeanNonlinearArith.Nlsat.Tests.Walk

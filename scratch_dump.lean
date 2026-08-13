@@ -72,7 +72,7 @@ def ppStep : TraceStep → String
     s!".pseudoDivision {ppMPoly f} {ppMPoly eq} {x} {d} {ppMPoly r} {ppInt lcSign} {ppBool isEven}"
   | .factorSplit p fs vanished =>
     s!".factorSplit {ppMPoly p} {ppMPolyArr fs} {ppMPolyArr vanished}"
-  | .intBranch x v => s!".intBranch {x} {repr v}"
+  | .intBranch x lo => s!".intBranch {x} {ppInt lo}"
   | .resolution ant => s!".resolution ({ppAnt ant})"
 
 def ppSteps (a : Array TraceStep) : String :=
@@ -327,13 +327,23 @@ def goPd6 : SolverM (Option LBool) := do
   let _ ← Solver.mkClause #[lc] false
   Solver.check (Solver.resolve Explain.explain)
 
+/-- 12e integer B&B driver: `{x0² = 2}` over one INTEGER var — UNSAT
+over ℤ, SAT over ℝ (x = ±√2). Expect: search SAT with an irrational
+witness, one B&B round (lo = 1, branch clause `{x0 ≤ 1, x0 ≥ 2}`),
+restart, refutation. -/
+def goInt1 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar true
+  let le ← Solver.mkIneqLiteral ⟨.eq, [(pX0sqM2, false)]⟩
+  let _ ← Solver.mkClause #[le] false
+  Solver.check (Solver.resolve Explain.explain)
+
 /-- ordering_139 as a real nlsat problem (6 vars, x0..x5 =
 a,b,c,da,db,dc): hypotheses hab: a·db ≤ b·da, hbc: b·dc ≤ c·db,
 da/db/dc > 0, negated goal a·dc − c·da > 0. Polls: multilinear input,
 but projection cross-products are the L1-open case — the Slice 0
 standing-target fragment check. -/
-def pA : MPoly := [(1, [(0, 1)])]
-def pB : MPoly := [(1, [(1, 1)])]
+def pA : MPoly := [(1, [(0, 1)])]def pB : MPoly := [(1, [(1, 1)])]
 def pC : MPoly := [(1, [(2, 1)])]
 def pDa : MPoly := [(1, [(3, 1)])]
 def pDb : MPoly := [(1, [(4, 1)])]
@@ -418,6 +428,9 @@ def main : IO Unit := do
   let (r15, s15) := (DumpDriverPD.goPd6.run Solver.empty : Option LBool × Solver)
   IO.println s!"pd6 result: {repr r15}"
   printSnap "pd6" s15
+  let (r17, s17) := (DumpDriverPD.goInt1.run Solver.empty : Option LBool × Solver)
+  IO.println s!"int1 result: {repr r17}"
+  printSnap "int1" s17
   let (r16, s16) := (DumpDriverPD.goO139.run Solver.empty : Option LBool × Solver)
   IO.println s!"o139 result: {repr r16}"
   printSnap "o139" s16

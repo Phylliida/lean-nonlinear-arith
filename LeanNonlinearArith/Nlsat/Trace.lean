@@ -150,9 +150,16 @@ inductive TraceStep
   per-instance ring identity + zero-product cases remain available for
   19b-grade completeness insurance. -/
   | factorSplit (p : MPoly) (fs vanished : Array MPoly)
-  /-- Integer branch-and-bound split `x ≤ ⌊v⌋ ∨ x ≥ ⌈v⌉` (12e seam —
-  `search_check`; not yet emitted). Discharge: omega-trivial. -/
-  | intBranch (x : Var) (v : Rat)
+  /-- Integer branch-and-bound split `x ≤ lo ∨ x ≥ lo+1` (z3
+  `search_check` :1554-1606; emitted since 12e). `lo` is exactly what
+  z3 puts in the emitted clause — computed search-side from the sample
+  via `int_lt` + tighten (`:1566-1575`). The sample itself is
+  ALGEBRAIC and may be irrational, so it is NOT carried (12e decision
+  2, Danielle 2026-08-13); the discharge consumes only `lo` and is
+  omega-trivial given integrality of `x`. Every payload is sound —
+  any integer `lo` splits — so the grammar is unconditional BY DESIGN
+  (Slice-3-review R-iv dissolves). -/
+  | intBranch (x : Var) (lo : Int)
   /-- Boolean resolution glue: one antecedent of the round, in
   processing order. v0 discharge (R1 — came forward from 19b):
   propositional composition (tauto-grade DAG walk from
@@ -204,22 +211,17 @@ namespace TraceBundle
 /-- A bundle is S1-gated (advisory mark) iff some step is. -/
 def isS1Gated (b : TraceBundle) : Bool := b.steps.any TraceStep.isS1Gated
 
-/-- A bundle is v0-checkable iff every step is in-fragment AND no step
-is `intBranch` (12e shape — integer branch splits stay gated until the
-12e lane). `pseudoDivision` steps are v0 as of 19b Slice 3 (2026-08-13):
-Slice 1/2 landed the grammar mirror + rebuilt-literal transport, so a
-load-bearing pd rewrite (R7) is now consumed checker-side by
-`collectStepFacts` — and path-(c) unmatched steps are inert by the
-participation discipline. `resolution` markers are v0 (R1 — the
-propositional replay came forward) and `factorSplit` steps are always
-safe to ignore (R6 — the factored poly never appears in any clause
-literal, so ignoring loses zero z3-coverage). Every real bundle carries
-both (the live x²+y²<0 dump), so the four-shapes-only reading of v0
+/-- A bundle is v0-checkable iff every step is in-fragment — as of 12e
+(2026-08-13) EVERY step shape has a checker lane: `pseudoDivision`
+(19b Slices 1–3: grammar + rebuilt-literal transport), `intBranch`
+(12e: split-clause discharge from context integrality), `resolution`
+markers (R1 — the propositional replay came forward), `factorSplit`
+(always safe to ignore, R6 — the factored poly never appears in any
+clause literal). The only remaining gate is S1 (`rootGeneric` at
+degree > 2 — Tier B). Every real bundle carries resolution/factorSplit
+steps (the live x²+y²<0 dump), so the four-shapes-only reading of v0
 rejected everything — reconciled 2026-08-06 (F0). -/
-def isV0 (b : TraceBundle) : Bool :=
-  !b.isS1Gated && b.steps.all fun
-    | .intBranch .. => false
-    | _ => true
+def isV0 (b : TraceBundle) : Bool := !b.isS1Gated
 
 end TraceBundle
 
@@ -319,8 +321,8 @@ inductive Grammar : TraceStep → Prop
       Grammar (.pseudoDivision f eq x d r lcSign isEven)
   | factorSplit {p : MPoly} {fs vanished : Array MPoly} :
       Grammar (.factorSplit p fs vanished)
-  | intBranch {x : Var} {v : Rat} :
-      Grammar (.intBranch x v)
+  | intBranch {x : Var} {lo : Int} :
+      Grammar (.intBranch x lo)
   | resolution {ant : ResolutionAntecedent} :
       Grammar (.resolution ant)
 
@@ -367,6 +369,11 @@ def grammarOK : TraceStep → Bool
      | none => true
      | some v => decide (lcSign = Int.sign v)) &&
     decide (r = [] ∨ r.degreeIn x < eq.degreeIn x)
+  -- `intBranch` is unconditional BY DESIGN (12e decision 2): the
+  -- payload `(x, lo)` carries exactly what z3 puts in the emitted
+  -- clause, and any integer `lo` yields a sound split — there is no
+  -- structural condition to break (Slice-3-review R-iv dissolves with
+  -- the payload change).
   | .leafNumeric _ | .factorSplit ..
   | .intBranch .. | .resolution _ => true
 

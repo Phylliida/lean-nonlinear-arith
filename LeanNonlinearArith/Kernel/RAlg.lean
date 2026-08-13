@@ -235,6 +235,29 @@ def isRational : RAlg → Bool × RAlg
         if intervalMagnitude a' b' < minMagnitude then (false, x)
         else (false, x')
 
+/-- z3 **4.12.5** `am::is_int` (`algebraic_numbers.cpp:246`, the 12e
+B&B scan's value test): basic → `qm().is_int` (den = 1); the
+`m_not_rational` short-circuit (our `minimal` flag, nla-27) → false;
+otherwise `refine_until_prec(a, 1)` (width < 1/2 — at most one
+integer in the interval, may become basic), candidate `⌊upper⌋`,
+integer iff `lower < candidate ∧ p(candidate) = 0` (a hit becomes
+basic, z3's `m_wrapper.set`). Unlike `isRational` (:285) there is no
+`save_intervals` wrapper in the source — over-refinement sticks.
+nla-28: returns the refined (or converted) cell alongside the
+verdict. -/
+def isInt : RAlg → Bool × RAlg
+  | .rat q => (q.den == 1, .rat q)
+  | x@(.root _ _ _ true) => (false, x)   -- m_not_rational: minimal ⇒ irrational
+  | x@(.root p _ _ false) =>
+    match refineUntilPrec x 1 with
+    | .rat q => (q.den == 1, .rat q)     -- became basic during refinement
+    | x'@(.root p' a' b' _) =>
+      let cand := mkRat (Mpbq.floorInt b') 1
+      if a'.ltRat cand && QPoly.eval p' cand == 0 then
+        (true, .rat cand)                -- set(a, candidate): becomes basic
+      else
+        (false, x')
+
 /-- z3 `am::separate` (`algebraic_numbers.cpp:2794`): given `x < y`,
 refine until the isolating brackets clear each other.
 

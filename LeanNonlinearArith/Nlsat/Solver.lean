@@ -1279,12 +1279,69 @@ def sortWatchedClauses : SolverM Unit := do
       |>.map (·.2.2)
     modify fun s => { s with watches := s.watches.set! x sorted }
 
-/-- z3 `search_check` (`:1555`) — REAL-VALUED for 12c: the integer
-branch-and-bound loop is the 12e seam (declared slice boundary, not a
-divergence: it lands before any consumer at 12e; `m_is_int` is
-recorded but no B&B clause is emitted yet). -/
-def searchCheck (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBool) :=
-  search resolve
+/-- z3 `search_check`'s scan (`:1562-1578`): every is_int var whose
+assigned value is non-integer, in internal order, with `lo = ⌊v⌋`
+computed as z3 does — `int_lt` (integer STRICTLY below; for cells
+read off the CURRENT dyadic bound, possibly loose) then the one-step
+tighten loop (`while v > lo+1: lo++`) of algebraic-vs-rational
+compares (`m_am.gt(v, lo.to_mpq())`; refinement threaded through the
+store). z3's defensive `!is_int(vlo) → continue` is vacuous here:
+`intLtC` returns `Int` directly. -/
+def collectIntBounds : SolverM (Array (Var × Int)) := do
+  let s ← get
+  let mut bounds : Array (Var × Int) := #[]
+  for x in [:s.isInt.size] do
+    if s.isInt[x]! then
+      match s.assignment.get? x with
+      | none => pure ()
+      | some c =>
+        if !(← liftC (CellStore.isIntC c)) then
+          let mut lo ← liftC (CellStore.intLtC c)
+          let mut tightening := true
+          while tightening do
+            let tmp ← liftC (CellStore.fresh (.rat (mkRat (lo + 1) 1)))
+            if (← liftC (CellStore.compareC c tmp)) == .gt then
+              lo := lo + 1
+            else
+              tightening := false
+          bounds := bounds.push (x, lo)
+  return bounds
+
+/-- z3 `search_check`'s per-var branch emission (`:1583-1602`): the
+two-literal clause `{¬(x−lo > 0), ¬(x−(lo+1) < 0)}` (`mk_linear`,
+`is_even = false`), added INPUT-flagged (`learned = false` — z3's
+`mk_clause(…, false, nullptr)`), with the `intBranch` step flushed
+into the clause's bundle: the trace carries what z3's nullptr
+justification leaves implicit (12e; the clause is derived-by-
+integrality, not an input — the walk's contract knows it by the
+bundle). -/
+def emitIntBranch (x : Var) (lo : Int) : SolverM Unit := do
+  let pLo : MPoly := [(1, [(x, 1)]), (-lo, [])]
+  let pHi : MPoly := [(1, [(x, 1)]), (-(lo + 1), [])]
+  let lLo ← mkIneqLiteral ⟨.gt, [(pLo, false)]⟩
+  let lHi ← mkIneqLiteral ⟨.lt, [(pHi, false)]⟩
+  emitTrace (.intBranch x lo)
+  let cid ← mkClause #[lLo.negate, lHi.negate] false
+  flushTrace cid (← get).clauses[cid]!.lits
+
+/-- z3 `search_check` (`:1554-1606`): `search` wrapped in the integer
+branch-and-bound loop. After each SAT exit, scan for is_int vars with
+non-integer values (`collectIntBounds`); if none, the model stands.
+Otherwise `init_search` (learned clauses persist across the restart),
+emit one split clause per offending var (`emitIntBranch`), and
+re-enter `search`. (12e: no longer real-valued-only — the declared
+seam is now the port.) -/
+def searchCheck (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBool) := do
+  let mut r ← search resolve
+  while r == some LBool.true do
+    let bounds ← collectIntBounds
+    if bounds.isEmpty then
+      break
+    initSearch
+    for (x, lo) in bounds do
+      emitIntBranch x lo
+    r ← search resolve
+  return r
 
 /-- z3 `check()` (`:1607`): init, full-dimensional flag for 12d's
 explain, reorder, watch sorting, search, restore order. -/

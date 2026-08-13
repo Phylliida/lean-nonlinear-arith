@@ -2188,6 +2188,108 @@ unsafe def pdRewriteLane (mvar : MVarId) (ρ IE : Expr) (steps : Array TraceStep
     | .root _ => continue
   pure (S.mvar, S.eqFacts, S.diseqFacts, S.signPosFacts, S.prodEqFacts, S.chainFacts)
 
+/-! ## 12e — the intBranch split-clause discharge (checker side)
+
+The bundle lemma of an integer branch split is the clause
+`{¬(x−lo > 0), ¬(x−(lo+1) < 0)}` — valid at integral `ρ x`
+(`Check.intBranch_split`), never at arbitrary reals. The integrality
+comes from the CONTEXT (`∃ n : ℤ, ρ x = ↑n`, 12e decision 1 — the
+nla-14 frontend's convention; test goals state it explicitly): a trace
+branching a variable the context can't prove integral is a sound
+rejection. The split consumes only `lo` (decision 2), so the payload
+carries exactly what z3 puts in the emitted clause. -/
+
+/-- Find the context's integrality hypothesis for `ρ x`:
+`∃ n : ℤ, ρ x = ↑n`. Returns the fvar, or `none` (the caller's sound
+rejection). Syntactic match on the hypothesis type. -/
+unsafe def findIntegralityHyp (ρE : Expr) (x : Var) : MetaM (Option Expr) := do
+  let xE := toExpr x
+  for decl in (← getLCtx).decls.toList do
+    match decl with
+    | none => continue
+    | some d =>
+      if d.isImplementationDetail then continue
+      let (fn, args) := d.type.getAppFnArgs
+      unless fn == ``Exists && args.size == 2 do continue
+      let .const ``Int [] := args[0]! | continue
+      let .lam _ _ body _ := args[1]! | continue
+      let (bfn, bargs) := body.getAppFnArgs
+      unless bfn == ``Eq && bargs.size == 3 do continue
+      unless (← isDefEq bargs[1]! (mkApp ρE xE)) do continue
+      let (cfn, _) := bargs[2]!.getAppFnArgs
+      unless cfn == ``Int.cast do continue
+      return some d.toExpr
+  return none
+
+/-- The intBranch discharge: prove `clauseSatI IE` of the split clause
+(the bundle's lemma). By-value decode of the clause against the step
+payload (the F2-seam discipline — a clause/payload disagreement
+rejects soundly; note a garbage `lo` still yields a VALID split, so
+the decode is about trace-shape fidelity, not soundness). Bridges
+through `clauseHolds` via `clauseSatI_interp` (the Walk.lean
+input-fact idiom, mirrored). -/
+unsafe def intBranchSplitProduce (ρE IE atomsE : Expr) (atomsV : Array (Option Atom))
+    (lits : List Literal) (x : Var) (lo : Int) : TacticM Expr := do
+  if lits.length != 2 then
+    throwError "intBranch: split clause is not exactly two literals"
+  let pLo : MPoly := [(1, [(x, 1)]), (-lo, [])]
+  let pHi : MPoly := [(1, [(x, 1)]), (-(lo + 1), [])]
+  let mut bgt? : Option Nat := none
+  let mut blt? : Option Nat := none
+  for l in lits do
+    if !l.neg then
+      throwError "intBranch: positive literal in the split clause"
+    match atomsV[l.bvar]? with
+    | some (some (.ineq ⟨.gt, [(p, false)]⟩)) =>
+      if p == pLo then bgt? := some l.bvar
+      else throwError "intBranch: gt atom poly ≠ x − lo (payload mismatch)"
+    | some (some (.ineq ⟨.lt, [(p, false)]⟩)) =>
+      if p == pHi then blt? := some l.bvar
+      else throwError "intBranch: lt atom poly ≠ x − (lo+1) (payload mismatch)"
+    | _ =>
+      throwError "intBranch: split-clause atom is not the expected linear shape"
+  let some bgt := bgt? | throwError "intBranch: no `x − lo > 0` literal found"
+  let some blt := blt? | throwError "intBranch: no `x − (lo+1) < 0` literal found"
+  let some hIntE ← findIntegralityHyp ρE x
+    | throwError "intBranch: no integrality hypothesis `∃ n : ℤ, ρ x = ↑n` in context"
+  let hsplit ← mkAppM ``Check.intBranch_split #[ρE, toExpr x, toExpr lo, hIntE]
+  let CE ← mkListLit (mkConst ``Literal) (lits.map litToExpr)
+  let decPrf ← mkDecideProof (← mkAppM ``Eq
+    #[mkApp2 (mkConst ``clauseDecodable) atomsE CE, mkConst ``true])
+  let hdec := mkAppN (mkConst ``clauseDecodable_true) #[atomsE, CE, decPrf]
+  -- Per-branch witness: from the disjunct `evalP ≤ 0` / `0 ≤ evalP`
+  -- (a bound fvar) to `∃ l ∈ CE, litHolds ρ atomsE l`.
+  let mkWit (p : MPoly) (b : Nat) (gtBranch : Bool) : TacticM Expr := do
+    let evE ← mkAppM ``Check.evalP #[ρE, toExpr p]
+    let hTy ← if gtBranch then
+        mkAppM ``LE.le #[evE, ← mkRealZero]
+      else
+        mkAppM ``LE.le #[← mkRealZero, evE]
+    withLocalDecl `h BinderInfo.default hTy fun hE => do
+      let hNot ← if gtBranch then
+          mkAppM ``Check.notHolds_gt_single_of_nonpos #[ρE, toExpr p, hE]
+        else
+          mkAppM ``Check.notHolds_lt_single_of_nonneg #[ρE, toExpr p, hE]
+      -- litHolds ρ atomsE ⟨b, true⟩ unfolds (concrete table) to
+      -- `¬ Atom.Holds ρ atom` — ascription by defeq.
+      let lE := litToExpr ⟨b, true⟩
+      let lhTy ← mkAppM ``litHolds #[ρE, atomsE, lE]
+      let hLH ← mkExpectedTypeHint hNot lhTy
+      let memPrf ← mkDecideProof (← mkAppM ``Membership.mem #[CE, lE])
+      let andPrf ← mkAppM ``And.intro #[memPrf, hLH]
+      let motive ← withLocalDecl `l' BinderInfo.default (mkConst ``Literal) fun lv => do
+        let mem ← mkAppM ``Membership.mem #[CE, lv]
+        let ls ← mkAppM ``litHolds #[ρE, atomsE, lv]
+        mkLambdaFVars #[lv] (← mkAppM ``And #[mem, ls])
+      let wit := mkAppN (mkConst ``Exists.intro [levelOne])
+        #[mkConst ``Literal, motive, lE, andPrf]
+      mkLambdaFVars #[hE] wit
+  let lamGt ← mkWit pLo bgt true
+  let lamLt ← mkWit pHi blt false
+  let hHolds ← mkAppM ``Or.elim #[hsplit, lamGt, lamLt]
+  mkAppM ``Iff.mpr
+    #[mkAppN (mkConst ``clauseSatI_interp) #[ρE, atomsE, CE, hdec], hHolds]
+
 /-- Core worker: prove `clauseSatI (interp ρ atoms) C` for concrete
 `atoms`, `C`. `hName` seeds the extracted-fact names. Failure (any
 undecodable literal, skipped shape, or glue failure) propagates as a

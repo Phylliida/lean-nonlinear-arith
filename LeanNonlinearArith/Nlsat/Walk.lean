@@ -81,10 +81,9 @@ def arithClauseVal (core proj : Array Literal) : List Literal :=
 /-- The F-set clause VALUES of one bundle, computed from the snapshot
 (learned antecedents resolve to the bundle lemmas — V1-pinned equal to
 the clause table; input antecedents to the clause table). Errors:
-out-of-range antecedent, forward reference, `intBranch` step (the only
-remaining non-v0 shape since the 19b Slice-3 gate lift — in practice
-unreachable: `precheck`'s `isV0` gate fires first, so the throw is
-dead-code defense). -/
+out-of-range antecedent, forward reference. `intBranch` steps
+contribute the bundle's own lemma (the split clause — see the arm
+comment). -/
 def nodeFSet (clauses : Array Clause) (bundles : Array (Option TraceBundle))
     (learnedLemmas : Array (Nat × List Literal)) (b : TraceBundle) :
     Except String (List (List Literal)) := do
@@ -103,11 +102,15 @@ def nodeFSet (clauses : Array Clause) (bundles : Array (Option TraceBundle))
     | .resolution (.arith core proj) =>
       F := F ++ [arithClauseVal core proj]
     | .resolution (.decision _) => pure ()
-    | .intBranch .. => throw "non-v0 step"
+    -- `intBranch` steps (12e) contribute the split clause itself —
+    -- the bundle's own lemma (RUP then derives it trivially; the
+    -- SEMANTIC gate is `buildFSet`'s by-value decode + the
+    -- integrality discharge, not this propositional check).
     -- `pseudoDivision` steps (v0 since 19b Slice 3) contribute no
     -- clause-level facts — they are step-facts consumed checker-side by
     -- `Refute.collectStepFacts` (the Slice-2 rebuilt-literal transport),
     -- same treatment as projection steps (review 5, F-i).
+    | .intBranch .. => F := F ++ [b.lemma.toList]
     | _ => pure ()
   return F
 
@@ -223,9 +226,12 @@ partial def memChain : (tail : List (List Literal)) → Nat → Expr → MetaM E
 /-- The F-set of a bundle as (values × `clauseSatI IE` proofs), in step
 order. `.arith` markers are discharged by F2's `proveClauseSat` in a
 sandboxed sub-goal; projection steps contribute no clause-level facts
-(review 5, F-i). All malformed cases were already rejected by
-`precheck` — the remaining `throwError`s are dead-code defense. -/
-unsafe def buildFSet (IE : Expr)
+(review 5, F-i); `intBranch` steps (12e) contribute the split clause
+itself, discharged by `Refute.intBranchSplitProduce` from the
+context's integrality hypothesis. All malformed cases were already
+rejected by `precheck` — the remaining `throwError`s are dead-code
+defense. -/
+unsafe def buildFSet (ρE IE atomsE : Expr) (atomsV : Array (Option Atom))
     (inputFacts learnedFacts : Array (Nat × List Literal × Expr))
     (b : TraceBundle) (bundlesV : Array (Option TraceBundle)) :
     TacticM (List (List Literal) × List Expr) := do
@@ -266,6 +272,13 @@ unsafe def buildFSet (IE : Expr)
       setGoals saved
       let pf ← instantiateMVars am
       Fvals := Fvals ++ [Cval]; Fproofs := Fproofs ++ [pf]
+    | .intBranch x lo =>
+      -- 12e: the branch bundle's lemma IS the split clause; the
+      -- discharge re-derives its validity from the context's
+      -- integrality hypothesis (decision 1), decoding the clause
+      -- against the payload by value.
+      let pf ← Refute.intBranchSplitProduce ρE IE atomsE atomsV b.lemma.toList x lo
+      Fvals := Fvals ++ [b.lemma.toList]; Fproofs := Fproofs ++ [pf]
     | _ => priorSteps := priorSteps.push step
   return (Fvals, Fproofs)
 
@@ -307,12 +320,30 @@ def rupNode (IE motiveE : Expr)
 
 /-- The walk. `mvar`'s goal: `∀ ρ, (∀ C ∈ Cs, clauseHolds ρ atoms C) →
 False` with concrete `atoms`/`Cs`; `snapE` is the `s.refutation`
+payload. 12e: optional integrality hypotheses (`∃ n : ℤ, ρ x = ↑n`)
+may precede the clause hypothesis — `introToClauseHyp` intros past
+non-∀ binders (they stay in the context for
+`Refute.findIntegralityHyp`). -/
+unsafe def introToClauseHyp (m : MVarId) (fuel : Nat := 64) :
+    TacticM (FVarId × MVarId) := do
+  match fuel with
+  | 0 => throwError "nlsat_refute: no `∀ C ∈ Cs, clauseHolds ρ atoms C` hypothesis"
+  | fuel + 1 =>
+    let (fv, m') ← m.intro `h
+    m'.withContext do
+      if (← inferType (mkFVar fv)).isForall then
+        return (fv, m')
+      else
+        introToClauseHyp m' fuel
+
+/-- The walk. `mvar`'s goal: `∀ ρ, (∀ C ∈ Cs, clauseHolds ρ atoms C) →
+False` with concrete `atoms`/`Cs`; `snapE` is the `s.refutation`
 payload. -/
 unsafe def walkRefutation (mvar : MVarId) (snapE : Expr) : TacticM Unit := do
   let snapTyE ← Term.elabType (← `(SnapshotTy))
   let (_, clausesV, bundlesV, finalV) ← Meta.evalExpr SnapshotTy snapTyE snapE
   let (ρFv, m1) ← mvar.intro `ρ
-  let (hCFv, m2) ← m1.intro `hC
+  let (hCFv, m2) ← introToClauseHyp m1
   m2.withContext do
     let ρE := mkFVar ρFv
     let hCE := mkFVar hCFv
@@ -371,13 +402,13 @@ unsafe def walkRefutation (mvar : MVarId) (snapE : Expr) : TacticM Unit := do
     let mut learnedFacts : Array (Nat × List Literal × Expr) := #[]
     for cid in [0:clausesV.size] do
       if let some b := bundlesV[cid]! then
-        let (Fvals, Fproofs) ← buildFSet IE inputFacts learnedFacts b bundlesV
+        let (Fvals, Fproofs) ← buildFSet ρE IE atomsE atomsV inputFacts learnedFacts b bundlesV
         let pf ← rupNode IE motiveE Fvals Fproofs b.lemma.toList
         learnedFacts := learnedFacts.push (cid, b.lemma.toList, pf)
     -- Final bundle: target [] ⇒ False. (Same R2' dedup as rupNode;
     -- the [] target is unaffected but the F-set clauses may carry
     -- duplicate literals.)
-    let (Fvals, Fproofs) ← buildFSet IE inputFacts learnedFacts finalV bundlesV
+    let (Fvals, Fproofs) ← buildFSet ρE IE atomsE atomsV inputFacts learnedFacts finalV bundlesV
     let FvalsD := Fvals.map (·.dedup)
     let targetE ← quoteLits []
     let FE ← quoteLitsList FvalsD

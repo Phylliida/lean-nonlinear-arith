@@ -1431,6 +1431,61 @@ theorem rootAtom_false_of_index_lt (ρ : Nat → ℝ) (k : RootKind) (y : Var)
   have hle : i ≤ rootCount ρ y p := h1
   omega
 
+/-! ## 12e — the integer branch-and-bound split (z3 `search_check` :1554-1606)
+
+The split clause `{¬(x−lo > 0), ¬(x−(lo+1) < 0)}` is valid at every
+INTEGRAL `ρ x` — omega-trivial given integrality (the discharge
+consumes only `lo`; the sample is never trusted, 12e decision 2). The
+integrality itself comes from the CONTEXT (decision 1): these lemmas
+take it as a hypothesis, so a trace branching a non-integral variable
+has no applicable instance. -/
+
+/-- The split in evalP form over the two emitted linear polys:
+`ρ x − lo ≤ 0 ∨ 0 ≤ ρ x − (lo+1)` for integral `ρ x`. -/
+theorem intBranch_split (ρ : Nat → ℝ) (x : Var) (lo : Int)
+    (h : ∃ n : ℤ, ρ x = (n : ℝ)) :
+    evalP ρ [(1, [(x, 1)]), (-lo, [])] ≤ 0 ∨
+      0 ≤ evalP ρ [(1, [(x, 1)]), (-(lo + 1), [])] := by
+  obtain ⟨n, hn⟩ := h
+  have hd1 : evalP ρ [(1, [(x, 1)]), (-lo, [])] = ρ x - (lo : ℝ) := by
+    simp [evalP, evalM]
+    ring
+  have hd2 : evalP ρ [(1, [(x, 1)]), (-(lo + 1), [])] =
+      ρ x - ((lo : ℝ) + 1) := by
+    simp [evalP, evalM]
+    ring
+  rw [hd1, hd2, hn]
+  rcases lt_or_ge n (lo + 1) with h1 | h1
+  · left
+    have h2 : (n : ℝ) ≤ (lo : ℝ) := by
+      exact_mod_cast (Int.lt_add_one_iff.mp h1)
+    linarith
+  · right
+    have h2 : ((lo + 1 : ℤ) : ℝ) ≤ (n : ℝ) := by exact_mod_cast h1
+    push_cast at h2
+    linarith
+
+/-- A non-positive single odd factor falsifies the `gt` atom (the
+oddProd of one odd factor is the factor itself). -/
+theorem notHolds_gt_single_of_nonpos (ρ : Nat → ℝ) (p : MPoly)
+    (h : evalP ρ p ≤ 0) :
+    ¬ Atom.Holds ρ (.ineq ⟨.gt, [(p, false)]⟩) := by
+  intro hh
+  obtain ⟨_, hpos⟩ := hh
+  have h1 : oddProd ρ [(p, false)] = evalP ρ p := by simp [oddProd]
+  rw [h1] at hpos
+  linarith
+
+/-- A non-negative single odd factor falsifies the `lt` atom. -/
+theorem notHolds_lt_single_of_nonneg (ρ : Nat → ℝ) (p : MPoly)
+    (h : 0 ≤ evalP ρ p) :
+    ¬ Atom.Holds ρ (.ineq ⟨.lt, [(p, false)]⟩) := by
+  intro hh
+  obtain ⟨_, hneg⟩ := hh
+  have h1 : oddProd ρ [(p, false)] = evalP ρ p := by simp [oddProd]
+  rw [h1] at hneg
+  linarith
+
 end Check
 
 end LeanNonlinearArith.Nlsat

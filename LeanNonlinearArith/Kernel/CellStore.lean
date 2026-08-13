@@ -130,6 +130,14 @@ def isRationalC (x : CellId) : CellM Bool := do
   write x a'
   return r
 
+/-- z3 `imp::is_int` on a stored cell (12e; refinement/became-basic
+persists — the B&B scan's value test, `nlsat_solver.cpp:1563`). -/
+def isIntC (x : CellId) : CellM Bool := do
+  let a ← read x
+  let (r, a') := RAlg.isInt a
+  write x a'
+  return r
+
 /-- `refineUntilPrec` on a stored cell. -/
 def refineUntilPrecC (x : CellId) (prec : Nat) : CellM Unit := do
   modifyCell x (RAlg.refineUntilPrec · prec)
