@@ -957,6 +957,140 @@ theorem negHolds_deg1_trichotomy (ρ : Nat → ℝ) (k : RootKind) (y : Var)
           (le_of_eq hrc.symm) hA)).mp hcmp⟩)
 
 
+/-! ## 19b pseudoDivision — the sign-transfer family
+
+From z3's own mathematical contract `lc^d · f = Q·eq + R` (the
+pseudo-remainder identity, polynomial.cpp:5095 — re-proved per-instance
+by `Refute.pseudoDivisionIdentity`, never trusted from the payload),
+the factor's sign transfers by the parity of the exponent and the lc
+sign — the :1132-1137 rule, cross-checked line-by-line: **d even ⟹
+sign f = sign r** (the `d % 2 == 1` guard fails; pd6 witnessed); **d
+odd ∧ lc > 0 ⟹ sign f = sign r** (`lc_sign < 0` fails; pd1/pd2/pd3
+witnessed); **d odd ∧ lc < 0 ⟹ sign f = −sign r** (pd4 witnessed).
+d-parity and lcSign are never trusted: the exponent and lc-sign are
+hypotheses of each lemma (19b decision 1 — the perturbation
+(d+1, lc·Q, lc·r) scales R and flips parity in cancellation, so any
+identity witness yields the same conclusion). The const-remainder
+path-(b) collapse (:1141-1157) is the `eq` shape with `R = 0` — no
+separate lemma. -/
+
+section PdSignTransfer
+
+variable {L F Q E R : ℝ} {m : Nat}
+
+/-- Under `E = 0` the pseudo-division identity collapses to the
+multiplier form. -/
+theorem pd_id_apply (hId : T * F = Q * E + R) (hE : E = 0) : T * F = R := by
+  rw [hId, hE, mul_zero, zero_add]
+
+theorem pdSign_even_gt (hL : L ≠ 0) (hE : E = 0)
+    (hId : L ^ (2 * m) * F = Q * E + R) : 0 < F ↔ 0 < R := by
+  have hT : 0 < L ^ (2 * m) := Even.pow_pos (even_two_mul m) hL
+  rw [← pd_id_apply hId hE]; exact (mul_pos_iff_of_pos_left hT).symm
+
+theorem pdSign_even_lt (hL : L ≠ 0) (hE : E = 0)
+    (hId : L ^ (2 * m) * F = Q * E + R) : F < 0 ↔ R < 0 := by
+  have hT : 0 < L ^ (2 * m) := Even.pow_pos (even_two_mul m) hL
+  rw [← pd_id_apply hId hE, ← not_le, ← not_le, mul_nonneg_iff_of_pos_left hT]
+
+theorem pdSign_even_ge (hL : L ≠ 0) (hE : E = 0)
+    (hId : L ^ (2 * m) * F = Q * E + R) : 0 ≤ F ↔ 0 ≤ R := by
+  have hT : 0 < L ^ (2 * m) := Even.pow_pos (even_two_mul m) hL
+  rw [← pd_id_apply hId hE]; exact (mul_nonneg_iff_of_pos_left hT).symm
+
+theorem pdSign_even_le (hL : L ≠ 0) (hE : E = 0)
+    (hId : L ^ (2 * m) * F = Q * E + R) : F ≤ 0 ↔ R ≤ 0 := by
+  have hT : 0 < L ^ (2 * m) := Even.pow_pos (even_two_mul m) hL
+  rw [← pd_id_apply hId hE, ← not_lt, ← not_lt, mul_pos_iff_of_pos_left hT]
+
+theorem pdSign_even_eq (hL : L ≠ 0) (hE : E = 0)
+    (hId : L ^ (2 * m) * F = Q * E + R) : F = 0 ↔ R = 0 := by
+  have hT : L ^ (2 * m) ≠ 0 := pow_ne_zero _ hL
+  rw [← pd_id_apply hId hE]
+  constructor
+  · intro hF; rw [hF, mul_zero]
+  · intro hTF
+    rcases mul_eq_zero.mp hTF with hT0 | hF
+    · exact absurd hT0 hT
+    · exact hF
+
+theorem pdSign_odd_pos_gt (hL : 0 < L) (hE : E = 0)
+    (hId : L ^ (2 * m + 1) * F = Q * E + R) : 0 < F ↔ 0 < R := by
+  have hT : 0 < L ^ (2 * m + 1) := (Odd.pow_pos_iff (odd_two_mul_add_one m)).mpr hL
+  rw [← pd_id_apply hId hE]; exact (mul_pos_iff_of_pos_left hT).symm
+
+theorem pdSign_odd_pos_lt (hL : 0 < L) (hE : E = 0)
+    (hId : L ^ (2 * m + 1) * F = Q * E + R) : F < 0 ↔ R < 0 := by
+  have hT : 0 < L ^ (2 * m + 1) := (Odd.pow_pos_iff (odd_two_mul_add_one m)).mpr hL
+  rw [← pd_id_apply hId hE, ← not_le, ← not_le, mul_nonneg_iff_of_pos_left hT]
+
+theorem pdSign_odd_pos_ge (hL : 0 < L) (hE : E = 0)
+    (hId : L ^ (2 * m + 1) * F = Q * E + R) : 0 ≤ F ↔ 0 ≤ R := by
+  have hT : 0 < L ^ (2 * m + 1) := (Odd.pow_pos_iff (odd_two_mul_add_one m)).mpr hL
+  rw [← pd_id_apply hId hE]; exact (mul_nonneg_iff_of_pos_left hT).symm
+
+theorem pdSign_odd_pos_le (hL : 0 < L) (hE : E = 0)
+    (hId : L ^ (2 * m + 1) * F = Q * E + R) : F ≤ 0 ↔ R ≤ 0 := by
+  have hT : 0 < L ^ (2 * m + 1) := (Odd.pow_pos_iff (odd_two_mul_add_one m)).mpr hL
+  rw [← pd_id_apply hId hE, ← not_lt, ← not_lt, mul_pos_iff_of_pos_left hT]
+
+theorem pdSign_odd_pos_eq (hL : 0 < L) (hE : E = 0)
+    (hId : L ^ (2 * m + 1) * F = Q * E + R) : F = 0 ↔ R = 0 := by
+  have hT : L ^ (2 * m + 1) ≠ 0 := pow_ne_zero _ (ne_of_gt hL)
+  rw [← pd_id_apply hId hE]
+  constructor
+  · intro hF; rw [hF, mul_zero]
+  · intro hTF
+    rcases mul_eq_zero.mp hTF with hT0 | hF
+    · exact absurd hT0 hT
+    · exact hF
+
+theorem pdSign_odd_neg_gt (hL : L < 0) (hE : E = 0)
+    (hId : L ^ (2 * m + 1) * F = Q * E + R) : 0 < F ↔ R < 0 := by
+  have hT : L ^ (2 * m + 1) < 0 := (Odd.pow_neg_iff (odd_two_mul_add_one m)).mpr hL
+  have hS : 0 < - L ^ (2 * m + 1) := neg_pos.mpr hT
+  rw [← pd_id_apply hId hE,
+    show L ^ (2 * m + 1) * F = -((- L ^ (2 * m + 1)) * F) by ring,
+    neg_lt_zero, mul_pos_iff_of_pos_left hS]
+
+theorem pdSign_odd_neg_lt (hL : L < 0) (hE : E = 0)
+    (hId : L ^ (2 * m + 1) * F = Q * E + R) : F < 0 ↔ 0 < R := by
+  have hT : L ^ (2 * m + 1) < 0 := (Odd.pow_neg_iff (odd_two_mul_add_one m)).mpr hL
+  have hS : 0 < - L ^ (2 * m + 1) := neg_pos.mpr hT
+  rw [← pd_id_apply hId hE,
+    show L ^ (2 * m + 1) * F = -((- L ^ (2 * m + 1)) * F) by ring,
+    neg_pos, ← not_le, ← not_le, mul_nonneg_iff_of_pos_left hS]
+
+theorem pdSign_odd_neg_ge (hL : L < 0) (hE : E = 0)
+    (hId : L ^ (2 * m + 1) * F = Q * E + R) : 0 ≤ F ↔ R ≤ 0 := by
+  have hT : L ^ (2 * m + 1) < 0 := (Odd.pow_neg_iff (odd_two_mul_add_one m)).mpr hL
+  have hS : 0 < - L ^ (2 * m + 1) := neg_pos.mpr hT
+  rw [← pd_id_apply hId hE,
+    show L ^ (2 * m + 1) * F = -((- L ^ (2 * m + 1)) * F) by ring,
+    neg_nonpos, mul_nonneg_iff_of_pos_left hS]
+
+theorem pdSign_odd_neg_le (hL : L < 0) (hE : E = 0)
+    (hId : L ^ (2 * m + 1) * F = Q * E + R) : F ≤ 0 ↔ 0 ≤ R := by
+  have hT : L ^ (2 * m + 1) < 0 := (Odd.pow_neg_iff (odd_two_mul_add_one m)).mpr hL
+  have hS : 0 < - L ^ (2 * m + 1) := neg_pos.mpr hT
+  rw [← pd_id_apply hId hE,
+    show L ^ (2 * m + 1) * F = -((- L ^ (2 * m + 1)) * F) by ring,
+    neg_nonneg, ← not_lt, ← not_lt, mul_pos_iff_of_pos_left hS]
+
+theorem pdSign_odd_neg_eq (hL : L < 0) (hE : E = 0)
+    (hId : L ^ (2 * m + 1) * F = Q * E + R) : F = 0 ↔ R = 0 := by
+  have hT : L ^ (2 * m + 1) ≠ 0 := pow_ne_zero _ (ne_of_lt hL)
+  rw [← pd_id_apply hId hE]
+  constructor
+  · intro hF; rw [hF, mul_zero]
+  · intro hTF
+    rcases mul_eq_zero.mp hTF with hT0 | hF
+    · exact absurd hT0 hT
+    · exact hF
+
+end PdSignTransfer
+
+
 /-- Deg-2 with both `A` and `B` vanishing ⇒ no roots (the
 constant-in-`y` degenerate; `A = 0, B ≠ 0` counts 1). -/
 theorem rootCount_zero_of_deg2_lc_zero (ρ : Nat → ℝ) (y : Var) (p : MPoly)

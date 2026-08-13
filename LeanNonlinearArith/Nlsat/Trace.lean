@@ -294,9 +294,25 @@ inductive Grammar : TraceStep → Prop
   lemma's polys — F3; nla-09 is degree-generic). -/
   | leafNumeric {x : Var} :
       Grammar (.leafNumeric x)
-  /-- 19b shapes: emission-side grammar only (consumption pins in 19b). -/
+  /-- 19b pseudoDivision (:1123 — one step per replaced factor).
+  STRUCTURAL decide-grade conditions only (19b decision 1,
+  2026-08-10): `lcSign ∈ {−1, 0, 1}` with the const-lc sign agreement
+  (mirroring `linearRoot`'s lcFact — the lc is `(eq.coeffsIn x)[k]!`
+  at `k = eq.degreeIn x`), and the pseudo-remainder degree-drop
+  `r = [] ∨ degreeIn x r < degreeIn x eq` (:5095's contract, natively
+  decidable — no polynomial arithmetic, so the `coeffsIn`
+  kernel-reduction wall only shows up at the const-lc branch, exactly
+  as in `linearRoot`). The SEMANTIC content (`r` really is the
+  remainder, `d` the exponent, the lc/parity signs) is NEVER
+  grammar-trusted: the discharge re-proves the identity per-instance
+  (decision 1 — z3's own mathematical contract, not the payload's
+  say-so); d-parity and lcSign are untrusted hints. -/
   | pseudoDivision {f eq : MPoly} {x : Var} {d : Nat} {r : MPoly}
       {lcSign : Int} {isEven : Bool} :
+      (lcSign = -1 ∨ lcSign = 0 ∨ lcSign = 1) →
+      (∀ v, ((eq.coeffsIn x)[eq.degreeIn x]!).asConst? = some v →
+        lcSign = Int.sign v) →
+      (r = [] ∨ r.degreeIn x < eq.degreeIn x) →
       Grammar (.pseudoDivision f eq x d r lcSign isEven)
   | factorSplit {p : MPoly} {fs vanished : Array MPoly} :
       Grammar (.factorSplit p fs vanished)
@@ -342,7 +358,13 @@ def grammarOK : TraceStep → Bool
      | .lower => decide (k = .gt ∨ k = .ge)
      | .upper => decide (k = .lt ∨ k = .le)) &&
       decide (1 ≤ i) && decide (1 ≤ p.degreeIn y)
-  | .leafNumeric _ | .pseudoDivision .. | .factorSplit ..
+  | .pseudoDivision _f eq x _d r lcSign _isEven =>
+    decide (lcSign = -1 ∨ lcSign = 0 ∨ lcSign = 1) &&
+    (match ((eq.coeffsIn x)[eq.degreeIn x]!).asConst? with
+     | none => true
+     | some v => decide (lcSign = Int.sign v)) &&
+    decide (r = [] ∨ r.degreeIn x < eq.degreeIn x)
+  | .leafNumeric _ | .factorSplit ..
   | .intBranch .. | .resolution _ => true
 
 /-- Soundness: decide-grade grammar membership implies the Prop grammar. -/
@@ -403,7 +425,22 @@ theorem grammarOK_sound (s : TraceStep) (h : grammarOK s) : Grammar s := by
     | upper =>
       exact Grammar.cellBound (of_decide_eq_true hside)
         (of_decide_eq_true hi) (of_decide_eq_true hdeg)
-  | pseudoDivision feq eqe xe de re lcSign isEven => exact Grammar.pseudoDivision
+  | pseudoDivision feq eqe xe de re lcSign isEven =>
+    unfold grammarOK at h
+    rw [Bool.and_eq_true, Bool.and_eq_true] at h
+    obtain ⟨⟨hsign, hconst⟩, hdeg⟩ := h
+    refine Grammar.pseudoDivision (of_decide_eq_true hsign) ?_
+      (of_decide_eq_true hdeg)
+    intro v hv
+    cases hdc : ((eqe.coeffsIn xe)[eqe.degreeIn xe]!).asConst? with
+    | none =>
+      simp only [hdc] at hv
+      exact Option.noConfusion hv
+    | some v' =>
+      simp only [hdc] at hconst hv
+      have heq : v' = v := Option.some.inj hv
+      subst heq
+      exact of_decide_eq_true hconst
   | factorSplit pe fse vanished => exact Grammar.factorSplit
   | intBranch xe ve => exact Grammar.intBranch
   | resolution ant => exact Grammar.resolution

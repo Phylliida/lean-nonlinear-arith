@@ -873,4 +873,112 @@ example (ρ : Nat → ℝ) :
       (arithClause [] [⟨1, true⟩, ⟨2, true⟩, ⟨3, true⟩]) := by
   nlsat_arith_valid_steps #[.rootGeneric .gt 0 1 g11zP]
 
+/-! ## 19b Slice 1 — pseudoDivision grammar + identity + sign transfer
+
+The pd1/pd6 payloads come from the Slice-0 live census (BOARD): pd1
+`(x1, x1−x0², 1, 1, x0², 1, false)` — const lc, d odd, no flip; pd6
+`(2x1²−1, x0x1−1, 1, 2, 2−x0², −1, false)` — non-const lc, d even, no
+flip. The identity is re-proved per-instance (decision 1); the
+grammar is structural-only. -/
+
+private def pd1F : MPoly := [(1, [(1, 1)])]                          -- x1
+private def pd1Eq : MPoly := [(1, [(1, 1)]), ((-1), [(0, 2)])]       -- x1 − x0²
+private def pd1R : MPoly := [(1, [(0, 2)])]                          -- x0²
+private def pd1Rbad : MPoly := [(1, [(0, 2)]), (1, [])]              -- x0² + 1
+private def pd6F : MPoly := [(2, [(1, 2)]), ((-1), [])]              -- 2x1² − 1
+private def pd6Eq : MPoly := [(1, [(0, 1), (1, 1)]), ((-1), [])]     -- x0·x1 − 1
+private def pd6R : MPoly := [(2, []), ((-1), [(0, 2)])]              -- 2 − x0²
+private def pd6Q : MPoly := [(2, [(0, 1), (1, 1)]), (2, [])]         -- 2x0·x1 + 2
+
+-- grammar: genuine payloads pass; corruptions reject (native eval,
+-- the precheck's own evaluation grade)
+#guard grammarOK (.pseudoDivision pd1F pd1Eq 1 1 pd1R 1 false) == true
+#guard grammarOK (.pseudoDivision pd6F pd6Eq 1 2 pd6R (-1) false) == true
+-- lcSign outside {−1, 0, 1}
+#guard grammarOK (.pseudoDivision pd1F pd1Eq 1 1 pd1R 2 false) == false
+-- const lc = 1 but lcSign = −1 (sign agreement violated)
+#guard grammarOK (.pseudoDivision pd1F pd1Eq 1 1 pd1R (-1) false) == false
+-- r = eq: the degree did not drop
+#guard grammarOK (.pseudoDivision pd1F pd1Eq 1 1 pd1Eq 1 false) == false
+-- non-const lc: any in-range lcSign passes (untrusted hint)
+#guard grammarOK (.pseudoDivision pd6F pd6Eq 1 2 pd6R 0 false) == true
+
+/-- The per-instance identity close (the Slice-2 consumption idiom):
+pd1's genuine payload, pd6's non-const-lc one, the decision-1
+perturbation witness (d = 2 with lc = 1 — the same identity), and a
+corrupt remainder that must throw. -/
+example : ∀ ρ : Nat → ℝ, True := by
+  run_tac unsafe (do
+    let (ρFv, m1) ← (← Lean.Elab.Tactic.getMainGoal).intro `ρ
+    m1.withContext do
+      let ρE := Lean.mkFVar ρFv
+      -- probe: closeAlgRefl on a FALSE equation must throw (the
+      -- hole-in-term regression — ring's failed close left an
+      -- unassigned sub-mvar behind an assigned normalization chain)
+      let one ← Lean.Meta.mkAppM ``Check.evalP #[ρE, Lean.toExpr ([(1, [])] : MPoly)]
+      let tgt ← Lean.Meta.mkAppM ``Eq #[one, ← Lean.Meta.mkAppM ``HAdd.hAdd #[one, one]]
+      let mut thrown := false
+      try
+        let _ ← Refute.closeAlgRefl tgt
+      catch _ => thrown := true
+      unless thrown do throwError "closeAlgRefl accepted a FALSE equation"
+      -- pd1: 1·x1 = 1·(x1−x0²) + x0²
+      let (lc1, _) ← Refute.pseudoDivisionIdentity ρE pd1F pd1Eq 1 1 pd1R
+      unless lc1 == [(1, [])] do throwError "pd1 lc mismatch: {repr lc1}"
+      -- pd6: x0²·(2x1²−1) = (2x0x1+2)·(x0x1−1) + (2−x0²)
+      let (lc6, _) ← Refute.pseudoDivisionIdentity ρE pd6F pd6Eq 1 2 pd6R
+      unless lc6 == [(1, [(0, 1)])] do throwError "pd6 lc mismatch: {repr lc6}"
+      -- decision-1 perturbation: (d+1, lc·Q, lc·r) — pd1 with d = 2
+      -- (lc = 1, so Q/r are unchanged) witnesses the same identity
+      let _ ← Refute.pseudoDivisionIdentity ρE pd1F pd1Eq 1 2 pd1R
+      -- corrupt remainder: x0² + 1 falsifies the identity — must throw
+      let mut accepted := false
+      try
+        let _ ← Refute.pseudoDivisionIdentity ρE pd1F pd1Eq 1 1 pd1Rbad
+        accepted := true
+      catch _ => pure ()
+      if accepted then throwError "corrupt remainder accepted"
+    Lean.Elab.Tactic.replaceMainGoal [m1])
+  trivial
+
+/-- The sign-transfer lemmas fire on the Slice-2 instantiation shapes:
+pd1 (d odd, lc = 1 > 0 — no flip) and pd6 (d even, non-const lc — no
+flip). The identities are closed by the same simp+ring idiom
+`pseudoDivisionIdentity` wraps. -/
+example (ρ : Nat → ℝ) (hE : evalP ρ pd1Eq = (0 : ℝ)) :
+    0 < evalP ρ pd1F ↔ 0 < evalP ρ pd1R := by
+  have hId : (evalP ρ [(1, [])]) ^ (2 * 0 + 1) * evalP ρ pd1F =
+      evalP ρ [(1, [])] * evalP ρ pd1Eq + evalP ρ pd1R := by
+    simp only [pd1F, pd1Eq, pd1R, evalP, evalM, evalP_add, evalP_mul,
+      evalP_neg, evalP_smulTerm, evalP_ofInt, evalP_ofVar, Int.cast_one,
+      Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add]
+    ring
+  exact pdSign_odd_pos_gt (m := 0) (by
+    simp only [evalP, evalM, evalP_smulTerm, evalP_ofInt]; norm_num) hE hId
+
+example (ρ : Nat → ℝ) (hL : evalP ρ [(1, [(0, 1)])] ≠ (0 : ℝ))
+    (hE : evalP ρ pd6Eq = (0 : ℝ)) :
+    evalP ρ pd6F < 0 ↔ evalP ρ pd6R < 0 := by
+  have hId : (evalP ρ [(1, [(0, 1)])]) ^ (2 * 1) * evalP ρ pd6F =
+      evalP ρ pd6Q * evalP ρ pd6Eq + evalP ρ pd6R := by
+    simp only [pd6F, pd6Eq, pd6R, pd6Q, evalP, evalM, evalP_add, evalP_mul,
+      evalP_neg, evalP_smulTerm, evalP_ofInt, evalP_ofVar, Int.cast_one,
+      Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add]
+    ring
+  exact pdSign_even_lt (m := 1) hL hE hId
+
+/-- The flip case (pd4's rule, d odd ∧ lc < 0): pd4's own payload
+`(x1, x0x1−1, 1, 1, const 1, −1, false)` — the const-remainder fold;
+the comparison flips. -/
+example (ρ : Nat → ℝ) (hL : evalP ρ [(1, [(0, 1)])] < (0 : ℝ))
+    (hE : evalP ρ pd6Eq = (0 : ℝ)) :
+    0 < evalP ρ [(1, [(1, 1)])] ↔ evalP ρ [(1, [])] < 0 := by
+  have hId : (evalP ρ [(1, [(0, 1)])]) ^ (2 * 0 + 1) * evalP ρ [(1, [(1, 1)])] =
+      evalP ρ [(1, [])] * evalP ρ pd6Eq + evalP ρ [(1, [])] := by
+    simp only [pd6Eq, evalP, evalM, evalP_add, evalP_mul, evalP_neg,
+      evalP_smulTerm, evalP_ofInt, evalP_ofVar, Int.cast_one, Int.cast_ofNat,
+      one_mul, mul_one, add_zero, zero_add]
+    ring
+  exact pdSign_odd_neg_gt (m := 0) hL hE hId
+
 end LeanNonlinearArith.Nlsat.Tests.Refute

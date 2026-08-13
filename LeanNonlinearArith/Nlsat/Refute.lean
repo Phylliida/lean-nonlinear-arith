@@ -2,6 +2,7 @@ import Mathlib
 import LeanNonlinearArith.Nlsat.Assemble
 import LeanNonlinearArith.Nlsat.Coverage
 import LeanNonlinearArith.Nlsat.MPolyFactor
+import LeanNonlinearArith.Nlsat.MPolyOps
 
 /-!
 # nla-19a Slice F2 — the per-bundle arith-lemma elaborator (`Refute`)
@@ -427,9 +428,11 @@ def mkValueFact (hcsPrf : Expr) (cs : List MPoly)
   let bridge ← proveByRefl idxForm valTy
   let m ← mkFreshExprMVar valTy
   m.mvarId!.withContext do closeNumericSubgoal m.mvarId!
-  unless (← m.mvarId!.isAssigned) do
-    throwError "mkValueFact: numeric subgoal not closed"
   let hVal ← instantiateMVars m
+  -- hasMVar, not just isAssigned: a failing norm_num can leave the
+  -- mvar assigned to a term with a hole (see closeAlgRefl's docstring)
+  if hVal.hasMVar then
+    throwError "mkValueFact: numeric subgoal not closed"
   let composited ←
     try mkAppM ``Eq.trans #[congr, bridge]
     catch e => throwError "trans: {e.toMessageData}"
@@ -798,13 +801,23 @@ concrete `cs` spellings — the R-i reducer currency). -/
 def closeNumerically (tgt : Expr) : TacticM Expr := do
   let m ← mkFreshExprMVar tgt
   m.mvarId!.withContext do closeNumericSubgoal m.mvarId!
-  unless (← m.mvarId!.isAssigned) do
+  let h ← instantiateMVars m
+  -- hasMVar, not just isAssigned (see closeAlgRefl's docstring)
+  if h.hasMVar then
     throwError "closeNumerically: numeric subgoal not closed"
-  instantiateMVars m
+  pure h
 
 /-- Close an `Eq` between ℝ value expressions whose polys are concrete
 spelling variants of one value (mangle `evalP` + `ring`) — the
-disc-expansion transfer lane. Sandbox-managed by the caller. -/
+disc-expansion transfer lane. Sandbox-managed by the caller.
+
+Trap (19b Slice 1, pd-corruption probe): `ring` assigns the goal with
+its normalization chain BEFORE the final close, so a failure can leave
+the mvar assigned to a term with a HOLE (an unassigned sub-mvar) while
+the elaborator only logs the error — the `isAssigned` check alone then
+"accepts" a false equation (kernel would still reject the holed term
+downstream, but the clean skip discipline needs the throw HERE). The
+`hasMVar` check on the produced term is the robust guard. -/
 def closeAlgRefl (tgt : Expr) : TacticM Expr := do
   let m ← mkFreshExprMVar tgt
   let saved ← getGoals
@@ -815,9 +828,42 @@ def closeAlgRefl (tgt : Expr) : TacticM Expr := do
       Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add]))
     evalTactic (← `(tactic| ring))
   setGoals saved
-  unless (← m.mvarId!.isAssigned) do
+  let h ← instantiateMVars m
+  if h.hasMVar then
     throwError "closeAlgRefl: subgoal not closed"
-  instantiateMVars m
+  pure h
+
+/-- 19b Slice 1: the pseudo-division identity for one emitted step,
+re-proved per-instance (decision 1 — z3's own mathematical contract
+`lc^d · f = Q·eq + r`, polynomial.cpp:5095, never the payload's
+say-so). Q is recomputed natively (`pseudoDivisionCore …
+quotient=true`, untrusted suggestion — `partial`, native-only by
+construction); the payload's OWN `d`/`r` are used: any (d, Q, r)
+witness of the identity with lc ≠ 0 yields the same sign conclusions
+(the perturbation (d+1, lc·Q, lc·r) scales sign r and flips parity in
+cancellation), so matching the recomputation is unnecessary. The
+identity is stated at the value level — `(evalP ρ lc)^d · evalP ρ f =
+evalP ρ Q · evalP ρ eq + evalP ρ r` with `lc = (eq.coeffsIn x)[k]!`
+the CONCRETE leading coefficient (no kernel-pow, no lcPowMul poly —
+the literal exponent is ring-native) — and kernel-closed by the
+closeAlgRefl/zeroProductClose idiom (evalP simp + `ring`, complete
+for these identities). Returns `(lc, identity-proof)`. Throws on
+failure (corrupt payload — the caller's catch skips soundly). -/
+unsafe def pseudoDivisionIdentity (ρ : Expr) (f eq : MPoly) (x : Var)
+    (d : Nat) (r : MPoly) : TacticM (MPoly × Expr) := do
+  let k := eq.degreeIn x
+  let lc := (eq.coeffsIn x)[k]!
+  let (_, q, _) := MPoly.pseudoDivisionCore f eq x false true
+  let lcValE ← mkAppM ``Check.evalP #[ρ, toExpr lc]
+  let fValE ← mkAppM ``Check.evalP #[ρ, toExpr f]
+  let qValE ← mkAppM ``Check.evalP #[ρ, toExpr q]
+  let eqValE ← mkAppM ``Check.evalP #[ρ, toExpr eq]
+  let rValE ← mkAppM ``Check.evalP #[ρ, toExpr r]
+  let powE ← mkAppM ``HPow.hPow #[lcValE, toExpr d]
+  let lhs ← mkAppM ``HMul.hMul #[powE, fValE]
+  let rhs ← mkAppM ``HAdd.hAdd #[(← mkAppM ``HMul.hMul #[qValE, eqValE]), rValE]
+  let hId ← closeAlgRefl (← mkAppM ``Eq #[lhs, rhs])
+  pure (lc, hId)
 
 /-- The `Grammar (.linearRoot …)` proof for a concrete linearRoot step.
 Kernel `decide` cannot go through `grammarOK`'s `coeffsIn` branch (the
