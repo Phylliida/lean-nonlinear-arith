@@ -605,4 +605,108 @@ example : ∀ ρ : Nat → ℝ,
     (∀ C ∈ [[⟨1, true⟩], [⟨2, true⟩], [⟨3, false⟩], [⟨4, false⟩],
       [⟨5, false⟩], [⟨6, false⟩]], clauseHolds ρ o139Atoms C) → False := by
   nlsat_refute ⟨o139Atoms, o139Clauses, o139Bundles, o139Final⟩
+
+/-! ## 19b Slice 3 — pd1 walked end-to-end (the pseudoDivision gate lift)
+
+Machine-generated snapshot (scratch_dump.lean `goPd1`, regenerated
+2026-08-13 post-gate-lift): the canonical Jovanović core
+`{x1 − x0² = 0, x1 < 0}`. The solver learns `x0² < 0` (atom 3 — the
+path-(e) rebuilt literal) off
+`pseudoDivision x1 (x1−x0²) 1 1 x0² 1 false` — exactly the
+Slice-0-pinned payload (const lc, d = 1 odd, remainder x0²) — then the
+final bundle's `leafNumeric` kills it. This is the first production
+bundle carrying a pseudoDivision step through `precheck`: the gate
+lift is witnessed by this walk. -/
+
+private def pd1Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(1, 1)]), ((-1), [(0, 2)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(1, 1)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 2)])], false)]⟩)]
+
+private def pd1Clauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, false⟩], learned := false, deleted := false },
+   { lits := #[⟨2, false⟩], learned := false, deleted := false },
+   { lits := #[⟨3, false⟩], learned := true, deleted := false }]
+
+private def pd1Bundles : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   none,
+   some ⟨#[.resolution (.clause 2),
+      .pseudoDivision [(1, [(1, 1)])] [(1, [(1, 1)]), ((-1), [(0, 2)])] 1 1 [(1, [(0, 2)])] 1 false,
+      .resolution (.arith #[⟨1, false⟩, ⟨2, false⟩] #[⟨3, false⟩]),
+      .resolution (.clause 1)], #[⟨3, false⟩]⟩]
+
+private def pd1Final : TraceBundle :=
+  ⟨#[.resolution (.clause 3),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨3, false⟩] #[])], #[]⟩
+
+/- Gate pins (native): the pd1 learned bundle is v0 post-lift;
+`intBranch` stays gated (12e). -/
+#guard (pd1Bundles[3]!).get!.isV0 == true
+#guard (TraceBundle.mk #[.intBranch 0 0] #[]).isV0 == false
+
+/-- End-to-end: pd1 walked from both input clauses. The learned clause
+IS the rebuilt literal `x0² < 0`; its arith member is discharged with
+the bundle's pd step available to the Slice-2 transport, and the final
+member (`x0² < 0 ⊢ ⊥`) closes off `leafNumeric`. -/
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, false⟩]], clauseHolds ρ pd1Atoms C) → False := by
+  nlsat_refute ⟨pd1Atoms, pd1Clauses, pd1Bundles, pd1Final⟩
+
+/- Glue-subsumption at walk level (the RefuteTests pins cover the
+Refute level): dropping the pd step from bundle 3 leaves the arith
+member to the F2 glue (sq_nonneg + eq substitution) — the walk still
+closes. -/
+private def pd1BundlesStepFree : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   none,
+   some ⟨#[.resolution (.clause 2),
+      .resolution (.arith #[⟨1, false⟩, ⟨2, false⟩] #[⟨3, false⟩]),
+      .resolution (.clause 1)], #[⟨3, false⟩]⟩]
+
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, false⟩]], clauseHolds ρ pd1Atoms C) → False := by
+  nlsat_refute ⟨pd1Atoms, pd1Clauses, pd1BundlesStepFree, pd1Final⟩
+
+/- Corrupt remainder (grammar-CLEAN — r = x0²+1 still has
+`degreeIn x1 r = 0 < 1` — but the ring identity is false): the
+transport's `pseudoDivisionIdentity` throws, the step is skipped
+soundly, and the walk still closes on the glue. Pin: corrupted
+payloads degrade to the glue, never to unsoundness. -/
+private def pd1BundlesCorruptR : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   none,
+   some ⟨#[.resolution (.clause 2),
+      .pseudoDivision [(1, [(1, 1)])] [(1, [(1, 1)]), ((-1), [(0, 2)])] 1 1 [(1, [(0, 2)]), (1, [])] 1 false,
+      .resolution (.arith #[⟨1, false⟩, ⟨2, false⟩] #[⟨3, false⟩]),
+      .resolution (.clause 1)], #[⟨3, false⟩]⟩]
+
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, false⟩]], clauseHolds ρ pd1Atoms C) → False := by
+  nlsat_refute ⟨pd1Atoms, pd1Clauses, pd1BundlesCorruptR, pd1Final⟩
+
+/- Grammar-gate probe (precheck): `lcSign = 2` breaks the pd grammar
+(`lcSign ∈ {−1, 0, 1}`) — the bundle's steps fail `grammarOK` and the
+walk rejects at `precheck`, before any discharge work. Pre-lift this
+was masked by the isV0 reject firing first; post-lift the grammar gate
+is a pd bundle's first line of defense. -/
+private def pd1BundlesGrammarBad : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   none,
+   some ⟨#[.resolution (.clause 2),
+      .pseudoDivision [(1, [(1, 1)])] [(1, [(1, 1)]), ((-1), [(0, 2)])] 1 1 [(1, [(0, 2)])] 2 false,
+      .resolution (.arith #[⟨1, false⟩, ⟨2, false⟩] #[⟨3, false⟩]),
+      .resolution (.clause 1)], #[⟨3, false⟩]⟩]
+
+#guard_msgs (drop error) in
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ [[⟨1, false⟩], [⟨2, false⟩]], clauseHolds ρ pd1Atoms C) → False := by
+  nlsat_refute ⟨pd1Atoms, pd1Clauses, pd1BundlesGrammarBad, pd1Final⟩
 end LeanNonlinearArith.Nlsat.Tests.Walk
