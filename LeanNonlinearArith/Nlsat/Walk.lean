@@ -100,7 +100,11 @@ def nodeFSet (clauses : Array Clause) (bundles : Array (Option TraceBundle))
     | .resolution (.arith core proj) =>
       F := F ++ [arithClauseVal core proj]
     | .resolution (.decision _) => pure ()
-    | .pseudoDivision .. | .intBranch .. => throw "non-v0 step"
+    | .intBranch .. => throw "non-v0 step"
+    -- `pseudoDivision` steps (v0 since 19b Slice 3) contribute no
+    -- clause-level facts — they are step-facts consumed checker-side by
+    -- `Refute.collectStepFacts` (the Slice-2 rebuilt-literal transport),
+    -- same treatment as projection steps (review 5, F-i).
     | _ => pure ()
   return F
 

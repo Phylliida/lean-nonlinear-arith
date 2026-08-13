@@ -205,17 +205,20 @@ namespace TraceBundle
 def isS1Gated (b : TraceBundle) : Bool := b.steps.any TraceStep.isS1Gated
 
 /-- A bundle is v0-checkable iff every step is in-fragment AND no step
-is `pseudoDivision` or `intBranch` (19b/12e shapes — a pseudoDivision
-rewrite can be load-bearing, R7, so its presence means sound
-rejection). `resolution` markers are v0 (R1 — the propositional replay
-came forward) and `factorSplit` steps are always safe to ignore (R6 —
-the factored poly never appears in any clause literal, so ignoring
-loses zero z3-coverage). Every real bundle carries both (the live
-x²+y²<0 dump), so the four-shapes-only reading of v0 rejected
-everything — reconciled 2026-08-06 (F0). -/
+is `intBranch` (12e shape — integer branch splits stay gated until the
+12e lane). `pseudoDivision` steps are v0 as of 19b Slice 3 (2026-08-13):
+Slice 1/2 landed the grammar mirror + rebuilt-literal transport, so a
+load-bearing pd rewrite (R7) is now consumed checker-side by
+`collectStepFacts` — and path-(c) unmatched steps are inert by the
+participation discipline. `resolution` markers are v0 (R1 — the
+propositional replay came forward) and `factorSplit` steps are always
+safe to ignore (R6 — the factored poly never appears in any clause
+literal, so ignoring loses zero z3-coverage). Every real bundle carries
+both (the live x²+y²<0 dump), so the four-shapes-only reading of v0
+rejected everything — reconciled 2026-08-06 (F0). -/
 def isV0 (b : TraceBundle) : Bool :=
   !b.isS1Gated && b.steps.all fun
-    | .pseudoDivision .. | .intBranch .. => false
+    | .intBranch .. => false
     | _ => true
 
 end TraceBundle
