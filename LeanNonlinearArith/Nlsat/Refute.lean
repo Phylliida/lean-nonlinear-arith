@@ -209,6 +209,33 @@ def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
   else
     extractNegFacts ρ a h_i
 
+/-- The lc-sign fact from a sign-flipped fact on `-lc` (`evalP_neg` +
+`neg_pos`/`neg_lt_zero` — the R-d `diseqFactFor` idiom). Returns
+`(pos?, proof)`; `pos? = true` means the proof has type
+`0 < evalP ρ lc`, `false` means `evalP ρ lc < 0`. -/
+def signFlipFactFor (ρ : Expr) (lc : MPoly) (k : IneqKind) (fv : FVarId) :
+    MetaM (Bool × Expr) := do
+  let heq ← mkAppM ``Check.evalP_neg #[ρ, toExpr lc]
+  let zeroR ← mkAppOptM ``OfNat.ofNat
+    #[some (mkConst ``Real), some (toExpr 0), none]
+  match k with
+  | .gt =>
+    -- h : 0 < evalP ρ (-lc)  ⟹  0 < -(evalP ρ lc)  ⟹  evalP ρ lc < 0
+    let lam ← withLocalDecl `x BinderInfo.default (mkConst ``Real) fun xE =>
+      do mkLambdaFVars #[xE] (← mkAppM ``LT.lt #[zeroR, xE])
+    let h ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[lam, heq]), mkFVar fv]
+    let lcValE ← mkAppM ``Check.evalP #[ρ, toExpr lc]
+    let iffE ← mkAppOptM ``Left.neg_pos_iff
+      #[none, none, none, none, some lcValE]
+    pure (false, ← mkAppM ``Iff.mp #[iffE, h])
+  | .lt =>
+    -- h : evalP ρ (-lc) < 0  ⟹  -(evalP ρ lc) < 0  ⟹  0 < evalP ρ lc
+    let lam ← withLocalDecl `x BinderInfo.default (mkConst ``Real) fun xE =>
+      do mkLambdaFVars #[xE] (← mkAppM ``LT.lt #[xE, zeroR])
+    let h ← mkAppM ``Eq.mp #[(← mkAppM ``congrArg #[lam, heq]), mkFVar fv]
+    pure (true, ← mkAppM ``pos_of_neg_neg #[h])
+  | .eq => throwError "signFlipFactFor: eq kind has no sign"
+
 /-- The diseq fact for factor `f`, converting from a sign-flipped
 fact on `-f` if needed (`evalP_neg` + `neg_ne_zero`; `MPoly.neg`
 kernel-reduces so the conversion is defeq-clean). -/
@@ -1865,7 +1892,23 @@ unsafe def pdRewriteLane (mvar : MVarId) (ρ IE : Expr) (steps : Array TraceStep
         match S.signPosFacts.find? (fun (_, q, _) => q == lc) with
         | some (.gt, _, fv) => mkAppM ``ne_of_gt #[mkFVar fv]
         | some (.lt, _, fv) => mkAppM ``ne_of_lt #[mkFVar fv]
-        | _ => throwError "pdRewrite: no lc ≠ 0 evidence in the clause"
+        | _ =>
+          -- negation tolerance (the review finding): the evidence
+          -- literal may carry `−lc` with the kind flipped — z3's
+          -- `mk_ineq_atom` sign-normalizes every factor
+          -- (`flip_sign_if_lm_neg`, nlsat_solver.cpp:595-607). Our
+          -- `mkIneqAtom` port currently does NOT normalize (boarded
+          -- fidelity item), so this is belt-and-braces TODAY and
+          -- load-bearing the day the normalization lands.
+          match S.diseqFacts.find? (·.1 == lc.neg) with
+          | some (_, fv) => diseqFactFor ρ lc fv true
+          | none =>
+            match S.signPosFacts.find? (fun (_, q, _) => q == lc.neg) with
+            | some (k, _, fv) =>
+              let (pos?, h) ← signFlipFactFor ρ lc k fv
+              if pos? then mkAppM ``ne_of_gt #[h] else mkAppM ``ne_of_lt #[h]
+            | none =>
+              throwError "pdRewrite: no lc ≠ 0 evidence in the clause"
   -- the lc's sign: `some (true, h)` = `0 < lc`, `some (false, h)` =
   -- `lc < 0`; decide-grade for a const lc, else the A4 literal
   let lcSignOf (S : PdState) (lc : MPoly) : TacticM (Option (Bool × Expr)) := do
@@ -1888,7 +1931,11 @@ unsafe def pdRewriteLane (mvar : MVarId) (ρ IE : Expr) (steps : Array TraceStep
       | none =>
         match S.signPosFacts.find? (fun (k, q, _) => k == .lt && q == lc) with
         | some (_, _, fv) => pure (some (false, mkFVar fv))
-        | none => pure none
+        | none =>
+          -- negation tolerance (see lcNeOf)
+          match S.signPosFacts.find? (fun (_, q, _) => q == lc.neg) with
+          | some (k, _, fv) => pure (some (← signFlipFactFor ρ lc k fv))
+          | none => pure none
   -- hId with the exponent respelled `2 * (d/2)` / `2 * (d/2) + 1` —
   -- the Slice-1 family's hypothesis shapes. Eq.mp is FORWARD along
   -- `motive d = motive target` (the Eq.mpr-is-backward trap).

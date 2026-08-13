@@ -1239,5 +1239,48 @@ example (ρ : Nat → ℝ) :
       (arithClause [⟨1, false⟩, ⟨2, false⟩] [⟨3, false⟩]) := by
   nlsat_arith_valid_steps #[.pseudoDivision s2evF s2pd1Eq 1 2 s2evR 1 false]
 
+-- review (19b Slice 2 design review): TWO replaced positions in one
+-- rebuilt literal (z3 rewrites every deg-≥k factor, one step each) —
+-- f₁ = x1 → r₁ = x0² and f₂ = x1+1 → r₂ = x0²+1 against eq = x1−x0²,
+-- with the kept factor x0; the clash is the transported `x1+1 ≠ 0`
+-- against the clause's own `x1+1 = 0`
+private def s2trAtoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(1, 1)]), ((-1), [(0, 2)])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(1, 1)]), (1, [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)])], false), ([(1, [(0, 2)])], false),
+     ([(1, [(0, 2)]), (1, [])], false)]⟩)]
+private def s2trF2 : MPoly := [(1, [(1, 1)]), (1, [])]
+private def s2trR2 : MPoly := [(1, [(0, 2)]), (1, [])]
+private def s2trSteps : Array TraceStep :=
+  #[.pseudoDivision s2pd1F s2pd1Eq 1 1 s2pd1R 1 false,
+    .pseudoDivision s2trF2 s2pd1Eq 1 1 s2trR2 1 false]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2trAtoms)
+      (arithClause [⟨1, false⟩, ⟨2, false⟩] [⟨3, true⟩]) := by
+  nlsat_arith_valid_steps s2trSteps
+
+-- review: the NEGATED-lc evidence lookup (signFlipFactFor —
+-- nlsat_solver.cpp:595-607 robustness): eq = −x0x1²+1 has lc = −x0,
+-- and the clause's A4 literal carries x0 > 0 (z3's normalized form of
+-- "lc < 0"); the lane must find the lc sign through the negation
+private def s2nfAtoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([((-1), [(0, 1), (1, 2)]), (1, [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(1, 4)]), (1, [(1, 3)])], false)]⟩),
+   some (.ineq ⟨.lt, [([((-1), [(0, 2), (1, 1)]), ((-1), [(0, 1)])], false)]⟩)]
+private def s2nfEq : MPoly := [((-1), [(0, 1), (1, 2)]), (1, [])]
+private def s2nfR : MPoly := [((-1), [(0, 2), (1, 1)]), ((-1), [(0, 1)])]
+private def s2nfSteps : Array TraceStep :=
+  #[.pseudoDivision s2kfF s2nfEq 1 3 s2nfR (-1) false]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2nfAtoms)
+      (arithClause [⟨1, false⟩, ⟨3, false⟩] [⟨4, false⟩, ⟨2, true⟩]) := by
+  nlsat_arith_valid_steps s2nfSteps
+
 end LeanNonlinearArith.Nlsat.Tests.Refute
+
 

@@ -3,6 +3,10 @@
 # isV0 gate lift + pd1/o139 acceptance → M3)
 
 Read first: `DESIGN-endgame.md`, then `BOARD.md` — newest entries:
+"nla-19b Slice 2 design review `done`" (**the mk_ineq_atom
+normalization gap** — our mkIneqAtom doesn't flip_sign_if_lm_neg
+ineq factors; search-side, boarded for 12c-fidelity/nla-16; the
+lane's lc lookup is now negation-tolerant via signFlipFactFor),
 "nla-19b Slice 2 `done`" (the transport design + the '_tmp✝' trap +
 the glue-subsumption finding), "nla-19b Slice 1 design review `done`".
 Build system: Nix `lake` on PATH (not elan); full build green, WORKING
