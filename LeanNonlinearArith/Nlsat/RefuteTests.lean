@@ -902,6 +902,8 @@ private def pd6Q : MPoly := [(2, [(0, 1), (1, 1)]), (2, [])]         -- 2x0·x1 
 #guard grammarOK (.pseudoDivision pd1F pd1Eq 1 1 pd1Eq 1 false) == false
 -- non-const lc: any in-range lcSign passes (untrusted hint)
 #guard grammarOK (.pseudoDivision pd6F pd6Eq 1 2 pd6R 0 false) == true
+-- r = [] (the path-(b) const-zero remainder, pd2/pd4's family): pass
+#guard grammarOK (.pseudoDivision pd1F pd1Eq 1 1 [] 1 false) == true
 
 /-- The per-instance identity close (the Slice-2 consumption idiom):
 pd1's genuine payload, pd6's non-const-lc one, the decision-1

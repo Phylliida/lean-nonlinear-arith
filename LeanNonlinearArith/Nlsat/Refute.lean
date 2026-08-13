@@ -822,11 +822,18 @@ def closeAlgRefl (tgt : Expr) : TacticM Expr := do
   let m ← mkFreshExprMVar tgt
   let saved ← getGoals
   setGoals [m.mvarId!]
-  m.mvarId!.withContext do
-    evalTactic (← `(tactic| simp only [evalP, evalM, evalP_add, evalP_mul,
-      evalP_neg, evalP_smulTerm, evalP_ofInt, evalP_ofVar, Int.cast_one,
-      Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add]))
-    evalTactic (← `(tactic| ring))
+  try
+    m.mvarId!.withContext do
+      evalTactic (← `(tactic| simp only [evalP, evalM, evalP_add, evalP_mul,
+        evalP_neg, evalP_smulTerm, evalP_ofInt, evalP_ofVar, Int.cast_one,
+        Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add]))
+      evalTactic (← `(tactic| ring))
+  catch e =>
+    -- restore the goal list on throw (the closeNumericSubgoal
+    -- pattern) — else the sandbox mvar leaks into the caller's
+    -- tactic state (review finding, 19b Slice 1)
+    setGoals saved
+    throw e
   setGoals saved
   let h ← instantiateMVars m
   if h.hasMVar then
