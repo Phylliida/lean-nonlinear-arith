@@ -50,15 +50,23 @@ path (nra_solver.cpp / nlsat's branch analogue) and port that exact
 policy. L1 already owns div/mod semantics (RULES rows); L2 sees
 polynomial atoms only — assert this invariant at the frontend boundary.
 Close-out lifts the leftover `intBranch` gate (isV0 + nodeFSet, the
-two sites Slice 3 touched) and flips the G6 row. Candidates for
-co-scheduling: the mk_ineq_atom normalization gap (Slice-2 review
-finding) if 12c-fidelity lands here rather than at nla-16.
+two sites Slice 3 touched) and flips the G6 row. Two Slice-3-review
+items land here: **R-iv — `grammarOK`'s intBranch arm is currently
+unconditionally `true`; when the gate lifts, add the decide-grade
+structural condition (`v.den ≠ 1` — z3 branches only at NON-integer
+witnesses) per the Slice-1 structural-grammar pattern** (witness
+consistency stays discharge-side). Candidates for co-scheduling: the
+mk_ineq_atom normalization gap (Slice-2 review finding) if
+12c-fidelity lands here rather than at nla-16.
 
 ## Roadmap after 12e (unchanged)
 
 nla-14 (the `nonlinear_arith` tactic, 2–3 sessions; owns F-y; largest
 remaining piece) → nla-15 (tactus wiring, ½) → nla-16 (parity harness,
-1–2 + findings; owns G8/G9/G10) = M6. Total-to-M6 ~5–9 sessions.
+1–2 + findings; owns G8/G9/G10 **and the Slice-3-review R-iii: pd-driver
+z3-binary differential probe** — pd1/pd2/pd3/pd4/pd6 through the
+`/tmp/z3-4.12.5` shell, conflict counts + emitted payloads vs the
+WalkTests/RefuteTests snapshots) = M6. Total-to-M6 ~5–9 sessions.
 Tier B (G7 rootGeneric deg ≥ 3, S1 lane) deferred unless 16's harness
 shows the corpus needs it. Q7: re-offer 11a (resultants) as the
 interleave lane — 19b has landed, so the offer is live.

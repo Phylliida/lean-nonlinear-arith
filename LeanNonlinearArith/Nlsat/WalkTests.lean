@@ -647,7 +647,7 @@ private def pd1Final : TraceBundle :=
 /- Gate pins (native): the pd1 learned bundle is v0 post-lift;
 `intBranch` stays gated (12e). -/
 #guard (pd1Bundles[3]!).get!.isV0 == true
-#guard (TraceBundle.mk #[.intBranch 0 0] #[]).isV0 == false
+#guard (TraceBundle.mk #[.intBranch 0 (1/2 : Rat)] #[]).isV0 == false
 
 /-- End-to-end: pd1 walked from both input clauses. The learned clause
 IS the rebuilt literal `x0² < 0`; its arith member is discharged with

@@ -81,7 +81,10 @@ def arithClauseVal (core proj : Array Literal) : List Literal :=
 /-- The F-set clause VALUES of one bundle, computed from the snapshot
 (learned antecedents resolve to the bundle lemmas — V1-pinned equal to
 the clause table; input antecedents to the clause table). Errors:
-out-of-range antecedent, forward reference, non-v0 step. -/
+out-of-range antecedent, forward reference, `intBranch` step (the only
+remaining non-v0 shape since the 19b Slice-3 gate lift — in practice
+unreachable: `precheck`'s `isV0` gate fires first, so the throw is
+dead-code defense). -/
 def nodeFSet (clauses : Array Clause) (bundles : Array (Option TraceBundle))
     (learnedLemmas : Array (Nat × List Literal)) (b : TraceBundle) :
     Except String (List (List Literal)) := do

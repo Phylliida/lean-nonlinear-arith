@@ -66,6 +66,7 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
 - [nla-19b Slice 2 `done` (2026-08-13) — Refute consumption: rebuilt-literal equivalence transport + drop lane](board/nla-19b-slice-2-refute-consumption.md) `done`
 - [nla-19b Slice 2 design review `done` (2026-08-13 eve, Danielle-requested; post-Slice-2 divergence/regret audit…](board/nla-19b-slice-2-design-review.md) `done`
 - [nla-19b Slice 3 `done` (2026-08-13) — isV0 gate lift + pd1 acceptance walked; **M3 DECLARED**](board/nla-19b-slice-3-gate-lift.md) `done`
+- [nla-19b Slice 3 design review `done` (2026-08-13; divergence/regret audit — R-iii pd-binary-differential + R-iv intBranch grammar boarded)](board/nla-19b-slice-3-design-review.md) `done`
 - [nla-19a design review 8 `done` (2026-08-09, post-G1/G2/G3; Danielle-requested gap audit)](board/nla-19a-design-review-8.md) `done`
 - [nla-19a design review 9 `done` (2026-08-09; Danielle-requested: can R-a/R-b/R-c be fixed to full z3 parity?)](board/nla-19a-design-review-9.md) `done`
 - [nla-19a design review 10 `done` (2026-08-09; R-a FULL — Danielle's standing directive: cover ALL cases, never …](board/nla-19a-design-review-10.md) `done`
