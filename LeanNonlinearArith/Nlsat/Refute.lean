@@ -100,22 +100,21 @@ inductive FactKind where
     -- the `negRootDeg1Produce` lane converts it into the
     -- `(A = 0) ∨ ¬rootCmp` disjunction (or the full trichotomy when
     -- the lead's sign isn't a clause fact) for the findOr splitter
+  | signPos (k : IneqKind) (q : MPoly)
+    -- 19b Slice 2: the fact is the POSITIVE comparison
+    -- `evalP ρ q < 0` (k = lt) / `0 < evalP ρ q` (k = gt) — the
+    -- pseudoDivision lane's A4 lc-sign evidence (`add_lc_ineq`,
+    -- nlsat_explain.cpp:1181-1184: the sign-pinning assumption enters
+    -- the clause as the negated lt/gt atom on the lc, so its failure
+    -- yields exactly these)
   | other
 
-/-- The fact-extraction for one literal: ℝ-level fact proof terms with
-their classifications, or `[]` if the shape is not (yet) handled —
-skipped literals weaken the glue but never soundness; the caller
-reports them on glue failure. Single-factor all-odd atoms take the
-pinned `holds_single_*` path; multi-factor / even-parity atoms
-(G2/G3, design review 7) take the `holds_multi_*` path:
-- `eq` positive (l.neg): the product vanishes (`holds_multi_eq_prod`);
-- `eq` negative: every factor is nonzero (`holds_multi_eq_ne`) — z3's
-  `add_zero_assumption` composite `∏ pᵢ ≠ 0` shape;
-- `lt`/`gt` positive: the odd-product sign + every factor nonzero;
-- `lt`/`gt` negative: the flat `negChain` expansion
-  (`negHolds_chain_*`, review 10) — `f₁ = 0 ∨ (… ∨ ¬ sign)` — split by
-  the pre-mangle chain loop (R-e, review 12). -/
-def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
+/-- Positive-side extraction (19b Slice 2 split): facts from a proof
+`hH` of `Atom.Holds ρ a` directly. This is the `l.neg = true` lane of
+`extractFacts` (the clause literal is the negated atom; its failure is
+the atom holding) AND the pseudoDivision lane's re-extraction entry
+for the transported original-atom `Holds`. -/
+def extractPosFacts (ρ : Expr) (a : Atom) (hH : Expr) :
     MetaM (List (Expr × FactKind)) := do
   match a with
   | .ineq ⟨k, [(q, false)]⟩ =>
@@ -124,49 +123,18 @@ def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
       | .lt => mkAppM ``holds_single_lt #[ρ, qE]
       | .gt => mkAppM ``holds_single_gt #[ρ, qE]
       | .eq => mkAppM ``holds_single_eq #[ρ, qE]
-    if l.neg then
-      -- h_i : ¬ ¬ H  ⇒  H  ⇒  the ℝ fact
-      let aE := mkApp IE (toExpr l.bvar)
-      let nn ← mkAppOptM ``Classical.not_not #[some aE]
-      let hH ← mkAppM ``Iff.mp #[nn, h_i]
-      let fact ← mkAppM ``Iff.mp #[lem, hH]
-      return [(fact, match k with | .eq => .eqZero q | _ => .other)]
-    else
-      -- h_i : ¬ H  ⇒  ¬ (the ℝ fact)
-      let fact ← mkAppM ``mt #[(← mkAppM ``Iff.mpr #[lem]), h_i]
-      return [(fact, match k with | .eq => .neZero q | _ => .other)]
+    let fact ← mkAppM ``Iff.mp #[lem, hH]
+    return [(fact, match k with
+      | .eq => .eqZero q | .lt => .signPos .lt q | .gt => .signPos .gt q)]
   | .ineq ⟨k, fs⟩ =>
     let fsE := toExpr fs
     match k with
     | .eq =>
-      if l.neg then
-        let aE := mkApp IE (toExpr l.bvar)
-        let nn ← mkAppOptM ``Classical.not_not #[some aE]
-        let hH ← mkAppM ``Iff.mp #[nn, h_i]
-        let hProd ← mkAppM ``holds_multi_eq_prod #[ρ, fsE, hH]
-        -- R-b: the `List.prod`-of-evals form is defeq-clean (no
-        -- `MPoly.mul`), so this fact DOES enter the zero-product index
-        return [(hProd, .eqProdZero fs)]
-      else
-        let hAll ← mkAppM ``holds_multi_eq_ne #[ρ, fsE, h_i]
-        let mappedE := toExpr (fs.map Prod.fst)
-        fs.mapM fun (f, _) => do
-          let memPrf ← mkDecideProof (← mkAppM ``Membership.mem #[mappedE, toExpr f])
-          let hf ← mkAppM' hAll #[toExpr f, memPrf]
-          pure (hf, .neZero f)
+      let hProd ← mkAppM ``holds_multi_eq_prod #[ρ, fsE, hH]
+      -- R-b: the `List.prod`-of-evals form is defeq-clean (no
+      -- `MPoly.mul`), so this fact DOES enter the zero-product index
+      return [(hProd, .eqProdZero fs)]
     | .lt | .gt =>
-      if !l.neg then
-        -- R-a FULL (review 10): the flat negChain expansion
-        -- `f₁ = 0 ∨ (… ∨ ¬ sign)` — split PRE-mangle by the chain
-        -- loop (R-e, review 12)
-        let lem := match k with
-          | .lt => ``negHolds_chain_lt
-          | _ => ``negHolds_chain_gt
-        let hChain ← mkAppM lem #[ρ, fsE, h_i]
-        return [(hChain, .negChain fs)]
-      let aE := mkApp IE (toExpr l.bvar)
-      let nn ← mkAppOptM ``Classical.not_not #[some aE]
-      let hH ← mkAppM ``Iff.mp #[nn, h_i]
       let signLem := match k with
         | .lt => ``holds_multi_sign_lt
         | _ => ``holds_multi_sign_gt
@@ -184,16 +152,62 @@ def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
   | .root ⟨k, y, i, p⟩ =>
     -- G4 root atoms (z3's `mk_root_atom` always arrives negated). The
     -- pair fact (count bound + rootCmp) is the extraction; the
-    -- definite-disc close consumes it. Positive-polarity root literals
-    -- (`¬atom` failing) extract the `¬ Holds` fact (G11 — the
-    -- deg-1 lane converts it to a plain disjunction).
+    -- definite-disc close consumes it.
+    return [(hH, .rootPair k y i p)]
+
+/-- Negative-side extraction: facts from a proof `hNH` of
+`¬ Atom.Holds ρ a` (the `l.neg = false` lane of `extractFacts`, and
+the pseudoDivision lane's transported `¬Holds`). -/
+def extractNegFacts (ρ : Expr) (a : Atom) (hNH : Expr) :
+    MetaM (List (Expr × FactKind)) := do
+  match a with
+  | .ineq ⟨k, [(q, false)]⟩ =>
+    let qE := toExpr q
+    let lem ← match k with
+      | .lt => mkAppM ``holds_single_lt #[ρ, qE]
+      | .gt => mkAppM ``holds_single_gt #[ρ, qE]
+      | .eq => mkAppM ``holds_single_eq #[ρ, qE]
+    let fact ← mkAppM ``mt #[(← mkAppM ``Iff.mpr #[lem]), hNH]
+    return [(fact, match k with | .eq => .neZero q | _ => .other)]
+  | .ineq ⟨k, fs⟩ =>
+    let fsE := toExpr fs
+    match k with
+    | .eq =>
+      let hAll ← mkAppM ``holds_multi_eq_ne #[ρ, fsE, hNH]
+      let mappedE := toExpr (fs.map Prod.fst)
+      fs.mapM fun (f, _) => do
+        let memPrf ← mkDecideProof (← mkAppM ``Membership.mem #[mappedE, toExpr f])
+        let hf ← mkAppM' hAll #[toExpr f, memPrf]
+        pure (hf, .neZero f)
+    | .lt | .gt =>
+      -- R-a FULL (review 10): the flat negChain expansion
+      -- `f₁ = 0 ∨ (… ∨ ¬ sign)` — split PRE-mangle by the chain
+      -- loop (R-e, review 12)
+      let lem := match k with
+        | .lt => ``negHolds_chain_lt
+        | _ => ``negHolds_chain_gt
+      let hChain ← mkAppM lem #[ρ, fsE, hNH]
+      return [(hChain, .negChain fs)]
+  | .root ⟨k, y, i, p⟩ =>
+    -- G11: positive-polarity root literal in the clause (`¬atom`
+    -- failing): the `¬ Holds` fact.
+    return [(hNH, .negRoot k y i p)]
+
+/-- The fact-extraction for one literal: ℝ-level fact proof terms with
+their classifications, or `[]` if the shape is not (yet) handled —
+skipped literals weaken the glue but never soundness; the caller
+reports them on glue failure. Dispatches on the literal polarity to
+the positive/negative extractions (the `not_not`/`mt` dance at the
+`litSatI` seam lives here only). -/
+def extractFacts (ρ IE : Expr) (h_i : Expr) (l : Literal) (a : Atom) :
+    MetaM (List (Expr × FactKind)) := do
+  if l.neg then
     let aE := mkApp IE (toExpr l.bvar)
-    if l.neg then
-      let nn ← mkAppOptM ``Classical.not_not #[some aE]
-      let hH ← mkAppM ``Iff.mp #[nn, h_i]
-      return [(hH, .rootPair k y i p)]
-    else
-      return [(h_i, .negRoot k y i p)]
+    let nn ← mkAppOptM ``Classical.not_not #[some aE]
+    let hH ← mkAppM ``Iff.mp #[nn, h_i]
+    extractPosFacts ρ a hH
+  else
+    extractNegFacts ρ a h_i
 
 /-- The diseq fact for factor `f`, converting from a sign-flipped
 fact on `-f` if needed (`evalP_neg` + `neg_ne_zero`; `MPoly.neg`
@@ -799,13 +813,18 @@ def mkValueFactOf (hcsPrf : Expr) (cs : List MPoly)
 /-- A numerically-closed fact of the given proposition (value-side;
 concrete `cs` spellings — the R-i reducer currency). -/
 def closeNumerically (tgt : Expr) : TacticM Expr := do
-  let m ← mkFreshExprMVar tgt
-  m.mvarId!.withContext do closeNumericSubgoal m.mvarId!
-  let h ← instantiateMVars m
-  -- hasMVar, not just isAssigned (see closeAlgRefl's docstring)
-  if h.hasMVar then
-    throwError "closeNumerically: numeric subgoal not closed"
-  pure h
+  -- `withoutModifyingState`: a failing `norm_num` leaves the sandbox
+  -- mvar assigned to a holed chain (see closeAlgRefl's docstring) —
+  -- roll the mvar table back so the dead entry can't corrupt
+  -- downstream term production (19b Slice 2).
+  withoutModifyingState do
+    let m ← mkFreshExprMVar tgt
+    m.mvarId!.withContext do closeNumericSubgoal m.mvarId!
+    let h ← instantiateMVars m
+    -- hasMVar, not just isAssigned (see closeAlgRefl's docstring)
+    if h.hasMVar then
+      throwError "closeNumerically: numeric subgoal not closed"
+    pure h
 
 /-- Close an `Eq` between ℝ value expressions whose polys are concrete
 spelling variants of one value (mangle `evalP` + `ring`) — the
@@ -819,26 +838,33 @@ the elaborator only logs the error — the `isAssigned` check alone then
 downstream, but the clean skip discipline needs the throw HERE). The
 `hasMVar` check on the produced term is the robust guard. -/
 def closeAlgRefl (tgt : Expr) : TacticM Expr := do
-  let m ← mkFreshExprMVar tgt
   let saved ← getGoals
-  setGoals [m.mvarId!]
   try
-    m.mvarId!.withContext do
-      evalTactic (← `(tactic| simp only [evalP, evalM, evalP_add, evalP_mul,
-        evalP_neg, evalP_smulTerm, evalP_ofInt, evalP_ofVar, Int.cast_one,
-        Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add]))
-      evalTactic (← `(tactic| ring))
+    let h ← withoutModifyingState do
+      let m ← mkFreshExprMVar tgt
+      setGoals [m.mvarId!]
+      m.mvarId!.withContext do
+        evalTactic (← `(tactic| simp only [evalP, evalM, evalP_add, evalP_mul,
+          evalP_neg, evalP_smulTerm, evalP_ofInt, evalP_ofVar, Int.cast_one,
+          Int.cast_ofNat, one_mul, mul_one, add_zero, zero_add]))
+        evalTactic (← `(tactic| ring))
+      let h ← instantiateMVars m
+      if h.hasMVar then
+        throwError "closeAlgRefl: subgoal not closed"
+      pure h
+    setGoals saved
+    pure h
   catch e =>
     -- restore the goal list on throw (the closeNumericSubgoal
     -- pattern) — else the sandbox mvar leaks into the caller's
-    -- tactic state (review finding, 19b Slice 1)
+    -- tactic state (review finding, 19b Slice 1). The
+    -- `withoutModifyingState` additionally rolls back the mvar
+    -- assignments: a failing `ring` leaves the sandbox mvar assigned
+    -- to a normalization chain with ring-internal `_tmp` fvars, and
+    -- the polluted table entry corrupted downstream term production
+    -- (19b Slice 2, the corrupt-payload probes).
     setGoals saved
     throw e
-  setGoals saved
-  let h ← instantiateMVars m
-  if h.hasMVar then
-    throwError "closeAlgRefl: subgoal not closed"
-  pure h
 
 /-- 19b Slice 1: the pseudo-division identity for one emitted step,
 re-proved per-instance (decision 1 — z3's own mathematical contract
@@ -1693,6 +1719,428 @@ unsafe def collectStepFacts (mvar : MVarId) (ρ : Expr) (steps : Array TraceStep
            kR == k && yR == y && iR == i && pR == p) then acc + 1 else acc
     | _ => acc) 0)
 
+/-- Native view of a `pseudoDivision` step payload. -/
+structure PdStepV where
+  f : MPoly
+  eq : MPoly
+  x : Var
+  d : Nat
+  r : MPoly
+  lcSign : Int
+  isEven : Bool
+deriving BEq
+
+/-- The step's leading coefficient `(eq.coeffsIn x)[degreeIn x]!`
+(z3's `coeff(eq, x, k)`, :1228-1231). -/
+def PdStepV.lc (st : PdStepV) : MPoly :=
+  (st.eq.coeffsIn st.x)[st.eq.degreeIn st.x]!
+
+/-- Quote an `IneqKind` (no `ToExpr` instance — ctor applications). -/
+def ineqKindToExpr : IneqKind → Expr
+  | .eq => mkConst ``IneqKind.eq
+  | .lt => mkConst ``IneqKind.lt
+  | .gt => mkConst ``IneqKind.gt
+
+/-- `(1 : ℝ)`. -/
+def mkRealOne : MetaM Expr :=
+  mkAppOptM ``OfNat.ofNat #[some (mkConst ``Real), some (toExpr 1), none]
+
+/-- `(-1 : ℝ)`. -/
+def mkRealNegOne : MetaM Expr := do mkAppM ``Neg.neg #[← mkRealOne]
+
+/-- Close `oddSigProd σs fs = 1` / `= -1` over concrete ±1-literal
+lists: unfold + norm_num. Sandbox-managed with the `hasMVar` hole
+discipline (19b Slice 1, the closeAlgRefl trap). -/
+def closeSigProd (tgt : Expr) : TacticM Expr := do
+  let saved ← getGoals
+  try
+    let h ← withoutModifyingState do
+      let m ← mkFreshExprMVar tgt
+      setGoals [m.mvarId!]
+      m.mvarId!.withContext do
+        evalTactic (← `(tactic| simp only [oddSigProd]))
+        evalTactic (← `(tactic| norm_num))
+      let h ← instantiateMVars m
+      if h.hasMVar then
+        throwError "closeSigProd: subgoal not closed"
+      pure h
+    setGoals saved
+    pure h
+  catch e =>
+    setGoals saved
+    throw e
+
+/-- The pd lane's threaded state: the goal mvar, the fact indexes, and
+the per-step identity cache. (Explicit state record — `withContext`
+closures can't assign captured `let mut`s.) -/
+structure PdState where
+  mvar : MVarId
+  eqFacts : Array (MPoly × FVarId)
+  diseqFacts : Array (MPoly × FVarId)
+  signPosFacts : Array (IneqKind × MPoly × FVarId)
+  prodEqFacts : Array (List (MPoly × Bool) × FVarId)
+  chainFacts : Array (FVarId × List (MPoly × Bool))
+  idCache : Array (PdStepV × MPoly × Expr)
+
+/-- 19b Slice 2 — the pseudoDivision consumption lane (the R7 gap).
+
+z3's `simplify(literal, …)` (nlsat_explain.cpp:1096-1216, read against
+`git show z3-4.12.5:`) rewrites core literals against the selected
+equation factor-by-factor, emitting one `pseudoDivision` step per
+replaced factor. The clause only ever shows the REBUILT atom; the
+original literal appears nowhere. This lane closes the gap:
+
+**Transport lane** (per clause literal): match the rebuilt atom's
+factor list against the steps' remainders BY VALUE (the F2-seam
+discipline); unmatched positions are the kept factors (z3 keeps
+`degree < k` factors verbatim, :1124-1128). Per matched position
+re-prove the pseudo-division identity (`pseudoDivisionIdentity`,
+Slice 1), take `lc ≠ 0` from the clause's own A5 diseq literal (or
+decide-grade for a const lc), and — only where z3's own assumption
+structure provides it — the lc's SIGN from the A4 literal
+(`add_lc_ineq` fires exactly when d odd ∧ factor odd ∧ kind ≠ EQ,
+:1176-1184). The per-position evidence assembles into `SignRel`
+(lt/gt kinds) / `ZeroRel` (eq kind — z3 never needs the lc sign
+there), the literal's `Holds` transports across `holds_signRel` /
+`holds_zeroRel_eq` to the reconstructed ORIGINAL factor list, and the
+standard `extractPosFacts`/`extractNegFacts` runs on it — the noted
+facts feed the eq/diseq/prod/chain indexes and the existing closes
+consume them uniformly. The kind-flip count is the native σ-product
+(z3's running `atom_sign`, :1113/:1136/:1171); the `hk` hypothesis is
+discharged against the concrete σ list, so a miscount fails to
+elaborate rather than producing a wrong fact.
+
+**Drop lane** (per step with a CONST remainder, :1149-1185): the
+position vanishes from the rebuilt literal (or collapses it
+entirely), so nothing matches by value. The content is a definite
+fact on the original factor, gated on the clause carrying the eq
+fact: remainder 0 ⟹ `f = 0` (the path-(b) collapse :1149-1162);
+nonzero const ⟹ `f ≠ 0` always (lc ≠ 0 suffices) plus the definite
+sign when the lc evidence determines it (d even ⟹ `sign f = sign r`;
+d odd ⟹ `lc-sign · sign r`).
+
+Completeness argument (genuine z3 emissions always close): a replaced
+odd position of an lt/gt atom with d odd carries the A4 sign literal
+by z3's own assumption rule (:1181-1184); everything else needs only
+the A5 diseq or a const lc. Foreign/corrupt payloads throw at the
+identity or the evidence lookup and skip soundly (participation, not
+trust). Unmatched steps (path (c) keep-original, :1197-1200)
+contribute nothing. -/
+unsafe def pdRewriteLane (mvar : MVarId) (ρ IE : Expr) (steps : Array TraceStep)
+    (litAtoms : Array (Literal × Atom × FVarId))
+    (eqFacts diseqFacts : Array (MPoly × FVarId))
+    (signPosFacts : Array (IneqKind × MPoly × FVarId))
+    (prodEqFacts : Array (List (MPoly × Bool) × FVarId))
+    (chainFacts : Array (FVarId × List (MPoly × Bool))) :
+    TacticM (MVarId × Array (MPoly × FVarId) × Array (MPoly × FVarId) ×
+      Array (IneqKind × MPoly × FVarId) × Array (List (MPoly × Bool) × FVarId) ×
+      Array (FVarId × List (MPoly × Bool))) := do
+  let pds : Array PdStepV := steps.filterMap fun
+    | .pseudoDivision f eq x d r lcSign isEven => some ⟨f, eq, x, d, r, lcSign, isEven⟩
+    | _ => none
+  if pds.isEmpty then
+    return (mvar, eqFacts, diseqFacts, signPosFacts, prodEqFacts, chainFacts)
+  -- per-step identity, cached (throws on a corrupt payload — the
+  -- caller's catch skips soundly)
+  let getId (S : PdState) (st : PdStepV) : TacticM (PdState × MPoly × Expr) := do
+    match S.idCache.find? (·.1 == st) with
+    | some (_, lc, hId) => pure (S, lc, hId)
+    | none =>
+      let (lc, hId) ← pseudoDivisionIdentity ρ st.f st.eq st.x st.d st.r
+      pure ({ S with idCache := S.idCache.push (st, lc, hId) }, lc, hId)
+  -- `lc ≠ 0` evidence: decide-grade for a const lc, else the clause's
+  -- A5 diseq literal, else from an A4 sign fact
+  let lcNeOf (S : PdState) (lc : MPoly) : TacticM Expr := do
+    match lc.asConst? with
+    | some v =>
+      if v == 0 then
+        throwError "pdRewrite: const-zero lc (impossible for a canonical lc)"
+      else
+        closeNumerically (← mkAppM ``Ne
+          #[← mkAppM ``Check.evalP #[ρ, toExpr lc], ← mkRealZero])
+    | none =>
+      match S.diseqFacts.find? (·.1 == lc) with
+      | some (_, fv) => pure (mkFVar fv)
+      | none =>
+        match S.signPosFacts.find? (fun (_, q, _) => q == lc) with
+        | some (.gt, _, fv) => mkAppM ``ne_of_gt #[mkFVar fv]
+        | some (.lt, _, fv) => mkAppM ``ne_of_lt #[mkFVar fv]
+        | _ => throwError "pdRewrite: no lc ≠ 0 evidence in the clause"
+  -- the lc's sign: `some (true, h)` = `0 < lc`, `some (false, h)` =
+  -- `lc < 0`; decide-grade for a const lc, else the A4 literal
+  let lcSignOf (S : PdState) (lc : MPoly) : TacticM (Option (Bool × Expr)) := do
+    match lc.asConst? with
+    | some v =>
+      if v > 0 then
+        try
+          pure (some (true, ← closeNumerically (← mkAppM ``LT.lt
+            #[← mkRealZero, ← mkAppM ``Check.evalP #[ρ, toExpr lc]])))
+        catch _ => pure none
+      else if v < 0 then
+        try
+          pure (some (false, ← closeNumerically (← mkAppM ``LT.lt
+            #[← mkAppM ``Check.evalP #[ρ, toExpr lc], ← mkRealZero])))
+        catch _ => pure none
+      else pure none
+    | none =>
+      match S.signPosFacts.find? (fun (k, q, _) => k == .gt && q == lc) with
+      | some (_, _, fv) => pure (some (true, mkFVar fv))
+      | none =>
+        match S.signPosFacts.find? (fun (k, q, _) => k == .lt && q == lc) with
+        | some (_, _, fv) => pure (some (false, mkFVar fv))
+        | none => pure none
+  -- hId with the exponent respelled `2 * (d/2)` / `2 * (d/2) + 1` —
+  -- the Slice-1 family's hypothesis shapes. Eq.mp is FORWARD along
+  -- `motive d = motive target` (the Eq.mpr-is-backward trap).
+  let normalizeExp (st : PdStepV) (lc q : MPoly) (hId : Expr) : TacticM Expr := do
+    let m := st.d / 2
+    let target := if st.d % 2 == 0 then 2 * m else 2 * m + 1
+    let hDE ← mkDecideProof (← mkAppM ``Eq #[toExpr st.d, toExpr target])
+    let lcValE ← mkAppM ``Check.evalP #[ρ, toExpr lc]
+    let fValE ← mkAppM ``Check.evalP #[ρ, toExpr st.f]
+    let qValE ← mkAppM ``Check.evalP #[ρ, toExpr q]
+    let eqValE ← mkAppM ``Check.evalP #[ρ, toExpr st.eq]
+    let rValE ← mkAppM ``Check.evalP #[ρ, toExpr st.r]
+    let motiveE ← withLocalDecl `e BinderInfo.default (mkConst ``Nat) fun eE => do
+      let powE ← mkAppM ``HPow.hPow #[lcValE, eE]
+      let lhsE ← mkAppM ``HMul.hMul #[powE, fValE]
+      let rhsE ← mkAppM ``HAdd.hAdd
+        #[(← mkAppM ``HMul.hMul #[qValE, eqValE]), rValE]
+      mkLambdaFVars #[eE] (← mkAppM ``Eq #[lhsE, rhsE])
+    let hCongr ← mkAppM ``congrArg #[motiveE, hDE]
+    mkAppM ``Eq.mp #[hCongr, hId]
+  -- the Slice-1 family application, all implicits pinned (the `2 * m`
+  -- exponent form does not unify against the literal exponent with `m`
+  -- free)
+  let appPd (nm : Name) (st : PdStepV) (lc q : MPoly) (hL hE hIdP : Expr) :
+      TacticM Expr := do
+    let lcValE ← mkAppM ``Check.evalP #[ρ, toExpr lc]
+    let fValE ← mkAppM ``Check.evalP #[ρ, toExpr st.f]
+    let qValE ← mkAppM ``Check.evalP #[ρ, toExpr q]
+    let eqValE ← mkAppM ``Check.evalP #[ρ, toExpr st.eq]
+    let rValE ← mkAppM ``Check.evalP #[ρ, toExpr st.r]
+    mkAppOptM nm #[some lcValE, some fValE, some qValE, some eqValE, some rValE,
+      some (toExpr (st.d / 2)), some hL, some hE, some hIdP]
+  -- (σ, pack proof `Real.sign F = σ · Real.sign R`) for a replaced ODD
+  -- position of an lt/gt atom; throws when the lc-sign evidence is
+  -- missing (z3's A4/A5 rule :1176-1184 guarantees it for genuine
+  -- emissions)
+  let packOf (S : PdState) (st : PdStepV) (lc : MPoly) (hLne hE hId hz : Expr) :
+      TacticM (Int × Expr) := do
+    let (_, q, _) := MPoly.pseudoDivisionCore st.f st.eq st.x false true
+    let hIdP ← normalizeExp st lc q hId
+    if st.d % 2 == 0 then
+      let hgt ← appPd ``pdSign_even_gt st lc q hLne hE hIdP
+      let hlt ← appPd ``pdSign_even_lt st lc q hLne hE hIdP
+      pure (1, ← mkAppM ``pdSign_pack_pos #[hz, hgt, hlt])
+    else
+      match ← lcSignOf S lc with
+      | some (true, hLpos) =>
+        let hgt ← appPd ``pdSign_odd_pos_gt st lc q hLpos hE hIdP
+        let hlt ← appPd ``pdSign_odd_pos_lt st lc q hLpos hE hIdP
+        pure (1, ← mkAppM ``pdSign_pack_pos #[hz, hgt, hlt])
+      | some (false, hLneg) =>
+        let hgt ← appPd ``pdSign_odd_neg_gt st lc q hLneg hE hIdP
+        let hlt ← appPd ``pdSign_odd_neg_lt st lc q hLneg hE hIdP
+        pure (-1, ← mkAppM ``pdSign_pack_neg #[hz, hgt, hlt])
+      | none => throwError "pdRewrite: no lc-sign evidence for an odd-d position"
+  -- note the transported extraction facts, updating the indexes
+  let noteFacts (S : PdState) (facts : List (Expr × FactKind)) : TacticM PdState := do
+    let mut S := S
+    for (fact, kind) in facts do
+      let (hfv, mv) ← S.mvar.note `h_f fact none
+      S := { S with mvar := mv }
+      match kind with
+      | .eqZero q => S := { S with eqFacts := S.eqFacts.push (q, hfv) }
+      | .neZero q => S := { S with diseqFacts := S.diseqFacts.push (q, hfv) }
+      | .eqProdZero fs => S := { S with prodEqFacts := S.prodEqFacts.push (fs, hfv) }
+      | .negChain fs => S := { S with chainFacts := S.chainFacts.push (hfv, fs) }
+      | .signPos kk q => S := { S with signPosFacts := S.signPosFacts.push (kk, q, hfv) }
+      | _ => pure ()
+    pure S
+  -- **Drop lane** (const remainders; runs FIRST so its definite facts
+  -- can serve as lc evidence for the transports)
+  let dropStep (S : PdState) (st : PdStepV) : TacticM PdState := do
+    let some v := st.r.asConst? | pure S
+    S.mvar.withContext do
+      try
+        let mut S := S
+        let some (_, hEFv) := S.eqFacts.find? (·.1 == st.eq)
+          | throwError "pdRewrite: no eq fact for a const-r step"
+        let lc := st.lc
+        let hLne ← lcNeOf S lc
+        let (S', _, hId) ← getId S st
+        S := S'
+        let hz ← mkAppM ``pdSign_eq #[hLne, mkFVar hEFv, hId]
+        let rValE ← mkAppM ``Check.evalP #[ρ, toExpr st.r]
+        if v == 0 then
+          -- path (b) collapse (:1149-1162): the factor vanishes
+          let hR0 ← closeNumerically (← mkAppM ``Eq #[rValE, ← mkRealZero])
+          let hf0 ← mkAppM ``Iff.mpr #[hz, hR0]
+          let (hfv, mv) ← S.mvar.note `h_f hf0 none
+          S := { S with mvar := mv, eqFacts := S.eqFacts.push (st.f, hfv) }
+        else
+          let hRne ← closeNumerically (← mkAppM ``Ne #[rValE, ← mkRealZero])
+          let hfNe ← mkAppM ``mt #[(← mkAppM ``Iff.mp #[hz]), hRne]
+          let (hfv, mv) ← S.mvar.note `h_f hfNe none
+          S := { S with mvar := mv, diseqFacts := S.diseqFacts.push (st.f, hfv) }
+          -- the definite sign, when the evidence determines it
+          try
+            let (_, q, _) := MPoly.pseudoDivisionCore st.f st.eq st.x false true
+            let hIdP ← normalizeExp st lc q hId
+            let (gtNm, ltNm, hL, flip) ←
+              if st.d % 2 == 0 then
+                pure (``pdSign_even_gt, ``pdSign_even_lt, hLne, false)
+              else
+                match ← lcSignOf S lc with
+                | some (true, hLpos) =>
+                  pure (``pdSign_odd_pos_gt, ``pdSign_odd_pos_lt, hLpos, false)
+                | some (false, hLneg) =>
+                  pure (``pdSign_odd_neg_gt, ``pdSign_odd_neg_lt, hLneg, true)
+                | none => throwError "pdRewrite: no lc-sign evidence"
+            -- family pos: `0<F ↔ 0<R` / `F<0 ↔ R<0`; neg: flipped
+            let (sgn, hf) ←
+              if v > 0 then
+                let hRpos ← closeNumerically
+                  (← mkAppM ``LT.lt #[← mkRealZero, rValE])
+                if !flip then
+                  pure (IneqKind.gt, ← mkAppM ``Iff.mpr
+                    #[(← appPd gtNm st lc q hL (mkFVar hEFv) hIdP), hRpos])
+                else
+                  pure (IneqKind.lt, ← mkAppM ``Iff.mpr
+                    #[(← appPd ltNm st lc q hL (mkFVar hEFv) hIdP), hRpos])
+              else
+                let hRneg ← closeNumerically
+                  (← mkAppM ``LT.lt #[rValE, ← mkRealZero])
+                if !flip then
+                  pure (IneqKind.lt, ← mkAppM ``Iff.mpr
+                    #[(← appPd ltNm st lc q hL (mkFVar hEFv) hIdP), hRneg])
+                else
+                  pure (IneqKind.gt, ← mkAppM ``Iff.mpr
+                    #[(← appPd gtNm st lc q hL (mkFVar hEFv) hIdP), hRneg])
+            let (hfv, mv) ← S.mvar.note `h_f hf none
+            S := { S with mvar := mv, signPosFacts := S.signPosFacts.push (sgn, st.f, hfv) }
+            pure ()
+          catch _ => pure ()
+        pure S
+      catch _ => pure S
+  -- **Transport lane**
+  let transportLit (S : PdState) (l : Literal) (k' : IneqKind)
+      (fs_r : List (MPoly × Bool)) (h_iFv : FVarId) : TacticM PdState := do
+    S.mvar.withContext do
+      try
+        -- match the rebuilt atom's positions against the steps'
+        -- remainders by value; build the per-position evidence
+        let mut S := S
+        let mut positions :
+            Array (MPoly × MPoly × Bool × Expr × Option (Int × Expr)) := #[]
+        let mut anyMatch := false
+        for (rp, mo) in fs_r do
+          match pds.find? fun st => st.r == rp with
+          | none =>
+            -- kept factor (:1124-1128): fp = rp, σ = 1
+            let rpValE ← mkAppM ``Check.evalP #[ρ, toExpr rp]
+            let hz ← mkAppM ``Iff.refl #[← mkAppM ``Eq #[rpValE, ← mkRealZero]]
+            let hs? ← if mo || k' == .eq then pure none else
+              pure (some (1, ← mkAppM ``Eq.symm
+                #[← mkAppM ``one_mul #[← mkAppM ``Real.sign #[rpValE]]]))
+            positions := positions.push (rp, rp, mo, hz, hs?)
+          | some st =>
+            anyMatch := true
+            let some (_, hEFv) := S.eqFacts.find? (·.1 == st.eq)
+              | throwError "pdRewrite: no eq fact for a matched step"
+            let lc := st.lc
+            let hLne ← lcNeOf S lc
+            let (S', _, hId) ← getId S st
+            S := S'
+            let hz ← mkAppM ``pdSign_eq #[hLne, mkFVar hEFv, hId]
+            let hs? ← if mo || k' == .eq then pure none else do
+              let (σ, hsP) ← packOf S st lc hLne (mkFVar hEFv) hId hz
+              pure (some (σ, hsP))
+            positions := positions.push (st.f, rp, mo, hz, hs?)
+        unless anyMatch do
+          throwError "pdRewrite: not a rebuilt literal"
+        let fs_oN : List (MPoly × Bool) :=
+          positions.toList.map fun (fp, _, mo, _, _) => (fp, mo)
+        -- the original kind: flip iff the odd-position σ-product is
+        -- −1 (z3's `atom_sign < 0 → flip`, :1191-1193)
+        let sigProdI : Int := positions.foldl (fun acc (_, _, mo, _, hs?) =>
+          if mo then acc else match hs? with | some (σ, _) => acc * σ | none => acc) 1
+        let k := if sigProdI == -1 then k'.flip else k'
+        -- the transport Iff
+        let hIff ←
+          if k' == .eq then
+            -- ZeroRel: zero-status only — z3 adds just `add_lc_diseq`
+            -- for EQ (:1181-1184); `atom::flip EQ = EQ`
+            let mut relPrf ← mkAppOptM ``ZeroRel.nil #[some ρ]
+            for (fp, rp, mo, hz, _) in positions.reverse do
+              relPrf ← mkAppM ``ZeroRel.cons
+                #[toExpr fp, toExpr rp, toExpr mo, hz, relPrf]
+            mkAppM ``holds_zeroRel_eq #[ρ, toExpr fs_oN, toExpr fs_r, relPrf]
+          else
+            let mut relPrf ← mkAppOptM ``SignRel.nil #[some ρ]
+            let mut σsE ← mkAppOptM ``List.nil #[some (mkConst ``Real)]
+            for (fp, rp, _, hz, hs?) in positions.reverse do
+              match hs? with
+              | some (σ, hsP) =>
+                let sE ← if σ == 1 then mkRealOne else mkRealNegOne
+                let oneE ← mkRealOne
+                let negOneE ← mkRealNegOne
+                let hs1 ← if σ == 1 then
+                  mkAppOptM ``Or.inl #[none,
+                    some (← mkAppM ``Eq #[sE, negOneE]),
+                    some (← mkAppM ``Eq.refl #[sE])]
+                else
+                  mkAppOptM ``Or.inr #[some (← mkAppM ``Eq #[sE, oneE]),
+                    none, some (← mkAppM ``Eq.refl #[sE])]
+                relPrf ← mkAppM ``SignRel.consOdd
+                  #[sE, toExpr fp, toExpr rp, hz, hsP, hs1, relPrf]
+                σsE ← mkAppM ``List.cons #[sE, σsE]
+              | none =>
+                relPrf ← mkAppM ``SignRel.consEven #[toExpr fp, toExpr rp, hz, relPrf]
+                σsE ← mkAppM ``List.cons #[(← mkRealOne), σsE]
+            let ospE ← mkAppM ``oddSigProd #[σsE, toExpr fs_oN]
+            let oneE ← mkRealOne
+            let negOneE ← mkRealNegOne
+            let kE := ineqKindToExpr k
+            let k'E := ineqKindToExpr k'
+            let kFlipE := ineqKindToExpr k'.flip
+            let hS ← closeSigProd (← mkAppM ``Eq
+              #[ospE, (if sigProdI == 1 then oneE else negOneE)])
+            let hkk ← mkAppM ``Eq.refl #[kE]
+            let hAnd ← mkAppM ``And.intro #[hS, hkk]
+            let leftTy ← mkAppM ``And
+              #[← mkAppM ``Eq #[ospE, oneE], ← mkAppM ``Eq #[kE, k'E]]
+            let rightTy ← mkAppM ``And
+              #[← mkAppM ``Eq #[ospE, negOneE], ← mkAppM ``Eq #[kE, kFlipE]]
+            let hk ← if sigProdI == 1 then
+              mkAppOptM ``Or.inl #[none, some rightTy, some hAnd]
+            else
+              mkAppOptM ``Or.inr #[some leftTy, none, some hAnd]
+            mkAppM ``holds_signRel
+              #[ρ, kE, k'E, σsE, toExpr fs_oN, toExpr fs_r, relPrf, hk]
+        -- transport the literal's fact across, re-extract on the
+        -- original factor list, note + index
+        let aE := mkApp IE (toExpr l.bvar)
+        if l.neg then
+          let nn ← mkAppOptM ``Classical.not_not #[some aE]
+          let hH_r ← mkAppM ``Iff.mp #[nn, mkFVar h_iFv]
+          let hH_o ← mkAppM ``Iff.mpr #[hIff, hH_r]
+          noteFacts S (← extractPosFacts ρ (.ineq ⟨k, fs_oN⟩) hH_o)
+        else
+          let hNH_o ← mkAppM ``mt #[(← mkAppM ``Iff.mp #[hIff]), mkFVar h_iFv]
+          noteFacts S (← extractNegFacts ρ (.ineq ⟨k, fs_oN⟩) hNH_o)
+      catch _ => pure S
+  let mut S : PdState :=
+    ⟨mvar, eqFacts, diseqFacts, signPosFacts, prodEqFacts, chainFacts, #[]⟩
+  for st in pds do
+    S ← dropStep S st
+  for (l, a, h_iFv) in litAtoms do
+    match a with
+    | .ineq ⟨k', fs_r⟩ => S ← transportLit S l k' fs_r h_iFv
+    | .root _ => continue
+  pure (S.mvar, S.eqFacts, S.diseqFacts, S.signPosFacts, S.prodEqFacts, S.chainFacts)
+
 /-- Core worker: prove `clauseSatI (interp ρ atoms) C` for concrete
 `atoms`, `C`. `hName` seeds the extracted-fact names. Failure (any
 undecodable literal, skipped shape, or glue failure) propagates as a
@@ -1737,10 +2185,16 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
   let mut rootFacts : Array (RootKind × Var × Nat × MPoly × FVarId) := #[]
   -- G11: positive-polarity root literals (the `¬ Holds` side)
   let mut negRootFacts : Array (RootKind × Var × Nat × MPoly × FVarId) := #[]
+  -- 19b Slice 2: the positive single-factor comparisons (the A4
+  -- lc-sign evidence index for the pseudoDivision lane)
+  let mut signPosFacts : Array (IneqKind × MPoly × FVarId) := #[]
+  -- 19b Slice 2: (literal, atom, h_i fvar) per ineq literal — the pd
+  -- lane's transport inputs
+  let mut litAtoms : Array (Literal × Atom × FVarId) := #[]
   for l in CV do
     -- everything that typechecks terms mentioning context fvars must
     -- run in the CURRENT mvar's local context (hFvar, noted facts)
-    let (mvar', wasSkipped, factInfo) ← mvar.withContext do
+    let (mvar', wasSkipped, factInfo, h_iFvar?) ← mvar.withContext do
       let lE := litToExpr l
       -- h_i : ¬ litSatI I l  :=  fun hlit => h ⟨l, by decide, hlit⟩
       let litSatTy ← mkAppM ``litSatI #[IE, lE]
@@ -1759,12 +2213,13 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
       | some (some a) =>
         mvar1.withContext do
           match (← extractFacts ρ IE (mkFVar h_iFvar) l a) with
-          | [] => pure (mvar1, true, ((#[], #[], #[], #[], #[], #[]) :
+          | [] => pure (mvar1, true, ((#[], #[], #[], #[], #[], #[], #[]) :
               Array (MPoly × FVarId) × Array (MPoly × FVarId) ×
               Array (List (MPoly × Bool) × FVarId) ×
               Array (FVarId × List (MPoly × Bool)) ×
               Array (RootKind × Var × Nat × MPoly × FVarId) ×
-              Array (RootKind × Var × Nat × MPoly × FVarId)))
+              Array (RootKind × Var × Nat × MPoly × FVarId) ×
+              Array (IneqKind × MPoly × FVarId)), some h_iFvar)
           | facts =>
             let mut mv := mvar1
             let mut eqs : Array (MPoly × FVarId) := #[]
@@ -1773,6 +2228,7 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
             let mut chs : Array (FVarId × List (MPoly × Bool)) := #[]
             let mut roots : Array (RootKind × Var × Nat × MPoly × FVarId) := #[]
             let mut nroots : Array (RootKind × Var × Nat × MPoly × FVarId) := #[]
+            let mut spos : Array (IneqKind × MPoly × FVarId) := #[]
             for (fact, kind) in facts do
               let (hfv, mv') ← mv.note `h_f fact none
               mv := mv'
@@ -1783,21 +2239,32 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
               | .negChain fs => chs := chs.push (hfv, fs)
               | .rootPair k y i p => roots := roots.push (k, y, i, p, hfv)
               | .negRoot k y i p => nroots := nroots.push (k, y, i, p, hfv)
+              | .signPos k q => spos := spos.push (k, q, hfv)
               | .other => pure ()
-            pure (mv, false, (eqs, neqs, prods, chs, roots, nroots))
+            pure (mv, false, (eqs, neqs, prods, chs, roots, nroots, spos),
+              some h_iFvar)
       | _ =>
         throwError "nlsat_arith_valid: literal {repr l} is undecodable in the atom table"
     mvar := mvar'
     if wasSkipped then skipped := skipped.push l
-    match atomsV[l.bvar]? with
-    | some (some a) => vars := vars ++ atomVars a
-    | _ => pure ()
+    match atomsV[l.bvar]?, h_iFvar? with
+    | some (some a), some h_iFvar =>
+      vars := vars ++ atomVars a
+      -- the pd lane's per-literal transport inputs (root atoms are
+      -- never rebuilt — z3 `simplify` returns them unmodified,
+      -- nlsat_explain.cpp:1100-1103)
+      match a with
+      | .ineq _ => litAtoms := litAtoms.push (l, a, h_iFvar)
+      | .root _ => pure ()
+    | some (some a), none => vars := vars ++ atomVars a
+    | _, _ => pure ()
     eqFacts := eqFacts ++ factInfo.1
     diseqFacts := diseqFacts ++ factInfo.2.1
     prodEqFacts := prodEqFacts ++ factInfo.2.2.1
     chainFacts := chainFacts ++ factInfo.2.2.2.1
     rootFacts := rootFacts ++ factInfo.2.2.2.2.1
-    negRootFacts := negRootFacts ++ factInfo.2.2.2.2.2
+    negRootFacts := negRootFacts ++ factInfo.2.2.2.2.2.1
+    signPosFacts := signPosFacts ++ factInfo.2.2.2.2.2.2
   -- "eq × bare-variable" lift (the o139 cid-8 lesson): nlinarith only
   -- pairs HYPOTHESES — it cannot multiply an equality by a free
   -- variable. CAD-derived contradictions routinely need exactly that
@@ -1833,6 +2300,15 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
   -- deg-1 root facts.)
   let (mvarC, thomOrs) ← collectStepFacts mvar ρ steps rootFacts
   mvar := mvarC
+  -- 19b Slice 2: pseudoDivision consumption — the rebuilt-literal
+  -- transport + const-remainder drop lane. Runs after the fact indexes
+  -- are collected (it reads them) and before the closes (it feeds
+  -- them).
+  let (mvarP, eqF, neqF, _sposF, prodF, chainF) ←
+    pdRewriteLane mvar ρ IE steps litAtoms eqFacts diseqFacts signPosFacts
+      prodEqFacts chainFacts
+  mvar := mvarP
+  eqFacts := eqF; diseqFacts := neqF; prodEqFacts := prodF; chainFacts := chainF
   -- G11 negative side: positive-in-clause root literals (deg-1 lane;
   -- step-independent semantic conversion). Produces the
   -- `negHolds_deg1_disjunction` splits. Misses skip soundly.
@@ -1932,11 +2408,18 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
   -- literal + margin covers every split the loop can make. The item-3
   -- Thom formula facts add up to `thomOrs` independent Or carriers;
   -- each Or's split doubles the branch tree, so the clause-based
-  -- budget is multiplied by 2^thomOrs (G4 census item 3).
+  -- budget is multiplied by 2^thomOrs (G4 census item 3). 19b Slice 2:
+  -- the pd lane's transports preserve the factor count per literal
+  -- (drops are never inserted into the rebuilt list), so transported
+  -- diseq facts stay inside the per-literal bound; the drop lane adds
+  -- ≤ 2 indexed facts per pseudoDivision STEP, so the budget gains
+  -- 2·|pdSteps| (bundle-sized, not a hardcoded constant).
   let fuel := (CV.foldl (fun acc l =>
     match atomsV[l.bvar]? with
     | some (some (.ineq a)) => acc + 2 * (a.factors.length + 1)
-    | _ => acc + 2) 0 + 4) * 2 ^ thomOrs
+    | _ => acc + 2) 0 + 4 +
+    2 * (steps.filter (fun | .pseudoDivision .. => true | _ => false)).size)
+    * 2 ^ thomOrs
   -- R-e (review 12): split the negChain facts PRE-mangle, one factor
   -- at a time, so each branch keeps evalP-form facts and the
   -- zero-product close can run per branch with the split-produced eq

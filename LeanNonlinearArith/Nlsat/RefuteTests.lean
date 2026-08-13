@@ -983,4 +983,261 @@ example (ρ : Nat → ℝ) (hL : evalP ρ [(1, [(0, 1)])] < (0 : ℝ))
     ring
   exact pdSign_odd_neg_gt (m := 0) hL hE hId
 
+/-! ## 19b Slice 2 — pseudoDivision consumption (`pdRewriteLane`)
+
+The atoms/clauses/steps below are the REAL Slice-0 driver dumps
+(2026-08-13, `scratch_dump.lean` pd1/pd2/pd3/pd4/pd6). During
+development the lane was instrumented (temporary `logInfo`, reverted)
+to confirm: the transport FIRES on the rebuilt literals of pd1/pd3/pd6
+(with the lc evidence found from the clause's own A4/A5 literals —
+R-h's `⟨6,false⟩` unnegated-EQ convention for the pd6 diseq), the drop
+lane notes the definite signs on pd2/pd4, and the corruption probes
+skip soundly.
+
+**Glue-subsumption finding:** every Slice-0 driver's arith member also
+closes STEP-FREE (the F2 glue — nlinarith with the eq×var lift,
+ineq×ineq pairing, and `sq_nonneg` hints — subsumes the transport on
+these small cores). The with-steps examples pin the lane's
+construction; the step-free variants pin the subsumption (guards fail
+loudly if either side regresses). -/
+
+-- pd1: const lc, d odd, no flip; rebuilt `lt [x0²]` in proj as ⟨3,false⟩
+private def s2pd1Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(1, 1)]), ((-1), [(0, 2)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(1, 1)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 2)])], false)]⟩)]
+private def s2pd1F : MPoly := [(1, [(1, 1)])]
+private def s2pd1Eq : MPoly := [(1, [(1, 1)]), ((-1), [(0, 2)])]
+private def s2pd1R : MPoly := [(1, [(0, 2)])]
+private def s2pd1Fbad : MPoly := [(1, [(1, 1)]), (1, [])]
+private def s2pd1R4 : MPoly := [(1, [(0, 4)])]
+private def s2pd1Steps : Array TraceStep :=
+  #[.resolution (.clause 2), .pseudoDivision s2pd1F s2pd1Eq 1 1 s2pd1R 1 false]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd1Atoms)
+      (arithClause [⟨1, false⟩, ⟨2, false⟩] [⟨3, false⟩]) := by
+  nlsat_arith_valid_steps s2pd1Steps
+
+-- step-free: the glue subsumes (sq_nonneg + eq substitution)
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd1Atoms)
+      (arithClause [⟨1, false⟩, ⟨2, false⟩] [⟨3, false⟩]) := by
+  nlsat_arith_valid_steps #[]
+
+-- corrupt f: the identity close throws (the closeAlgRefl hole-guard +
+-- the withoutModifyingState rollback) — the step is skipped soundly
+-- and the clause still closes (glue)
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd1Atoms)
+      (arithClause [⟨1, false⟩, ⟨2, false⟩] [⟨3, false⟩]) := by
+  nlsat_arith_valid_steps #[.pseudoDivision s2pd1Fbad s2pd1Eq 1 1 s2pd1R 1 false]
+
+-- path-(c) tolerance: the extra step (d = 2, r = x0⁴ — matches no
+-- clause factor; its identity is also false) contributes nothing
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd1Atoms)
+      (arithClause [⟨1, false⟩, ⟨2, false⟩] [⟨3, false⟩]) := by
+  nlsat_arith_valid_steps
+    #[.pseudoDivision s2pd1F s2pd1Eq 1 1 s2pd1R 1 false,
+      .pseudoDivision s2pd1F s2pd1Eq 1 2 s2pd1R4 1 false]
+
+-- an INVALID clause carrying the genuine step must reject even with
+-- the transport's facts (F-w negative probe)
+#guard_msgs (drop error) in
+/- -/ example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd1Atoms)
+      (arithClause [⟨1, false⟩] [⟨3, false⟩]) := by
+  nlsat_arith_valid_steps s2pd1Steps
+
+-- pd3: REORDER live (internal variable order), the lc is a SQUARE
+-- (v0²), the A4-GT literal carries its sign, and the rewrite target is
+-- the x0-BOUND literal (R-c), not the "main" ineq
+private def s2pd3Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.lt, [([(1, [(1, 1)])], false)]⟩),
+   some (.ineq ⟨.lt, [([((-2), [(1, 1)]), (1, [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 2), (1, 1)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 2)]), (1, [(0, 1)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 2)]), ((-2), [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 2)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)])], false)]⟩)]
+private def s2pd3F : MPoly := [((-2), [(1, 1)]), (1, [])]
+private def s2pd3Eq : MPoly := [(1, [(0, 2), (1, 1)]), ((-1), [])]
+private def s2pd3R : MPoly := [(1, [(0, 2)]), ((-2), [])]
+private def s2pd3Steps : Array TraceStep :=
+  #[.resolution (.clause 3),
+    .pseudoDivision s2pd3F s2pd3Eq 1 1 s2pd3R 1 false,
+    .factorSplit [(1, [(0, 2)])] #[[(1, [(0, 1)])]] #[],
+    .linearRoot .lt 0 [(1, [(0, 1)])] false none,
+    .cellBound .upper .lt 0 1 [(1, [(0, 1)])]]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd3Atoms)
+      (arithClause [⟨3, false⟩, ⟨2, true⟩] [⟨5, true⟩, ⟨6, true⟩, ⟨7, true⟩]) := by
+  nlsat_arith_valid_steps s2pd3Steps
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd3Atoms)
+      (arithClause [⟨3, false⟩, ⟨2, true⟩] [⟨5, true⟩, ⟨6, true⟩, ⟨7, true⟩]) := by
+  nlsat_arith_valid_steps #[]
+
+-- pd6: d even + non-const lc + the A5 DISEQ assumption (R-h: enters
+-- proj as ⟨6,false⟩, the EQ atom unnegated — the lane's `lc ≠ 0`
+-- evidence comes from its extraction)
+private def s2pd6Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.gt, [([(1, [(0, 1)]), (1, [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 2)]), ((-2), [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1), (1, 1)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(2, [(1, 2)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.lt, [([((-1), [(0, 2)]), (2, [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, []⟩)]
+private def s2pd6F : MPoly := [(2, [(1, 2)]), ((-1), [])]
+private def s2pd6Eq : MPoly := [(1, [(0, 1), (1, 1)]), ((-1), [])]
+private def s2pd6R : MPoly := [((-1), [(0, 2)]), (2, [])]
+private def s2pd6Steps : Array TraceStep :=
+  #[.resolution (.clause 4),
+    .pseudoDivision s2pd6F s2pd6Eq 1 2 s2pd6R (-1) false,
+    .factorSplit [(1, [(0, 1)])] #[[(1, [(0, 1)])]] #[],
+    .linearRoot .lt 0 [(1, [(0, 1)])] false none,
+    .cellBound .upper .lt 0 1 [(1, [(0, 1)])]]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd6Atoms)
+      (arithClause [⟨4, false⟩, ⟨3, false⟩] [⟨5, false⟩, ⟨6, false⟩, ⟨7, true⟩]) := by
+  nlsat_arith_valid_steps s2pd6Steps
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd6Atoms)
+      (arithClause [⟨4, false⟩, ⟨3, false⟩] [⟨5, false⟩, ⟨6, false⟩, ⟨7, true⟩]) := by
+  nlsat_arith_valid_steps #[]
+
+-- decision-1: the lcSign payload is an untrusted HINT — flipping it
+-- (−1 → 1) changes nothing (d is even; the evidence is the A5 diseq)
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd6Atoms)
+      (arithClause [⟨4, false⟩, ⟨3, false⟩] [⟨5, false⟩, ⟨6, false⟩, ⟨7, true⟩]) := by
+  nlsat_arith_valid_steps #[.pseudoDivision s2pd6F s2pd6Eq 1 2 s2pd6R 1 false]
+
+private def s2pd6StepsEven : Array TraceStep :=
+  #[.pseudoDivision s2pd6F s2pd6Eq 1 2 s2pd6R (-1) true]
+
+-- the isEven payload is likewise a hint — the marks come from the
+-- CLAUSE ATOM's factor list, never from the payload
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd6Atoms)
+      (arithClause [⟨4, false⟩, ⟨3, false⟩] [⟨5, false⟩, ⟨6, false⟩, ⟨7, true⟩]) := by
+  nlsat_arith_valid_steps s2pd6StepsEven
+
+-- R-h polarity: with the diseq literal's polarity flipped (⟨6,true⟩ —
+-- asserting x0 = 0), the lc evidence is gone and the transport is
+-- inert; the (valid) clause still closes through the glue
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd6Atoms)
+      (arithClause [⟨4, false⟩, ⟨3, false⟩] [⟨5, false⟩, ⟨6, true⟩]) := by
+  nlsat_arith_valid_steps s2pd6Steps
+
+-- pd2: const-nonzero remainder (the DROP lane), A4-GT lc — the lane
+-- notes `0 < x1` from the eq + lc-sign + r = 1
+private def s2pd2Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.lt, [([(1, [(0, 1)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1), (1, 1)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(1, 1)])], false)]⟩),
+   some (.ineq ⟨.lt, []⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 1)])], false)]⟩)]
+private def s2pd2Steps : Array TraceStep :=
+  #[.resolution (.clause 3),
+    .pseudoDivision s2pd1F s2pd6Eq 1 1 [(1, [])] 1 false]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd2Atoms)
+      (arithClause [⟨2, false⟩, ⟨3, false⟩] [⟨5, true⟩]) := by
+  nlsat_arith_valid_steps s2pd2Steps
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd2Atoms)
+      (arithClause [⟨2, false⟩, ⟨3, false⟩] [⟨5, true⟩]) := by
+  nlsat_arith_valid_steps #[]
+
+-- pd4: const remainder with lcSign −1 (A4-LT): the flipped family —
+-- the lane notes `x1 < 0`
+private def s2pd4Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.gt, [([(1, [(0, 1)]), (1, [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 1), (1, 1)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(1, 1)])], false)]⟩),
+   some (.ineq ⟨.lt, []⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)])], false)]⟩)]
+private def s2pd4Steps : Array TraceStep :=
+  #[.resolution (.clause 3),
+    .pseudoDivision s2pd1F s2pd6Eq 1 1 [(1, [])] (-1) false]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd4Atoms)
+      (arithClause [⟨3, false⟩, ⟨2, false⟩] [⟨5, true⟩]) := by
+  nlsat_arith_valid_steps s2pd4Steps
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2pd4Atoms)
+      (arithClause [⟨3, false⟩, ⟨2, false⟩] [⟨5, true⟩]) := by
+  nlsat_arith_valid_steps #[]
+
+-- ZeroRel (eq-kind rebuilt literal, synthetic): f = x1²−2,
+-- eq = x1−x0², d = 2, r = x0⁴−2; z3 adds only `add_lc_diseq` for EQ
+-- (:1181-1184) — the ZeroRel transport needs just the zero-status
+private def s2zrAtoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(1, 1)]), ((-1), [(0, 2)])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(1, 2)]), ((-2), [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(0, 4)]), ((-2), [])], false)]⟩)]
+private def s2zrF : MPoly := [(1, [(1, 2)]), ((-2), [])]
+private def s2zrR : MPoly := [(1, [(0, 4)]), ((-2), [])]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2zrAtoms)
+      (arithClause [⟨1, false⟩, ⟨2, false⟩] [⟨3, false⟩]) := by
+  nlsat_arith_valid_steps #[.pseudoDivision s2zrF s2pd1Eq 1 2 s2zrR 1 false]
+
+-- kind-flip + d = 3 (synthetic): f = x1⁴+x1³, eq = x0x1²−1 (lc x0 < 0
+-- via the A4-LT literal), r = x0²x1+x0; σ = −1 ⟹ the original kind is
+-- flip(lt) = gt
+private def s2kfAtoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(0, 1), (1, 2)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(1, 4)]), (1, [(1, 3)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 2), (1, 1)]), (1, [(0, 1)])], false)]⟩)]
+private def s2kfF : MPoly := [(1, [(1, 4)]), (1, [(1, 3)])]
+private def s2kfEq : MPoly := [(1, [(0, 1), (1, 2)]), ((-1), [])]
+private def s2kfR : MPoly := [(1, [(0, 2), (1, 1)]), (1, [(0, 1)])]
+private def s2kfSteps : Array TraceStep :=
+  #[.pseudoDivision s2kfF s2kfEq 1 3 s2kfR (-1) false]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2kfAtoms)
+      (arithClause [⟨1, false⟩, ⟨3, false⟩] [⟨4, false⟩, ⟨2, true⟩]) := by
+  nlsat_arith_valid_steps s2kfSteps
+
+-- consEven (synthetic): the rebuilt atom lt [(x0, false), (x0⁴+1, true)]
+-- carries an even-marked replaced factor — zero-status only, no sign
+-- relation (:1133 sign absorption)
+private def s2evAtoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(1, 1)]), ((-1), [(0, 2)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)])], false), ([(1, [(0, 4)]), (1, [])], true)]⟩)]
+private def s2evF : MPoly := [(1, [(1, 2)]), (1, [])]
+private def s2evR : MPoly := [(1, [(0, 4)]), (1, [])]
+
+example (ρ : Nat → ℝ) :
+    clauseSatI (interp ρ s2evAtoms)
+      (arithClause [⟨1, false⟩, ⟨2, false⟩] [⟨3, false⟩]) := by
+  nlsat_arith_valid_steps #[.pseudoDivision s2evF s2pd1Eq 1 2 s2evR 1 false]
+
 end LeanNonlinearArith.Nlsat.Tests.Refute
+

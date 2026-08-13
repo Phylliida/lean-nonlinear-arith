@@ -1090,6 +1090,300 @@ theorem pdSign_odd_neg_eq (hL : L < 0) (hE : E = 0)
 
 end PdSignTransfer
 
+/-! ## 19b Slice 2 — rebuilt-literal equivalence transport
+
+z3's `simplify(literal, …)` (nlsat_explain.cpp:1096-1216) rebuilds a
+core literal factor-by-factor against the selected equation: factors
+with `degree(f, x) < k` are kept unchanged (:1124-1128); the rest are
+pseudo-divided, one `pseudoDivision` step per factor — a non-const
+remainder REPLACES the factor with its even-mark preserved
+(:1186-1190), a const-nonzero remainder DROPS the position
+(:1163-1185 — the factor is never pushed), and a const-ZERO remainder
+collapses the whole literal to true/false with an early return
+(:1149-1162 — no rebuilt literal exists; the meta lane notes the
+`f = 0` content directly). The kind flip count is z3's running
+`atom_sign`: rule 1 (:1132-1137 — d odd ∧ factor odd ∧ lc-sign < 0)
+fires BEFORE the const check, the const case (:1170-1172 — remainder
+negative ∧ factor odd) fires after; the two compose. The lc assumption
+is per-core: `add_lc_ineq` (sign-pinning) iff `d odd ∧ !is_even ∧
+kind ≠ EQ`, else `add_lc_diseq` (:1176-1184) — exactly the evidence
+each lemma below requires.
+
+The consumption design (the F2 seam): the clause only ever shows the
+REBUILT atom. `SignRel`/`ZeroRel` relate a candidate ORIGINAL factor
+list (meta-reconstructed from the per-step `(f, r)` payloads by value)
+to the rebuilt one position-by-position, each position's content
+re-proven from the per-instance pseudo-division identity
+(`Refute.pseudoDivisionIdentity`) plus the clause's own lc evidence —
+the payloads' d-parity/lcSign stay untrusted hints (decision 1).
+`holds_signRel`/`holds_zeroRel_eq` transport the atom's `Holds`
+across, and the standard extraction then runs on the original factor
+list. The meta's flip count mirrors `atom_sign`, but the Iff is
+kernel-checked either way — a miscount yields a kind hypothesis that
+fails to elaborate, never a wrong fact. -/
+
+/-- The parity-free zero-status transfer: under `E = 0`, `L^d · F = R`
+with `L ≠ 0` gives `F = 0 ↔ R = 0` at ANY parity — z3's `kind == EQ`
+case adds only `add_lc_diseq` (:1181-1184), so the EQ transport must
+not ask for the lc's sign. (Slice 1's `pdSign_*_eq` members split by
+parity and lc-sign, leaving the d-odd sign-free gap; this closes
+it.) -/
+theorem pdSign_eq {L F Q E R : ℝ} {d : Nat} (hL : L ≠ 0) (hE : E = 0)
+    (hId : L ^ d * F = Q * E + R) : F = 0 ↔ R = 0 := by
+  have hT : L ^ d ≠ 0 := pow_ne_zero d hL
+  rw [← pd_id_apply hId hE]
+  constructor
+  · intro hF; rw [hF, mul_zero]
+  · intro hTF
+    rcases mul_eq_zero.mp hTF with hT0 | hF
+    · exact absurd hT0 hT
+    · exact hF
+
+/-- `Real.sign` of a product (not in mathlib's `Real.sign` API). -/
+theorem realSign_mul (a b : ℝ) : Real.sign (a * b) = Real.sign a * Real.sign b := by
+  rcases lt_trichotomy a 0 with ha | rfl | ha <;>
+    rcases lt_trichotomy b 0 with hb | rfl | hb
+  · rw [Real.sign_of_neg ha, Real.sign_of_neg hb,
+      Real.sign_of_pos (mul_pos_of_neg_of_neg ha hb)]; norm_num
+  · simp [Real.sign_of_neg ha]
+  · rw [Real.sign_of_neg ha, Real.sign_of_pos hb,
+      Real.sign_of_neg (mul_neg_of_neg_of_pos ha hb)]; norm_num
+  · simp [Real.sign_of_neg hb]
+  · simp
+  · simp [Real.sign_of_pos hb]
+  · rw [Real.sign_of_pos ha, Real.sign_of_neg hb,
+      Real.sign_of_neg (mul_neg_of_pos_of_neg ha hb)]; norm_num
+  · simp [Real.sign_of_pos ha]
+  · rw [Real.sign_of_pos ha, Real.sign_of_pos hb,
+      Real.sign_of_pos (mul_pos ha hb)]; norm_num
+
+theorem realSign_eq_one_iff (r : ℝ) : Real.sign r = 1 ↔ 0 < r := by
+  constructor
+  · rcases lt_trichotomy r 0 with h | h | h
+    · rw [Real.sign_of_neg h]; intro h1; norm_num at h1
+    · rw [h, Real.sign_zero]; intro h1; norm_num at h1
+    · intro _; exact h
+  · exact Real.sign_of_pos
+
+theorem realSign_eq_neg_one_iff (r : ℝ) : Real.sign r = -1 ↔ r < 0 := by
+  constructor
+  · rcases lt_trichotomy r 0 with h | h | h
+    · intro _; exact h
+    · rw [h, Real.sign_zero]; intro h1; norm_num at h1
+    · rw [Real.sign_of_pos h]; intro h1; norm_num at h1
+  · exact Real.sign_of_neg
+
+/-- σ = +1 position pack: same zero-status and same strict signs ⟹
+same `Real.sign` (as `1 *`, the `SignRel.cons` currency). -/
+theorem pdSign_pack_pos {F R : ℝ} (hz : F = 0 ↔ R = 0)
+    (hgt : 0 < F ↔ 0 < R) (hlt : F < 0 ↔ R < 0) :
+    Real.sign F = 1 * Real.sign R := by
+  rw [one_mul]
+  rcases lt_trichotomy R 0 with h | h | h
+  · rw [Real.sign_of_neg h, Real.sign_of_neg (hlt.mpr h)]
+  · have hF : F = 0 := hz.mpr h
+    rw [h, hF, Real.sign_zero]
+  · rw [Real.sign_of_pos h, Real.sign_of_pos (hgt.mpr h)]
+
+/-- σ = −1 position pack (d odd ∧ lc < 0, :1132-1137): the signs
+flip. -/
+theorem pdSign_pack_neg {F R : ℝ} (hz : F = 0 ↔ R = 0)
+    (hgt : 0 < F ↔ R < 0) (hlt : F < 0 ↔ 0 < R) :
+    Real.sign F = -1 * Real.sign R := by
+  rw [neg_one_mul]
+  rcases lt_trichotomy R 0 with h | h | h
+  · rw [Real.sign_of_neg h, Real.sign_of_pos (hgt.mpr h)]; norm_num
+  · have hF : F = 0 := hz.mpr h
+    rw [h, hF, Real.sign_zero]; norm_num
+  · rw [Real.sign_of_pos h, Real.sign_of_neg (hlt.mpr h)]
+
+/-- Comparison transports along a `Real.sign` equality. -/
+theorem pos_iff_pos_of_realSign_eq {a b : ℝ} (h : Real.sign a = Real.sign b) :
+    0 < a ↔ 0 < b := by
+  rw [← realSign_eq_one_iff a, ← realSign_eq_one_iff b, h]
+
+theorem lt_iff_lt_of_realSign_eq {a b : ℝ} (h : Real.sign a = Real.sign b) :
+    a < 0 ↔ b < 0 := by
+  rw [← realSign_eq_neg_one_iff a, ← realSign_eq_neg_one_iff b, h]
+
+theorem pos_iff_lt_of_realSign_eq_neg {a b : ℝ} (h : Real.sign a = - Real.sign b) :
+    0 < a ↔ b < 0 := by
+  rw [← Real.sign_neg] at h
+  exact (pos_iff_pos_of_realSign_eq h).trans neg_pos
+
+theorem lt_iff_pos_of_realSign_eq_neg {a b : ℝ} (h : Real.sign a = - Real.sign b) :
+    a < 0 ↔ 0 < b := by
+  rw [← Real.sign_neg] at h
+  exact (lt_iff_lt_of_realSign_eq h).trans neg_lt_zero
+
+/-- The cumulative kind-flip sign: the product of the per-position
+signs at ODD positions (z3's running `atom_sign`, :1113/:1136/:1171).
+`σs` is aligned with the ORIGINAL factor list; even positions
+contribute nothing (their sign is sign-absorbed, :1133). Pattern
+matching (not an `if`) so the equation lemmas reduce cleanly on
+literal marks. -/
+def oddSigProd : List ℝ → List (MPoly × Bool) → ℝ
+  | [], _ => 1
+  | s :: σs, (_, false) :: fs_o => s * oddSigProd σs fs_o
+  | _ :: σs, (_, true) :: fs_o => oddSigProd σs fs_o
+  | _, _ => 1
+
+/-- Per-position evidence relating a candidate ORIGINAL factor list to
+the REBUILT (clause-visible) one. Covers both the kept case (`fp = rp`
+by value, σ = 1) and the pseudo-division-replaced case; the even-mark
+is shared by construction (:1189 pushes the same mark). `consOdd`
+carries the sign relation (needed for the `oddProd` composition);
+`consEven` doesn't (the factor's sign is sign-absorbed, :1133 — only
+its zero-status matters, and z3 adds no sign-pinning assumption for
+even factors, :1176-1184). -/
+inductive SignRel (ρ : Nat → ℝ) :
+    List ℝ → List (MPoly × Bool) → List (MPoly × Bool) → Prop where
+  | nil : SignRel ρ [] [] []
+  | consOdd (s : ℝ) (fp rp : MPoly)
+      (hz : evalP ρ fp = 0 ↔ evalP ρ rp = 0)
+      (hs : Real.sign (evalP ρ fp) = s * Real.sign (evalP ρ rp))
+      (hs1 : s = 1 ∨ s = -1)
+      {σs : List ℝ} {fs_o fs_r : List (MPoly × Bool)}
+      (rest : SignRel ρ σs fs_o fs_r) :
+      SignRel ρ (s :: σs) ((fp, false) :: fs_o) ((rp, false) :: fs_r)
+  | consEven (fp rp : MPoly)
+      (hz : evalP ρ fp = 0 ↔ evalP ρ rp = 0)
+      {σs : List ℝ} {fs_o fs_r : List (MPoly × Bool)}
+      (rest : SignRel ρ σs fs_o fs_r) :
+      SignRel ρ (1 :: σs) ((fp, true) :: fs_o) ((rp, true) :: fs_r)
+
+/-- The EQ-kind companion: only zero-status matters (`Holds` at `.eq`
+is "some factor vanishes"), so no sign relation is required — z3's EQ
+case adds only `add_lc_diseq` (:1181-1184). -/
+inductive ZeroRel (ρ : Nat → ℝ) :
+    List (MPoly × Bool) → List (MPoly × Bool) → Prop where
+  | nil : ZeroRel ρ [] []
+  | cons (fp rp : MPoly) (mo : Bool)
+      (hz : evalP ρ fp = 0 ↔ evalP ρ rp = 0)
+      {fs_o fs_r : List (MPoly × Bool)}
+      (rest : ZeroRel ρ fs_o fs_r) :
+      ZeroRel ρ ((fp, mo) :: fs_o) ((rp, mo) :: fs_r)
+
+theorem SignRel.ne_iff {ρ : Nat → ℝ} {σs : List ℝ} {fs_o fs_r}
+    (h : SignRel ρ σs fs_o fs_r) :
+    (∀ f ∈ fs_o, evalP ρ f.1 ≠ 0) ↔ (∀ f ∈ fs_r, evalP ρ f.1 ≠ 0) := by
+  induction h with
+  | nil => simp
+  | consOdd s fp rp hz hs hs1 rest ih =>
+      simp only [List.forall_mem_cons]
+      exact and_congr (not_iff_not.mpr hz) ih
+  | consEven fp rp hz rest ih =>
+      simp only [List.forall_mem_cons]
+      exact and_congr (not_iff_not.mpr hz) ih
+
+theorem SignRel.exists_eq_iff {ρ : Nat → ℝ} {σs : List ℝ} {fs_o fs_r}
+    (h : SignRel ρ σs fs_o fs_r) :
+    (∃ f ∈ fs_o, evalP ρ f.1 = 0) ↔ (∃ f ∈ fs_r, evalP ρ f.1 = 0) := by
+  induction h with
+  | nil => simp
+  | consOdd s fp rp hz hs hs1 rest ih =>
+      constructor
+      · rintro ⟨f, hfm, hfz⟩
+        rcases List.mem_cons.mp hfm with rfl | hfm
+        · exact ⟨(rp, false), List.mem_cons_self, hz.mp hfz⟩
+        · obtain ⟨g, hg, hgz⟩ := ih.mp ⟨f, hfm, hfz⟩
+          exact ⟨g, List.mem_cons_of_mem _ hg, hgz⟩
+      · rintro ⟨f, hfm, hfz⟩
+        rcases List.mem_cons.mp hfm with rfl | hfm
+        · exact ⟨(fp, false), List.mem_cons_self, hz.mpr hfz⟩
+        · obtain ⟨g, hg, hgz⟩ := ih.mpr ⟨f, hfm, hfz⟩
+          exact ⟨g, List.mem_cons_of_mem _ hg, hgz⟩
+  | consEven fp rp hz rest ih =>
+      constructor
+      · rintro ⟨f, hfm, hfz⟩
+        rcases List.mem_cons.mp hfm with rfl | hfm
+        · exact ⟨(rp, true), List.mem_cons_self, hz.mp hfz⟩
+        · obtain ⟨g, hg, hgz⟩ := ih.mp ⟨f, hfm, hfz⟩
+          exact ⟨g, List.mem_cons_of_mem _ hg, hgz⟩
+      · rintro ⟨f, hfm, hfz⟩
+        rcases List.mem_cons.mp hfm with rfl | hfm
+        · exact ⟨(fp, true), List.mem_cons_self, hz.mpr hfz⟩
+        · obtain ⟨g, hg, hgz⟩ := ih.mpr ⟨f, hfm, hfz⟩
+          exact ⟨g, List.mem_cons_of_mem _ hg, hgz⟩
+
+theorem SignRel.sign_oddProd {ρ : Nat → ℝ} {σs : List ℝ} {fs_o fs_r}
+    (h : SignRel ρ σs fs_o fs_r) :
+    Real.sign (oddProd ρ fs_o) =
+      oddSigProd σs fs_o * Real.sign (oddProd ρ fs_r) := by
+  induction h with
+  | nil => simp [oddProd, oddSigProd]
+  | consOdd s fp rp hz hs hs1 rest ih =>
+      simp only [oddProd, oddSigProd]
+      rw [realSign_mul, hs, ih, realSign_mul]
+      ring
+  | consEven fp rp hz rest ih =>
+      simp only [oddProd, oddSigProd]
+      exact ih
+
+theorem SignRel.oddSigProd_eq {ρ : Nat → ℝ} {σs : List ℝ} {fs_o fs_r}
+    (h : SignRel ρ σs fs_o fs_r) :
+    oddSigProd σs fs_o = 1 ∨ oddSigProd σs fs_o = -1 := by
+  induction h with
+  | nil => exact Or.inl rfl
+  | consOdd s fp rp hz hs hs1 rest ih =>
+      simp only [oddSigProd]
+      rcases hs1 with rfl | rfl <;> rcases ih with h | h <;> rw [h] <;> norm_num
+  | consEven fp rp hz rest ih =>
+      simp only [oddSigProd]
+      exact ih
+
+theorem ZeroRel.exists_eq_iff {ρ : Nat → ℝ} {fs_o fs_r}
+    (h : ZeroRel ρ fs_o fs_r) :
+    (∃ f ∈ fs_o, evalP ρ f.1 = 0) ↔ (∃ f ∈ fs_r, evalP ρ f.1 = 0) := by
+  induction h with
+  | nil => simp
+  | cons fp rp mo hz rest ih =>
+      constructor
+      · rintro ⟨f, hfm, hfz⟩
+        rcases List.mem_cons.mp hfm with rfl | hfm
+        · exact ⟨(rp, mo), List.mem_cons_self, hz.mp hfz⟩
+        · obtain ⟨g, hg, hgz⟩ := ih.mp ⟨f, hfm, hfz⟩
+          exact ⟨g, List.mem_cons_of_mem _ hg, hgz⟩
+      · rintro ⟨f, hfm, hfz⟩
+        rcases List.mem_cons.mp hfm with rfl | hfm
+        · exact ⟨(fp, mo), List.mem_cons_self, hz.mpr hfz⟩
+        · obtain ⟨g, hg, hgz⟩ := ih.mpr ⟨f, hfm, hfz⟩
+          exact ⟨g, List.mem_cons_of_mem _ hg, hgz⟩
+
+/-- The EQ-kind transport: z3 flips `EQ` to `EQ` (`atom::flip`), so no
+kind bookkeeping is needed at all. -/
+theorem holds_zeroRel_eq (ρ : Nat → ℝ) (fs_o fs_r : List (MPoly × Bool))
+    (h : ZeroRel ρ fs_o fs_r) :
+    IneqAtom.Holds ρ ⟨.eq, fs_o⟩ ↔ IneqAtom.Holds ρ ⟨.eq, fs_r⟩ :=
+  h.exists_eq_iff
+
+/-- The lt/gt transport: under the per-position evidence, the original
+atom at kind `k` holds iff the rebuilt one at kind `k'` does, where
+the cumulative odd-position sign `oddSigProd` relates the kinds (`+1`:
+same kind; `−1`: flipped — z3's `atom_sign < 0 → flip` :1191-1193).
+The meta computes the product natively (all entries are ±1 literals)
+and discharges the hypothesis' first conjunct in a sandbox. -/
+theorem holds_signRel (ρ : Nat → ℝ) (k k' : IneqKind) (σs : List ℝ)
+    (fs_o fs_r : List (MPoly × Bool)) (hrel : SignRel ρ σs fs_o fs_r)
+    (hk : (oddSigProd σs fs_o = 1 ∧ k = k') ∨
+          (oddSigProd σs fs_o = -1 ∧ k = k'.flip)) :
+    IneqAtom.Holds ρ ⟨k, fs_o⟩ ↔ IneqAtom.Holds ρ ⟨k', fs_r⟩ := by
+  rcases hk with ⟨hS, hkk⟩ | ⟨hS, hkk⟩
+  · subst hkk
+    have hs2 : Real.sign (oddProd ρ fs_o) = Real.sign (oddProd ρ fs_r) := by
+      rw [hrel.sign_oddProd, hS, one_mul]
+    cases k
+    · exact hrel.exists_eq_iff
+    · exact and_congr hrel.ne_iff (lt_iff_lt_of_realSign_eq hs2)
+    · exact and_congr hrel.ne_iff (pos_iff_pos_of_realSign_eq hs2)
+  · subst hkk
+    have hs2 : Real.sign (oddProd ρ fs_o) = - Real.sign (oddProd ρ fs_r) := by
+      rw [hrel.sign_oddProd, hS, neg_one_mul]
+    cases k'
+    · exact hrel.exists_eq_iff
+    · exact and_congr hrel.ne_iff (pos_iff_lt_of_realSign_eq_neg hs2)
+    · exact and_congr hrel.ne_iff (lt_iff_pos_of_realSign_eq_neg hs2)
+
 
 /-- Deg-2 with both `A` and `B` vanishing ⇒ no roots (the
 constant-in-`y` degenerate; `A = 0, B ≠ 0` counts 1). -/
