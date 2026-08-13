@@ -318,12 +318,13 @@ def rupNode (IE motiveE : Expr)
       mkLambdaFVars #[hConE] upE
   mkAppM ``Classical.byContradiction #[lamE]
 
-/-- The walk. `mvar`'s goal: `∀ ρ, (∀ C ∈ Cs, clauseHolds ρ atoms C) →
-False` with concrete `atoms`/`Cs`; `snapE` is the `s.refutation`
-payload. 12e: optional integrality hypotheses (`∃ n : ℤ, ρ x = ↑n`)
-may precede the clause hypothesis — `introToClauseHyp` intros past
-non-∀ binders (they stay in the context for
-`Refute.findIntegralityHyp`). -/
+/-- Intro binders up to the clause hypothesis `∀ C ∈ Cs,
+clauseHolds ρ atoms C`. 12e: optional integrality hypotheses
+(`∃ n : ℤ, ρ x = ↑n`) may precede the clause hypothesis — this intros
+past non-∀ binders (they stay in the context for
+`Refute.findIntegralityHyp`); anything after the clause hypothesis is
+left in the goal (the walk assigns `False`, so trailing binders are a
+sound failure). Fuel-bounded. -/
 unsafe def introToClauseHyp (m : MVarId) (fuel : Nat := 64) :
     TacticM (FVarId × MVarId) := do
   match fuel with

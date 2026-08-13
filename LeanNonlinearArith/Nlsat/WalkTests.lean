@@ -795,4 +795,68 @@ private def int1BundlesBadLo : Array (Option TraceBundle) :=
 example : ∀ ρ : Nat → ℝ, (∃ n : ℤ, ρ 0 = (n : ℝ)) →
     (∀ C ∈ [[⟨1, false⟩]], clauseHolds ρ int1Atoms C) → False := by
   nlsat_refute ⟨int1Atoms, int1Clauses, int1BundlesBadLo, int1Final⟩
+
+/-! ## 12e design review (F-i) — int2: multi-var single-round emission
+
+Machine-generated snapshot (scratch_dump.lean `goInt2`, 2026-08-13):
+`{x0² = 2, x1² = 3}` over TWO integer variables. Round 1 finds BOTH
+witnesses non-integer in ONE scan → one restart, TWO branch clauses
+(`.intBranch 0 (-2)` + `.intBranch 1 (-2)`) — the collect-all +
+single-`initSearch` path int1 cannot exercise. Round 2 branches both
+again (lo = 1). The final DAG refutes via the x0 side alone (x0² = 2
+is already ℤ-unsat): clauses 4/6 (the x1 branches) are discharged as
+learned nodes — needing the ρ 1 integrality hyp — but never referenced
+downstream, and clause 2 (the x1 eq input) is NOT in the referenced-
+input contract (the goal's input list is exactly `[clause 1]`). -/
+
+private def int2Atoms : Array (Option Atom) :=
+  #[none,
+   some (.ineq ⟨.eq, [([(1, [(0, 2)]), ((-2), [])], false)]⟩),
+   some (.ineq ⟨.eq, [([(1, [(1, 2)]), ((-3), [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 1)]), (2, [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)]), (1, [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(1, 1)]), (2, [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(1, 1)]), (1, [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(0, 1)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(0, 1)]), ((-2), [])], false)]⟩),
+   some (.ineq ⟨.gt, [([(1, [(1, 1)]), ((-1), [])], false)]⟩),
+   some (.ineq ⟨.lt, [([(1, [(1, 1)]), ((-2), [])], false)]⟩)]
+
+private def int2Clauses : Array Clause :=
+  #[{ lits := #[⟨0, false⟩], learned := false, deleted := false },
+   { lits := #[⟨1, false⟩], learned := false, deleted := false },
+   { lits := #[⟨2, false⟩], learned := false, deleted := false },
+   { lits := #[⟨3, true⟩, ⟨4, true⟩], learned := false, deleted := false },
+   { lits := #[⟨5, true⟩, ⟨6, true⟩], learned := false, deleted := false },
+   { lits := #[⟨7, true⟩, ⟨8, true⟩], learned := false, deleted := false },
+   { lits := #[⟨9, true⟩, ⟨10, true⟩], learned := false, deleted := false }]
+
+private def int2Bundles : Array (Option TraceBundle) :=
+  #[none,
+   none,
+   none,
+   some ⟨#[.intBranch 0 (-2)], #[⟨3, true⟩, ⟨4, true⟩]⟩,
+   some ⟨#[.intBranch 1 (-2)], #[⟨5, true⟩, ⟨6, true⟩]⟩,
+   some ⟨#[.intBranch 0 1], #[⟨7, true⟩, ⟨8, true⟩]⟩,
+   some ⟨#[.intBranch 1 1], #[⟨9, true⟩, ⟨10, true⟩]⟩]
+
+private def int2Final : TraceBundle :=
+  ⟨#[.resolution (.clause 5),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨8, true⟩, ⟨1, false⟩] #[]),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨4, true⟩, ⟨1, false⟩, ⟨7, true⟩] #[]),
+      .resolution (.clause 3),
+      .leafNumeric 0,
+      .resolution (.arith #[⟨1, false⟩, ⟨3, true⟩] #[]),
+      .resolution (.clause 1)], #[]⟩
+
+/-- End-to-end: int2 walked from clause 1 alone (the x0 eq); both
+variables' branch splits discharge against their own integrality
+hypotheses (multi-hyp `introToClauseHyp` + per-var matching), and the
+unreferenced x1 input/branch clauses pass precheck without entering
+the contract. -/
+example : ∀ ρ : Nat → ℝ, (∃ n : ℤ, ρ 0 = (n : ℝ)) → (∃ n : ℤ, ρ 1 = (n : ℝ)) →
+    (∀ C ∈ [[⟨1, false⟩]], clauseHolds ρ int2Atoms C) → False := by
+  nlsat_refute ⟨int2Atoms, int2Clauses, int2Bundles, int2Final⟩
 end LeanNonlinearArith.Nlsat.Tests.Walk

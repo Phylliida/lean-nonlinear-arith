@@ -338,6 +338,22 @@ def goInt1 : SolverM (Option LBool) := do
   let _ ← Solver.mkClause #[le] false
   Solver.check (Solver.resolve Explain.explain)
 
+/-- 12e multi-var single-round driver: `{x0² = 2, x1² = 3}` over TWO
+integer vars — both witnesses irrational in the same round, so ONE
+scan emits TWO branch clauses (the collect-all + single-restart path
+int1 can't exercise). -/
+def pX1sqM3 : MPoly := [(1, [(1, 2)]), ((-3), [])]        -- x1² − 3
+
+def goInt2 : SolverM (Option LBool) := do
+  Solver.init
+  let _ ← Solver.mkVar true
+  let _ ← Solver.mkVar true
+  let le0 ← Solver.mkIneqLiteral ⟨.eq, [(pX0sqM2, false)]⟩
+  let le1 ← Solver.mkIneqLiteral ⟨.eq, [(pX1sqM3, false)]⟩
+  let _ ← Solver.mkClause #[le0] false
+  let _ ← Solver.mkClause #[le1] false
+  Solver.check (Solver.resolve Explain.explain)
+
 /-- ordering_139 as a real nlsat problem (6 vars, x0..x5 =
 a,b,c,da,db,dc): hypotheses hab: a·db ≤ b·da, hbc: b·dc ≤ c·db,
 da/db/dc > 0, negated goal a·dc − c·da > 0. Polls: multilinear input,
@@ -431,6 +447,9 @@ def main : IO Unit := do
   let (r17, s17) := (DumpDriverPD.goInt1.run Solver.empty : Option LBool × Solver)
   IO.println s!"int1 result: {repr r17}"
   printSnap "int1" s17
+  let (r18, s18) := (DumpDriverPD.goInt2.run Solver.empty : Option LBool × Solver)
+  IO.println s!"int2 result: {repr r18}"
+  printSnap "int2" s18
   let (r16, s16) := (DumpDriverPD.goO139.run Solver.empty : Option LBool × Solver)
   IO.println s!"o139 result: {repr r16}"
   printSnap "o139" s16
