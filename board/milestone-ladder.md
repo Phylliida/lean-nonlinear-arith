@@ -5,7 +5,10 @@
 - **M2** L1 complete — bookkeeping, saturation loop, omega leaf, Gröbner
   layer; correspondence table fully covered (nla-05..07).
 - **M3** quadratic-complete nlsat — degree-<=2 search + S1-free checker
-  (nla-08, nla-09, nla-12 restricted, nla-19).
+  (nla-08, nla-09, nla-12 restricted, nla-19). **DECLARED 2026-08-13**
+  (19b Slice 3): both acceptance targets walked end-to-end — o139 (the
+  6-conflict production DAG, exactly z3-4.12.5's count) and pd1 (first
+  production pseudoDivision bundle through the lifted gate).
 - **M4** S1 campaign, algebra + analysis tracks in parallel (nla-11, nla-10
   if needed).
 - **M5** full checker + the containment argument written up end to end:

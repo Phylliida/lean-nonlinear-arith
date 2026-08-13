@@ -1,16 +1,16 @@
-# HANDOFF — 2026-08-13 (19b Slice 2 DONE — Refute consumption via
-# rebuilt-literal equivalence transport + drop lane; next = Slice 3:
-# isV0 gate lift + pd1/o139 acceptance → M3)
+# HANDOFF — 2026-08-13 (19b COMPLETE — Slice 3 gate lift + pd1 walked;
+# **M3 DECLARED**; next = 12e: G6 integer B&B, where the leftover
+# intBranch gate lifts)
 
 Read first: `DESIGN-endgame.md`, then `BOARD.md` — newest entries:
-"nla-19b Slice 2 design review `done`" (**the mk_ineq_atom
-normalization gap** — our mkIneqAtom doesn't flip_sign_if_lm_neg
-ineq factors; search-side, boarded for 12c-fidelity/nla-16; the
-lane's lc lookup is now negation-tolerant via signFlipFactFor),
-"nla-19b Slice 2 `done`" (the transport design + the '_tmp✝' trap +
-the glue-subsumption finding), "nla-19b Slice 1 design review `done`".
-Build system: Nix `lake` on PATH (not elan); full build green, WORKING
-TREE CLEAN, everything committed.
+"nla-19b Slice 3 `done`" (gate lift + pd1 acceptance; the `/--`-above-
+`#guard` parse trap), "nla-19b Slice 2 design review `done`" (**the
+mk_ineq_atom normalization gap** — our mkIneqAtom doesn't
+flip_sign_if_lm_neg ineq factors; search-side, boarded for
+12c-fidelity/nla-16; the lane's lc lookup is negation-tolerant via
+signFlipFactFor), "nla-19b Slice 2 `done`". Build system: Nix `lake` on
+PATH (not elan); full build green (7612 jobs), WORKING TREE CLEAN,
+everything committed.
 
 **Source-of-truth rule: all ports cite `git show z3-4.12.5:<path>`
 (repo `verus-cad/z3`), never the working tree.** Standing directive
@@ -19,57 +19,62 @@ differential probes: worktree `/tmp/z3-4.12.5` (`make -j shell`).
 
 ## State of the arc
 
-**19b Slice 2 landed** (BOARD "nla-19b Slice 2 `done`"): the
-pseudoDivision consumption gap (R7) is closed. Design: **rebuilt-
-literal equivalence transport** — `SignRel`/`ZeroRel` inductives
-(trusted, Check/Discharge.lean) relate a meta-reconstructed ORIGINAL
-factor list to the rebuilt clause-visible atom position-by-position;
-`holds_signRel`/`holds_zeroRel_eq` transport `Holds` across;
-`Refute.pdRewriteLane` matches by value, re-proves the identity
-(`pseudoDivisionIdentity`), takes lc evidence from the clause's own
-A4/A5 literals (the new `FactKind.signPos` index + the diseq index),
-re-extracts through the split `extractPosFacts`/`extractNegFacts`.
-The const-remainder **drop lane** notes `f = 0` / `f ≠ 0` / definite
-signs. Kind flips = the native σ-product (`oddSigProd` ~ z3's
-`atom_sign`); payloads' lcSign/isEven/d-parity never trusted.
+**19b Slice 3 landed → M3 DECLARED** (BOARD "nla-19b Slice 3 `done`",
+milestone-ladder flipped). `isV0` drops `.pseudoDivision` (Trace.lean;
+`.intBranch` stays gated → 12e); `nodeFSet` passes pd steps through
+with no clause-level facts (projection-step treatment, review-5 F-i);
+`buildFSet` already forwarded via `priorSteps` — no change needed.
+pd1 snapshot regenerated post-lift into WalkTests and walked end-to-end
+(solver learns `x0² < 0` — the path-(e) rebuilt literal — off
+`pseudoDivision x1 (x1−x0²) 1 1 x0² 1 false`, then `leafNumeric` kills
+it). Pins: gate guards (pd v0 / intBranch not), step-free
+(glue-subsumption at walk level), corrupt-R (skip + glue closes),
+grammar-bad lcSign=2 (precheck reject — the grammar gate is now a pd
+bundle's first line, no longer masked by isV0). With o139 (G11
+session), both 19b acceptance targets walked = M3 per DESIGN-endgame
+§2.5.
 
-**New trusted lemma `pdSign_eq`** (parity-free zero-status) closed a
-REAL Slice-1 family hole: z3 adds only `add_lc_diseq` for EQ-kind
-rebuilds (:1181-1184), so d-odd sign-free-lc EQ cases had NO
-applicable Slice-1 member.
+Pre-session housekeeping committed separately (52ee0f8): the previous
+session's BOARD.md → board/ split was uncommitted despite the old
+HANDOFF's "clean tree" claim.
 
-**Glue-subsumption finding:** all Slice-0 pd drivers' arith members
-also close STEP-FREE (nlinarith + eq×var lift + ineq×ineq pairing +
-sq_nonneg subsume the transport on small cores) — pinned as
-documentation; the lane's content is pinned by firing confirmations +
-hint-flip pins. Watch at nla-16 whether harder instances need it.
+## Next: 12e (G6, integer branch-and-bound) — 1–2 sessions
 
-## Next: 19b Slice 3 (gate lift + acceptance)
+Spec: BOARD "nla-12 `active`" + DESIGN-endgame §2.6. Verus VCs are ℤ,
+nlsat is ℝ. Port z3's integer handling for the nlsat path:
+branch-and-bound splits (`x ≤ ⌊v⌋ ∨ x ≥ ⌈v⌉` at non-integer witnesses)
+as `intBranch` trace steps — checker-side each split is an
+omega-trivial disjunction, so this is search-side work almost entirely.
+Confirm against source where solver-6 does the splitting for the nra
+path (nra_solver.cpp / nlsat's branch analogue) and port that exact
+policy. L1 already owns div/mod semantics (RULES rows); L2 sees
+polynomial atoms only — assert this invariant at the frontend boundary.
+Close-out lifts the leftover `intBranch` gate (isV0 + nodeFSet, the
+two sites Slice 3 touched) and flips the G6 row. Candidates for
+co-scheduling: the mk_ineq_atom normalization gap (Slice-2 review
+finding) if 12c-fidelity lands here rather than at nla-16.
 
-Spec is BOARD "nla-19b plan `boarded`" Slice 3 bullets:
-- `isV0`/`Walk.precheck`: drop `pseudoDivision` from the reject set;
-  `intBranch` stays gated (12e). The emission shapes per acceptance
-  driver are already pinned (Slice-2 section = the census table).
-- Acceptance: **pd1 AND o139 walked end-to-end** (o139 ✓ since the
-  G11 session). pd1's bundles carry pseudoDivision — after the gate
-  lift, regenerate the pd1 snapshot (scratch_dump.lean printer) into
-  WalkTests and walk it.
-- Negative probes per F-w; G5 row flips done; HANDOFF rewrite; M3
-  declared per DESIGN-endgame tiers.
+## Roadmap after 12e (unchanged)
 
-## Roadmap after 19b (unchanged)
-
-12e (G6, integer B&B, 1–2 sessions, mostly solver-side) → nla-14 (the
-`nonlinear_arith` tactic, 2–3 sessions; owns F-y; largest remaining
-piece) → nla-15 (tactus wiring, ½) → nla-16 (parity harness, 1–2 +
-findings; owns G8/G9/G10) = M6. Total-to-M6 ~6–10 sessions. Tier B
-(G7 rootGeneric deg ≥ 3, S1 lane) deferred unless 16's harness shows
-the corpus needs it. Q7: re-offer 11a (resultants) as the interleave
-lane once 19b lands.
+nla-14 (the `nonlinear_arith` tactic, 2–3 sessions; owns F-y; largest
+remaining piece) → nla-15 (tactus wiring, ½) → nla-16 (parity harness,
+1–2 + findings; owns G8/G9/G10) = M6. Total-to-M6 ~5–9 sessions.
+Tier B (G7 rootGeneric deg ≥ 3, S1 lane) deferred unless 16's harness
+shows the corpus needs it. Q7: re-offer 11a (resultants) as the
+interleave lane — 19b has landed, so the offer is live.
 
 ## Session mechanics + traps (cumulative; F3/F4 section of commit
 d9d5df1 still accurate for dump/refresh recipes)
 
+- **A doc comment (`/-- -/`) directly above `#guard` fails parsing**
+  with "unexpected token '#guard'; expected 'lemma'" — docstrings
+  attach only to declarations; `#guard` isn't in the post-docstring
+  command first-set. Use `/- -/` for guard pins.
+- `scratch_dump.lean` needs `lake env lean --run` (it defines `main`;
+  bare `lake env lean` elaborates silently and prints nothing).
+- The previous session's working tree was NOT clean despite the old
+  HANDOFF's claim (the board split) — verify `git status` at session
+  start, not just the HANDOFF.
 - **'_tmp✝' kernel free-variable errors are elaboration
   error-recovery artifacts** — an `unknown identifier` upstream (a
   missing def in a scratch) makes the elaborator synthesize junk that
@@ -102,6 +107,7 @@ d9d5df1 still accurate for dump/refresh recipes)
   BACKWARD; `hasMVar` on produced terms; `(0:ℝ)` annotation;
   `Or.getAppFnArgs` = `#[A, B]`).
 
-Commits this session: see `git log` (19b Slice 2 + pins + docs).
+Commits this session: `52ee0f8` (board split housekeeping), `09a75b0`
+(gate lift), `2b6116e` (pd1 walk + pins) + the close-out docs commit.
 Memory file `verus-cad/memory/project_tactus_nonlinear_port.md`
-updated (2026-08-13 Slice-2 entry; NEXT SESSION ORDER line current).
+updated (2026-08-13 Slice-3/M3 entry; NEXT SESSION ORDER line current).
