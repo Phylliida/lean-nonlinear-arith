@@ -63,37 +63,32 @@ findings/fallout budget, per DESIGN-endgame §2.10.
 - **Fixture is ROT, not corpus.** tactus/bootstrap-fixture's 24/10
   is pre-existing; the harness never derives acceptance from it.
 
-### Decision points — proposed, Danielle resolves
+### Decision points — RESOLVED (Danielle, 2026-08-14 eve)
 
-1. **Baseline source — tactus binary with z3 backend** (same fork,
-   no `--lean-backend`). Same frontend → cleaner per-goal isolation
-   than stock verus (which could disagree with tactus's emitter on
-   things unrelated to the backend). Alternate: stock verus for
-   double bookkeeping. Proposed z3 runs: default spinoff config
-   exactly as `by(nonlinear_arith)` sites already ask for (smt.
-   arith.solver=6, MBQI off, nlsat enabled — established facts from
-   the 2026-07-24 reading).
-2. **Corpus order — rotational, worst-first cold start.** Rank by
-   sites: fixed-point (648) → mandelbrot (519) → rational (433) →
-   cutedsl (373) → physics2d/bigint tail. Small cohort first as
-   Slice-0 calibration: quadratic-extension (1) + the existing
-   tactus-algebra mirror (tactified copy of algebra) + the nla-15
-   o139 probe. The big four only after Slice 0's mechanics pin.
+1. **Baseline source — tactus binary with z3 backend** (Danielle).
+   Same fork, no `--lean-backend`: stock z3 path on the same
+   frontend bytes → per-goal divergence isolates to the backend
+   exactly. z3 config stays the established spinoff shape
+   (smt.arith.solver=6, MBQI off, nlsat enabled).
+2. **Corpus order — pilot cohort, then all 16** (Danielle).
+   Pilot: quadratic-extension (1 site) + the tactus-algebra mirror +
+   the nla-15 o139 probe. Then worst-first: fixed-point (648) →
+   mandelbrot (519) → rational (433) → cutedsl (373) → tail.
 3. **Multi-site functions, ambiguous attribution — bisect on
-   demand.** Default census granularity is per-FUNCTION; a function
-   carrying ≥2 nonlinear sites that diverges gets a per-site
-   bisection pass (`--verify-function`-style isolation or synthetic
-   split). Only pursued where the diff report shows ambiguity —
-   Danielle rule: only where it changes the answer.
-4. **z3 borderline-flakiness — one canonical run + targeted
-   restart-free repeat of DIVERGENT sites only** (verus's z3 is
-   seed-stable; restart-level variance lives in resource limits,
-   and the acceptance gate only cares about closures). If a site
-   closes under neither of two identical z3 runs identically-timed,
-   classify `z3-borderline` — excluded from the gate both sides.
-5. **Wall-clock off the table.** Q6: heartbeats + kernel per-site
-   tables only; `uptime` before any timing claim (standing
-   directive 7 verbatim).
+   demand** (proposed default adopted). Per-function granularity is
+   the census default; per-site bisection (`--verify-function`-style
+   isolation or synthetic split) only where the diff report shows
+   ambiguity — standing principle: only where it changes the answer.
+4. **z3 borderline-flakiness — one canonical run + a targeted
+   identical re-run of DIVERGENT sites only** (proposed default
+   adopted; verus's z3 is seed-stable, restart-level variance lives
+   in resource limits, and the gate only cares about closures). A
+   site that flips across the two runs classifies `z3-borderline` —
+   excluded from the gate on BOTH sides (never silently counted
+   either way).
+5. **Wall-clock off the table** (proposed default adopted; Q6
+   verbatim). Heartbeats + kernel per-site tables only; `uptime`
+   before any timing claim (standing directive 7).
 
 ### Slice plan
 
