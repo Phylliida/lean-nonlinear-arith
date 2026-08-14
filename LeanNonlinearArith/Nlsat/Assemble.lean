@@ -319,35 +319,45 @@ def normNeg : BoolDef → BoolDef
   | .tru => .tru
   | .fls => .fls
 
-/-- Normalization preserves evaluation under polarity-consistent
-oracles (`τ ⟨b, true⟩ ↔ ¬ τ ⟨b, false⟩` — `litHolds` qualifies by
-`litHolds_negate` below). -/
-theorem normNeg_correct (τ : Literal → Prop)
-    (hτ : ∀ l, τ l.negate ↔ ¬ τ l) :
-    ∀ f : BoolDef, (normNeg f).eval τ ↔ f.eval τ := by
+/-- Normalization preserves evaluation under oracles consistent AT THE
+FORM'S OWN LEAVES (per-leaf form: junk literals are NOT consistent —
+`litHolds` poisons both polarities — so the quantifier must be
+leaf-local). -/
+theorem normNeg_correct (τ : Literal → Prop) :
+    ∀ (f : BoolDef),
+    (∀ l ∈ f.leaves, l.neg = true → (τ l ↔ ¬ τ ⟨l.bvar, false⟩)) →
+    ((normNeg f).eval τ ↔ f.eval τ) := by
   intro f
   induction f with
   | lit l =>
+    intro hτ
     cases hn : l.neg with
     | false =>
-      have hl : l = ⟨l.bvar, false⟩ := by
-        cases l; simp_all
+      have hl : l = ⟨l.bvar, false⟩ := by cases l; simp_all
       rw [hl]
       simp [normNeg, eval]
     | true =>
-      have hl : l = Literal.negate ⟨l.bvar, false⟩ := by
-        cases l; simp_all [Literal.negate]
-      rw [hl]
-      simp only [normNeg, eval]
-      simp only [Literal.negate, Bool.not_false]
-      exact (hτ ⟨l.bvar, false⟩).symm
-  | and a b iha ihb => exact and_congr iha ihb
-  | or a b iha ihb => exact or_congr iha ihb
+      have hl : l = Literal.negate ⟨l.bvar, false⟩ := by cases l; simp_all [Literal.negate]
+      have ht := (hτ l (by simp [leaves]) hn).symm
+      rw [hl] at ht ⊢
+      simp only [normNeg, Literal.negate, Bool.not_false, eval, ite_true]
+      -- goal: ¬ τ ⟨l.bvar, false⟩ ↔ τ (negate ⟨l.bvar, false⟩); ht matches
+      -- up to the (kernel-computable) `!false` reduction
+      exact ht
+  | and a b iha ihb =>
+    intro hτ
+    exact and_congr (iha fun l hl => hτ l (List.mem_append_left _ hl))
+      (ihb fun l hl => hτ l (List.mem_append_right _ hl))
+  | or a b iha ihb =>
+    intro hτ
+    exact or_congr (iha fun l hl => hτ l (List.mem_append_left _ hl))
+      (ihb fun l hl => hτ l (List.mem_append_right _ hl))
   | neg a ih =>
+    intro hτ
     simp only [normNeg, eval]
-    exact not_congr ih
-  | tru => exact Iff.rfl
-  | fls => exact Iff.rfl
+    exact not_congr (ih hτ)
+  | tru => intro _; exact Iff.rfl
+  | fls => intro _; exact Iff.rfl
 
 /-- Decidable tautology check: true iff every valuation of the
 (dedup'd) leaves of the POLARITY-NORMALIZED form satisfies it. -/
@@ -372,11 +382,11 @@ theorem taut_sound {f : BoolDef} (h : f.taut = true) (τ : Literal → Prop) :
   rw [evalB_ext (normNeg f) hget, evalB_decide] at hb
   exact of_decide_eq_true hb
 
-/-- The use-site form: polarity-consistent oracles (e.g. `litHolds`)
-get validity of the ORIGINAL form. -/
+/-- The use-site form: oracles consistent at the form's leaves get
+validity of the ORIGINAL form. -/
 theorem taut_sound_consistent {f : BoolDef} (h : f.taut = true) (τ : Literal → Prop)
-    (hτ : ∀ l, τ l.negate ↔ ¬ τ l) : f.eval τ :=
-  (normNeg_correct τ hτ f).mp (taut_sound h τ)
+    (hτ : ∀ l ∈ f.leaves, l.neg = true → (τ l ↔ ¬ τ ⟨l.bvar, false⟩)) : f.eval τ :=
+  (normNeg_correct τ f hτ).mp (taut_sound h τ)
 
 /-- Consequence check: every valuation satisfying `g` satisfies `f`
 (the root-clause bridge shape — the clause follows from its source
@@ -384,7 +394,8 @@ hypothesis's form). -/
 def conseq (g f : BoolDef) : Bool := taut (or (neg g) f)
 
 theorem conseq_sound {g f : BoolDef} (h : conseq g f = true) (τ : Literal → Prop)
-    (hτ : ∀ l, τ l.negate ↔ ¬ τ l) (hg : g.eval τ) : f.eval τ := by
+    (hτ : ∀ l ∈ (or (neg g) f).leaves, l.neg = true → (τ l ↔ ¬ τ ⟨l.bvar, false⟩))
+    (hg : g.eval τ) : f.eval τ := by
   have h' := taut_sound_consistent h τ hτ
   simp only [eval] at h'
   rcases h' with hn | hf
@@ -447,6 +458,32 @@ theorem clauseHolds_iff_eval (ρ : Nat → ℝ) (atoms : Array (Option Atom))
       · exact ⟨l, List.mem_cons_self, h⟩
       · obtain ⟨l', hl', h'⟩ := ih.mpr h
         exact ⟨l', List.mem_cons_of_mem _ hl', h'⟩
+
+/-- Leaves of a clause's form are the clause's literals. -/
+theorem mem_clauseForm_leaves (C : List Literal) (l : Literal) :
+    l ∈ (clauseForm C).leaves ↔ l ∈ C := by
+  induction C with
+  | nil => simp [clauseForm, BoolDef.leaves]
+  | cons x C ih =>
+    simp [clauseForm, BoolDef.leaves, List.mem_cons, ih]
+
+/-- The normalized-clause-form bridge: with decodability (the walk's
+`precheck` guarantee for referenced inputs), `litHolds` is consistent
+at the leaves, so `normNeg` is evaluation-invisible. -/
+theorem clauseHolds_iff_evalNorm (ρ : Nat → ℝ) (atoms : Array (Option Atom))
+    (C : List Literal) (hdec : clauseDecodable atoms C = true) :
+    clauseHolds ρ atoms C ↔
+    BoolDef.eval (litHolds ρ atoms) (BoolDef.normNeg (clauseForm C)) := by
+  rw [clauseHolds_iff_eval]
+  apply Iff.symm
+  apply BoolDef.normNeg_correct
+  intro l hl hn
+  have hmem : l ∈ C := (mem_clauseForm_leaves C l).mp hl
+  have hdecL := clauseDecodable_true atoms C hdec l hmem
+  have hlit : l = ⟨l.bvar, true⟩ := by cases l; simp_all
+  rw [hlit]
+  exact litHolds_negate ρ atoms ⟨l.bvar, false⟩ hdecL
+
 
 /-! ## One-step unfolding/bridge lemmas for the frontend (nla-14 Slice 2)
 

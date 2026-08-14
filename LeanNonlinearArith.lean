@@ -66,3 +66,5 @@ import LeanNonlinearArith.Kernel.ZPoly
 import LeanNonlinearArith.Kernel.ZPolyTests
 import LeanNonlinearArith.Kernel.Factor
 import LeanNonlinearArith.Kernel.FactorTests
+import LeanNonlinearArith.Tactic.NonlinearArith
+import LeanNonlinearArith.Tactic.NonlinearArithTests

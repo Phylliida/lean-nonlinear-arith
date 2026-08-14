@@ -1,7 +1,7 @@
-# HANDOFF — 2026-08-13 (eve 2) — nla-14 PLANNED + Slice 1 DONE
-# (Tseitin proxy checker support: `Atom.bool` + `BoolDef` + the
-# taut/conseq reflection, additive, axioms clean; next = Slice 2:
-# reify+Tseitin+bridge)
+# HANDOFF — 2026-08-14 — nla-14 Slice 1 + Slice 2 DONE
+# (Tseitin proxy checker support + the reify+Tseitin+bridge frontend;
+# `nla_frontend` transforms user goals to the walk's refutation goal;
+# next = Slice 3: quote+orchestrate, solver-run-in-tactic)
 
 Read first: `board/nla-14-plan.md` (the nla-14 spec — decisions 1–5
 RESOLVED by Danielle's standing principles: match every z3 case, the
@@ -43,24 +43,35 @@ Review-verified against 4.12.5 source: bool-var negative-first decide
 (:1536 = Solver.lean:845), proxies never in arith justifications
 (:1764-1813), `max_var(bool) = null_var` (:376).
 
-## Next: nla-14 Slice 2 — reify+Tseitin+bridge
+**Slice 2 (2026-08-14):** the frontend is real — `nla_frontend` in
+`Tactic/NonlinearArith.lean` runs reify(ℤ/ℕ/ℝ, opaque-subterm vars,
+div/mod hard-fail) → NNF+Tseitin (normalized hierarchical proxy defs)
+→ term-mode bridges (the ONLY sandbox is per-literal evalP alignment)
+→ the walk-shaped refutation goal, with integrality hyps before the
+clause hyp. Pins walk the produced goals BY HAND (kernel checks the
+full bridge chain): sq/ℝ, two-literal disjunctive, Int integrality,
+the PROXY path (and-under-or over a shared lt-atom), Not-Not.
+Mid-slice catch: `taut` truth tables over Literal leaves needed
+polarity normalization (`BoolDef.normNeg` + per-leaf-consistent
+soundness + `clauseHolds_iff_evalNorm`).
 
-Per the plan's slice list. The components: Expr→MPoly/Atom parser
-(ℤ/ℕ/ℝ comparisons; `+ - * ^nat`, casts), var table (ℤ→`mkVar true`
-+ integrality hyp emission; ℕ→ℤ + `0 ≤ ↑n` clause per decision 2; ℝ
-direct), Tseitin clausification with `mkBoolVar` slots + TOP-LEVEL
-proxy per hyp/¬goal (unit root clauses; bridges by construction —
-per-literal relaxation Iffs at the leaves; review R-ii — NO truth
-table exceeds one definitional clause), definitional-clause bridges
-via `taut_sound` (child proxies abstract), `byContradiction` assembly.
-Load-bearing R-i consequence: `boolDefHolds` is WF-compiled — NO
-kernel defeq through proxies; bridges rewrite via its equation lemmas
-(simp/mkAppM), the `holds_single_*` idiom generalized. First
-recon question (recorded in the Slice-1 close-out): the proxy-def
-patch applies to the extracted snapshot POST-reorder — defs reference
-bvars (stable across `heuristicReorder`), but the atom table the walk
-sees is the snapshot's internal-order one; bridges are built against
-the same patched table by construction.
+## Next: nla-14 Slice 3 — quote+orchestrate
+
+Slice 2 LANDED (2026-08-14): `Tactic/NonlinearArith.lean` — the
+`nla_frontend` tactic transforms `Γ ⊢ G` to the walk's refutation goal
+(reify → Tseitin → term-mode bridges; full detail + the normNeg catch
++ the new traps in board/nla-14-slice-2-reify-tseitin-bridge.md).
+Slice 3 components (plan doc): the solver run in TacticM
+(`Solver.run'` is pure), the five snapshot quoters (atom/clause/step/
+bundle/snapshot — `atomToExpr`/`atomsToExpr` exist in the frontend
+file, MOVE or share), the proxy-def patch into the extracted snapshot
+POST-reorder (bvar-keyed defs are `heuristicReorder`-stable), the
+post-run rebuild of Cs to the REFERENCED inputs only (precheck's
+contract — bridges are per-clause, so select), SAT-exit model display
+(decision 4 — skip proxy vars), and the pins: drivers with NO
+hand-written snapshot, the D-1 disjunctive driver with a proxy in a
+LEARNED clause, the foreign-`.arith`-with-proxy sound-rejection probe,
+and the Slice-2-deferred div/mod error-surface pin (`#guard_msgs`).
 
 ## Roadmap (unchanged)
 
@@ -74,7 +85,26 @@ probes + mk_ineq_atom gap + glue-subsumption watch) = M6. Tier B
 
 ## Session mechanics + traps (cumulative)
 
-New this session (details in the Slice-1 board entry):
+New this session (details in the Slice-1 and Slice-2 board entries):
+- **`→` binds tighter than `↔`** — `H → A ↔ B` parses as
+  `(H → A) ↔ B`; parenthesize trailing Iffs.
+- `mkAppM` takes EXPLICIT args only; implicit-operand lemmas need
+  `mkAppOptM` with pinned positions — INCLUDING type implicits
+  (`some (mkConst ``Real)` for `R`, else "failed to synthesize
+  IntCast ?R" at tactic RUNTIME).
+- `Membership.mem` value args are (container, elem) —
+  `mem #[Cs, C]`; `List.Mem` on `[]` is not defeq-False under mkAppM's
+  isDefEq — eliminate via `List.not_mem_nil` (mkAppM' it), cons via
+  the `List.mem_cons` Iff (Walk.memChain idiom).
+- `Or.elim`/`False.elim`: pin ALL implicit binders via mkAppOptM
+  (else "result contains metavariables").
+- Sandbox tactics act on the CURRENT goal unless you setGoals to the
+  sandbox mvar FIRST (the Walk buildFSet idiom: getGoals/setGoals/
+  restore).
+- `let (a,b) ← match …` not `:= ←`; `return` in a nested match arm
+  exits the OUTER fn; multi-statement if-branches in do need explicit
+  `do`; structure field groups need parens; doc comment above
+  `mutual` fails ("expected 'lemma'").
 - **`open Classical` inside the namespace** for `decide (τ l)` in
   STATEMENTS (the `classical` tactic can't help signatures).
 - **WF-compiled defs (`termination_by` with a mixed measure) have NO
@@ -109,6 +139,7 @@ New this session (details in the Slice-1 board entry):
   `Int.lt_or_ge`; `mkConstWithFreshMVarLevels`-style raw consts as
   mkAppM args fail — pin via mkAppOptM (Left.neg_pos_iff idiom).
 
-Commits this session: `44e9f04` (nla-14 plan), `72c3b6a` (Slice 1).
-Memory `verus-cad/memory/project_tactus_nonlinear_port.md` appended
-(nla-14 plan + Slice 1).
+Commits: `44e9f04` (nla-14 plan), `72c3b6a` (Slice 1), `3534f14`
+(Slice-1 review + R-i), `6d86751` (Slice-2 trusted glue checkpoint),
+plus the Slice-2 landing. Memory
+`verus-cad/memory/project_tactus_nonlinear_port.md` appended.

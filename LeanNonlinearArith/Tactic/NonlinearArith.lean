@@ -107,6 +107,9 @@ inductive ElimTree where
   | andL (t : ElimTree)                    -- h : _ ∧ _ — And.left then t
   | andR (t : ElimTree)                    -- And.right then t
 
+/-- The six comparison forms over the difference poly. -/
+inductive CmpKind | lt | le | gt | ge | eq | ne deriving BEq
+
 /-- A comparison, decoded for the bridge chains. -/
 structure CmpInfo where
   a : Expr          -- source-level operands
@@ -116,6 +119,15 @@ structure CmpInfo where
   /-- the user-side proposition (polarity-folded: the reified literal
   bridges THIS, e.g. `¬(a < b)` for a negated literal) -/
   userSide : Expr
+
+/-- A root clause: the source proof + the hyp's original and expanded
+propositions (for the NNF bridge) + the elimination plan. -/
+structure RootEntry where
+  clause : List Literal
+  hypE : Expr
+  origE : Expr
+  expandedE : Expr
+  plan : ElimTree
 
 structure ReifyState where
   /-- ℝ-level value expr per slot (for `ρ*`). -/
@@ -131,12 +143,10 @@ structure ReifyState where
   litProps : Std.HashMap Literal CmpInfo := {}
   /-- per proxy bvar: (def, user-side prop). -/
   proxies : Std.HashMap Nat (BoolDef × Expr) := {}
-  /-- definitional clauses: (clause, defined proxy, taut form). -/
-  defClauses : Array (List Literal × Nat × BoolDef) := #[]
-  /-- root clauses: (clause, source hyp proof expr, elim plan). -/
-  roots : Array (List Literal × Expr × ElimTree) := #[]
-  /-- ℕ slots get a `0 ≤ ↑n` clause: (bvar of the lt-atom literal). -/
-  natClauses : Array (List Literal × Expr × ElimTree) := #[]
+  /-- definitional clauses: (clause, defined proxy). -/
+  defClauses : Array (List Literal × Nat) := #[]
+  /-- root clauses. -/
+  roots : Array RootEntry := #[]
 
 abbrev RM := StateT ReifyState TacticM
 
@@ -147,10 +157,12 @@ def arithTyOf (tyE : Expr) : Option ArithTy :=
   else if tyE.isConstOf ``Real then some .real
   else none
 
-/-- The ℝ-level value expr for a source expr of the given type. -/
-def toRealExpr (e : Expr) : ArithTy → MetaM Expr
-  | .int => mkAppM ``Int.cast #[e]
-  | .nat => mkAppM ``Nat.cast #[e]
+/-- The ℝ-level value expr for a source expr of the given type (target
+pinned — `Int.cast`'s `R` is otherwise an unsynthesizable mvar). -/
+def toRealExpr (e : Expr) (ty : ArithTy) : MetaM Expr :=
+  match ty with
+  | .int => mkAppOptM ``Int.cast #[some (mkConst ``Real), none, some e]
+  | .nat => mkAppOptM ``Nat.cast #[some (mkConst ``Real), none, some e]
   | .real => pure e
 
 /-- Find-or-add a variable slot for source expr `srcE`. -/
@@ -206,9 +218,6 @@ partial def reifyArith (e : Expr) : RM MPoly := do
 
 /-! ## Comparisons -/
 
-/-- The six comparison forms over the difference poly. -/
-inductive CmpKind | lt | le | gt | ge | eq | ne deriving BEq
-
 /-- Reify a comparison `a ⋈ b` (or its negation, polarity-folded) to a
 solver literal: one atom per (kind, difference-poly) — lt/ge and gt/le
 and eq/ne SHARE the atom with flipped polarity (z3's atom-table dedup
@@ -236,7 +245,7 @@ def reifyCmp (ck : CmpKind) (a b origE : Expr) (ty : ArithTy) (pol : Bool) : RM 
   let lit : Literal := ⟨bvar, baseNeg != !pol⟩
   let userSide ← if pol then pure origE else mkAppM ``Not #[origE]
   modify fun s => { s with
-    litProps := s.litProps.insert lit { a, b, ty, ck, userSide } }
+    litProps := s.litProps.insert lit ⟨a, b, ty, ck, userSide⟩ }
   return lit
 
 /-! ## NNF reification of propositions -/
@@ -397,32 +406,38 @@ partial def reifyProp (e : Expr) (pol : Bool) : RM FormE := do
 
 /-! ## Tseitin clausification -/
 
+/-- A literal as a NORMALIZED form: positive-polarity leaf, negation
+as a node (the proxy-def invariant — `normNeg`-stable). -/
+def normLitForm (l : Literal) : BoolDef :=
+  if l.neg then .neg (.lit ⟨l.bvar, false⟩) else .lit l
+
 /-- Fresh proxy for a connective form whose children are already
-literals: registers the def + definitional clauses (the taut forms
-inline the proxy's own def ONE level — children stay abstract, so
-checks are local; design review R-i). Returns the positive literal. -/
-def mkProxy (defCore : BoolDef) (ud : Expr) : RM Literal := do
+literals: registers the def (NORMALIZED at the leaves) + definitional
+clauses (the taut forms are recomputed at bridge time via
+`inlineProxy`; children stay abstract so checks are local — design
+review R-i). Returns the positive literal. -/
+def mkProxy (defPre : BoolDef) (ud : Expr) : RM Literal := do
   let p := (← get).atoms.size
-  match defCore with
+  match defPre with
   | .and (.lit la) (.lit lb) =>
+    let defCore := BoolDef.and (normLitForm la) (normLitForm lb)
     modify fun s => { s with
       atoms := s.atoms.push (some (.bool defCore)),
       proxies := s.proxies.insert p (defCore, ud),
       defClauses := s.defClauses
-        |>.push ([⟨p, true⟩, la], p, .or (.neg defCore) (.lit la))
-        |>.push ([⟨p, true⟩, lb], p, .or (.neg defCore) (.lit lb))
-        |>.push ([⟨p, false⟩, la.negate, lb.negate], p,
-            .or defCore (.or (.neg (.lit la)) (.neg (.lit lb)))) }
+        |>.push ([⟨p, true⟩, la], p)
+        |>.push ([⟨p, true⟩, lb], p)
+        |>.push ([⟨p, false⟩, la.negate, lb.negate], p) }
     return ⟨p, false⟩
   | .or (.lit la) (.lit lb) =>
+    let defCore := BoolDef.or (normLitForm la) (normLitForm lb)
     modify fun s => { s with
       atoms := s.atoms.push (some (.bool defCore)),
       proxies := s.proxies.insert p (defCore, ud),
       defClauses := s.defClauses
-        |>.push ([⟨p, true⟩, la, lb], p,
-            .or (.neg defCore) (.or (.lit la) (.lit lb)))
-        |>.push ([⟨p, false⟩, la.negate], p, .or defCore (.neg (.lit la)))
-        |>.push ([⟨p, false⟩, lb.negate], p, .or defCore (.neg (.lit lb))) }
+        |>.push ([⟨p, true⟩, la, lb], p)
+        |>.push ([⟨p, false⟩, la.negate], p)
+        |>.push ([⟨p, false⟩, lb.negate], p) }
     return ⟨p, false⟩
   | _ => throwError "nonlinear_arith: internal: proxy def not a binary connective"
 
@@ -432,15 +447,15 @@ partial def tseitinLit (fe : FormE) : RM Literal := do
   match fe with
   | (.lit l, _) => return l
   | (.and fa fb, ud) =>
-    let (_, ua, ub) := ← match ud.getAppFnArgs with
-      | (``And, #[ua, ub]) => pure ((), ua, ub)
+    let (ua, ub) ← match ud.getAppFnArgs with
+      | (``And, #[ua, ub]) => pure (ua, ub)
       | _ => throwError "nonlinear_arith: internal: and-form with non-And user prop {ud}"
     let la ← tseitinLit (fa, ua)
     let lb ← tseitinLit (fb, ub)
     mkProxy (.and (.lit la) (.lit lb)) ud
   | (.or fa fb, ud) =>
-    let (_, ua, ub) := ← match ud.getAppFnArgs with
-      | (``Or, #[ua, ub]) => pure ((), ua, ub)
+    let (ua, ub) ← match ud.getAppFnArgs with
+      | (``Or, #[ua, ub]) => pure (ua, ub)
       | _ => throwError "nonlinear_arith: internal: or-form with non-Or user prop {ud}"
     let la ← tseitinLit (fa, ua)
     let lb ← tseitinLit (fb, ub)
@@ -481,24 +496,24 @@ partial def orCollect (fe : FormE) : RM (List Literal × ElimTree) := do
 state. `wrap` navigates from the hyp's full expanded form to this node
 (andL/andR). Tautological clauses (tru in the disjunction) are dropped
 — sound weakening. -/
-partial def clausify (hypE : Expr) (fe : FormE) (wrap : ElimTree → ElimTree) :
-    RM Unit := do
+partial def clausify (hypE origE expandedE : Expr) (fe : FormE)
+    (wrap : ElimTree → ElimTree) : RM Unit := do
   match fe with
   | (.and fa fb, ud) =>
     match ud.getAppFnArgs with
     | (``And, #[ua, ub]) =>
-      clausify hypE (fa, ua) (fun t => wrap (.andL t))
-      clausify hypE (fb, ub) (fun t => wrap (.andR t))
+      clausify hypE origE expandedE (fa, ua) (fun t => wrap (.andL t))
+      clausify hypE origE expandedE (fb, ub) (fun t => wrap (.andR t))
     | _ => throwError "nonlinear_arith: internal: and-form with non-And prop {ud}"
   | (.or _ _, ud) =>
     unless formHasTru fe.1 do
       let (lits, plan) ← orCollect fe
-      modify fun s => { s with roots := s.roots.push (lits, hypE, wrap plan) }
+      modify fun s => { s with roots := s.roots.push (⟨lits, hypE, origE, expandedE, wrap plan⟩) }
   | (.lit l, ud) =>
-    modify fun s => { s with roots := s.roots.push ([l], hypE, wrap (.witness l ud)) }
+    modify fun s => { s with roots := s.roots.push (⟨[l], hypE, origE, expandedE, wrap (.witness l ud)⟩) }
   | (.tru, _) => pure ()
   | (.fls, ud) =>
-    modify fun s => { s with roots := s.roots.push ([], hypE, wrap (.elimFalse ud)) }
+    modify fun s => { s with roots := s.roots.push (⟨[], hypE, origE, expandedE, wrap (.elimFalse ud)⟩) }
   | (.neg _, ud) => throwError "nonlinear_arith: internal: neg node past NNF: {ud}"
 
 
@@ -523,6 +538,10 @@ structure BridgeCtx where
 def mkIffTrans (a b : Expr) : MetaM Expr := mkAppM ``Iff.trans #[a, b]
 def mkIffSymm (a : Expr) : MetaM Expr := mkAppM ``Iff.symm #[a]
 def mkNotCongr (a : Expr) : MetaM Expr := mkAppM ``not_congr #[a]
+/-- `BoolDef.eval oracleE form` as an Expr application. -/
+def evalAppE (bctx : BridgeCtx) (form : BoolDef) : Expr :=
+  mkApp2 (mkConst ``BoolDef.eval) bctx.oracleE (boolDefToExpr form)
+
 
 /-- The alignment equation `evalP ρ* p = diff` — sandboxed
 (withoutModifyingState + runtime-ex catch + mvar check; the
@@ -535,7 +554,9 @@ def mkAlign (bctx : BridgeCtx) (p : MPoly) (diffE : Expr) : TacticM Expr := do
   let goalTy ← mkAppM ``Eq #[evalE, diffE]
   let m ← mkFreshExprMVar goalTy
   let r ← withoutModifyingState do
-    tryCatchRuntimeEx
+    let saved ← getGoals
+    setGoals [m.mvarId!]
+    let r ← tryCatchRuntimeEx
       (do
         evalTactic (← `(tactic| simp [Check.evalP, Check.evalM]))
         evalTactic (← `(tactic| push_cast))
@@ -544,6 +565,8 @@ def mkAlign (bctx : BridgeCtx) (p : MPoly) (diffE : Expr) : TacticM Expr := do
         if pf.hasMVar then return none
         return some pf)
       (fun _ => return none)
+    setGoals saved
+    return r
   match r with
   | some pf => return pf
   | none =>
@@ -578,36 +601,45 @@ def mkLitIff (bctx : BridgeCtx) (lit : Literal) : TacticM Expr := do
     let cong ← mkAppM ``congrArg #[lam, alignE]
     mkAppM ``Iff.of_eq #[cong]
   let holdsSingle (lem : Name) : MetaM Expr := do
-    let fsE := toExpr [(p, false)]
-    let atomE := mkApp2 (mkConst ``IneqAtom.mk) (ineqKindToExpr ia.kind) fsE
-    mkAppM lem #[bctx.ρStar, atomE]
+    mkAppM lem #[bctx.ρStar, pE]
+  -- cast links: the leaf lemmas' operands are IMPLICIT — mkAppOptM with
+  -- pinned positions (house idiom; binder counts from #print):
+  -- Int.cast_{lt,le} 8 binders, Nat.cast_{lt,le} 8, *_cast_inj 5,
+  -- sub_lt_zero/sub_pos 6, sub_eq_zero 4, not_lt 4.
   let castLinkLt (x y : Expr) : MetaM Expr :=
     match info.ty with
-    | .int => mkAppM ``Int.cast_lt #[x, y]
-    | .nat => mkAppM ``Nat.cast_lt #[x, y]
+    | .int => mkAppOptM ``Int.cast_lt #[some (mkConst ``Real), none, none, none, none, none, some x, some y]
+    | .nat => mkAppOptM ``Nat.cast_lt #[some (mkConst ``Real), none, none, none, none, none, some x, some y]
     | .real => do mkAppM ``Iff.refl #[← mkAppM ``LT.lt #[x, y]]
   let castLinkLe (x y : Expr) : MetaM Expr :=
     match info.ty with
-    | .int => mkAppM ``Int.cast_le #[x, y]
-    | .nat => mkAppM ``Nat.cast_le #[x, y]
+    | .int => mkAppOptM ``Int.cast_le #[some (mkConst ``Real), none, none, none, none, none, some x, some y]
+    | .nat => mkAppOptM ``Nat.cast_le #[some (mkConst ``Real), none, none, none, none, none, some x, some y]
     | .real => do mkAppM ``Iff.refl #[← mkAppM ``LE.le #[x, y]]
   let castLinkEq (x y : Expr) : MetaM Expr :=
     match info.ty with
-    | .int => mkAppM ``Int.cast_eq #[x, y]
-    | .nat => mkAppM ``Nat.cast_inj #[x, y]
+    | .int => mkAppOptM ``Int.cast_inj #[some (mkConst ``Real), none, none, some x, some y]
+    | .nat => mkAppOptM ``Nat.cast_inj #[some (mkConst ``Real), none, none, some x, some y]
     | .real => do mkAppM ``Iff.refl #[← mkAppM ``Eq #[x, y]]
+  let subLtZero (x y : Expr) : MetaM Expr :=
+    mkAppOptM ``sub_lt_zero #[none, none, none, none, some x, some y]
+  let subPos (x y : Expr) : MetaM Expr :=
+    mkAppOptM ``sub_pos #[none, none, none, none, some x, some y]
+  let subEqZero (x y : Expr) : MetaM Expr :=
+    mkAppOptM ``sub_eq_zero #[none, none, some x, some y]
+  let notLt (x y : Expr) : MetaM Expr :=
+    mkAppOptM ``not_lt #[none, none, some x, some y]
   -- pieces of the positive chain: c1 = cast link, c2 = sub-shift,
   -- c3 = align, c4 = holds_single
-  let (c1, c2, c3, c4) ← do
-    match ia.kind with
+  let (c1, c2, c3, c4) ← match ia.kind with
     | .lt =>
-      return (← castLinkLt info.a info.b, ← mkAppM ``sub_lt_zero #[castA, castB],
+      pure (← castLinkLt info.a info.b, ← subLtZero castA castB,
         ← mkC3 ``LT.lt false, ← holdsSingle ``holds_single_lt)
     | .gt =>
-      return (← castLinkLt info.b info.a, ← mkAppM ``sub_pos #[castA, castB],
+      pure (← castLinkLt info.b info.a, ← subPos castA castB,
         ← mkC3 ``LT.lt true, ← holdsSingle ``holds_single_gt)
     | .eq =>
-      return (← castLinkEq info.a info.b, ← mkAppM ``sub_eq_zero #[castA, castB],
+      pure (← castLinkEq info.a info.b, ← subEqZero castA castB,
         ← mkC3 ``Eq false, ← holdsSingle ``holds_single_eq)
   -- posChain: userPlus ↔ litHolds ⟨b,false⟩ (assembled from the user side)
   let posChain ← mkIffTrans (← mkIffSymm c1) (← mkIffTrans (← mkIffSymm c2)
@@ -616,23 +648,27 @@ def mkLitIff (bctx : BridgeCtx) (lit : Literal) : TacticM Expr := do
   let tailChain ← mkIffTrans (← mkIffSymm c2)
     (← mkIffTrans (← mkIffSymm c3) (← mkIffSymm c4))
   let full : Expr ← match info.ck, lit.neg with
-    | _, false => posChain
     | .lt, true | .eq, true | .gt, true => mkNotCongr posChain
+    | .ne, true => mkNotCongr posChain
+    | .ne, false =>
+      let eqE ← mkAppM ``Eq #[info.a, info.b]
+      mkIffTrans (← mkAppOptM ``not_not #[some eqE]) posChain
+    | .lt, false | .eq, false | .gt, false => pure posChain
     | .le, true =>
       let t1 ← mkIffSymm (← castLinkLe info.a info.b)
-      let t2 ← mkIffSymm (← mkAppM ``not_lt #[castB, castA])
+      let t2 ← mkIffSymm (← notLt castB castA)
       mkIffTrans t1 (← mkIffTrans t2 (← mkNotCongr tailChain))
     | .ge, true =>
       let t1 ← mkIffSymm (← castLinkLe info.b info.a)
-      let t2 ← mkIffSymm (← mkAppM ``not_lt #[castA, castB])
+      let t2 ← mkIffSymm (← notLt castA castB)
       mkIffTrans t1 (← mkIffTrans t2 (← mkNotCongr tailChain))
     | .le, false =>
       let t1 ← mkIffSymm (← castLinkLe info.a info.b)
-      let t2 ← mkIffSymm (← mkAppM ``not_lt #[castB, castA])
+      let t2 ← mkIffSymm (← notLt castB castA)
       mkNotCongr (← mkIffTrans t1 (← mkIffTrans t2 (← mkNotCongr tailChain)))
     | .ge, false =>
       let t1 ← mkIffSymm (← castLinkLe info.b info.a)
-      let t2 ← mkIffSymm (← mkAppM ``not_lt #[castA, castB])
+      let t2 ← mkIffSymm (← notLt castA castB)
       mkNotCongr (← mkIffTrans t1 (← mkIffTrans t2 (← mkNotCongr tailChain)))
   -- (the CmpKind.ne case shares .eq's atom with baseNeg — covered by the
   -- (_, false)/(_, true) split via posChain/not_congr)
@@ -643,6 +679,28 @@ def mkLitIff (bctx : BridgeCtx) (lit : Literal) : TacticM Expr := do
   bctx.litCache.modify (·.insert lit result)
   return result
 
+/-- Decodability witness for a table slot: `∃ a, atomsE[b]? = some (some a)`
+— the table lookup by decide, the intro by construction. -/
+def mkDecodableProof (bctx : BridgeCtx) (b : Nat) : MetaM Expr := do
+  let some (some a) := bctx.atoms[b]?
+    | throwError "nonlinear_arith: internal: junk slot at {b}"
+  let aE := atomToExpr a
+  let lookupTy ← do
+    let lhs ← mkAppM ``getElem? #[bctx.atomsE, toExpr b]
+    let inner := mkApp2 (mkConst ``Option.some [levelZero]) (mkConst ``Atom) aE
+    let outer := mkApp2 (mkConst ``Option.some [levelZero])
+      (mkApp (mkConst ``Option [levelZero]) (mkConst ``Atom)) inner
+    mkAppM ``Eq #[lhs, outer]
+  let decPrf ← mkDecideProof lookupTy
+  let predLam ← withLocalDecl `a .default (mkConst ``Atom) fun aE => do
+    let eqTy ← mkAppM ``Eq #[← mkAppM ``getElem? #[bctx.atomsE, toExpr b],
+      mkApp2 (mkConst ``Option.some [levelZero])
+        (mkApp (mkConst ``Option [levelZero]) (mkConst ``Atom))
+        (mkApp2 (mkConst ``Option.some [levelZero]) (mkConst ``Atom) aE)]
+    mkLambdaFVars #[aE] eqTy
+  mkAppOptM ``Exists.intro #[none, some predLam, some aE, some decPrf]
+
+mutual
 /-- `expandedE ↔ BoolDef.eval oracleE formE` — recursion mirroring the
 form (eval's arms are structural, so the congruences are defeq
 ascriptions); proxy leaves use the registered proxy Iffs. -/
@@ -655,7 +713,7 @@ partial def mkFormIff (bctx : BridgeCtx) (form : BoolDef) (expandedE : Expr) :
     mkExpectedTypeHint pf targetTy
   match form with
   | .lit l =>
-    match bctx.atoms.get! l.bvar with
+    match bctx.atoms[l.bvar]! with
     | some (.bool _) =>
       let base ← mkProxyIff bctx l.bvar
       let pf ← if l.neg then mkNotCongr base else pure base
@@ -663,20 +721,35 @@ partial def mkFormIff (bctx : BridgeCtx) (form : BoolDef) (expandedE : Expr) :
     | some (.ineq _) => ascribe (← mkLitIff bctx l)
     | _ => throwError "nonlinear_arith: internal: leaf at junk slot {repr l}"
   | .and a b =>
-    let (_, ua, ub) := ← match expandedE.getAppFnArgs with
-      | (``And, #[ua, ub]) => pure ((), ua, ub)
+    let (ua, ub) ← match expandedE.getAppFnArgs with
+      | (``And, #[ua, ub]) => pure (ua, ub)
       | _ => throwError "nonlinear_arith: internal: and-form, non-And expanded {expandedE}"
     ascribe (← mkAppM ``and_congr #[← mkFormIff bctx a ua, ← mkFormIff bctx b ub])
   | .or a b =>
-    let (_, ua, ub) := ← match expandedE.getAppFnArgs with
-      | (``Or, #[ua, ub]) => pure ((), ua, ub)
+    let (ua, ub) ← match expandedE.getAppFnArgs with
+      | (``Or, #[ua, ub]) => pure (ua, ub)
       | _ => throwError "nonlinear_arith: internal: or-form, non-Or expanded {expandedE}"
     ascribe (← mkAppM ``or_congr #[← mkFormIff bctx a ua, ← mkFormIff bctx b ub])
   | .neg a =>
-    let (_, ua) := ← match expandedE.getAppFnArgs with
-      | (``Not, #[ua]) => pure ((), ua)
-      | _ => throwError "nonlinear_arith: internal: neg-form, non-Not expanded {expandedE}"
-    ascribe (← mkNotCongr (← mkFormIff bctx a ua))
+    match expandedE.getAppFnArgs with
+    | (``Not, #[ua]) => ascribe (← mkNotCongr (← mkFormIff bctx a ua))
+    | _ =>
+      -- the normed-proxy-def leaf: `.neg (.lit ⟨b,false⟩)` paired with
+      -- the child's non-Not user prop (e.g. `x ≥ 1`) — the chain is
+      -- litIff(⟨b,true⟩) ∘ litHolds_negate.
+      match a with
+      | .lit l =>
+        if l.neg then
+          throwError "nonlinear_arith: internal: normed def has a negative leaf"
+        else
+          let lPos : Literal := ⟨l.bvar, false⟩
+          let base ← mkLitIff bctx ⟨l.bvar, true⟩
+          let hdec ← mkDecodableProof bctx l.bvar
+          let neg ← mkAppM ``litHolds_negate #[bctx.ρStar, bctx.atomsE,
+            Refute.litToExpr lPos, hdec]
+          ascribe (← mkIffTrans base neg)
+      | _ => throwError "nonlinear_arith: internal: neg node over non-literal"
+
   | .tru => ascribe (← mkAppM ``Iff.refl #[expandedE])
   | .fls => ascribe (← mkAppM ``Iff.refl #[expandedE])
 
@@ -691,8 +764,9 @@ partial def mkProxyIff (bctx : BridgeCtx) (p : Nat) : TacticM Expr := do
   let defE := boolDefToExpr defCore
   -- table lookup fact, kernel-decided
   let lookupTy ← do
-    let lhs ← mkAppM ``Array.getElem? #[bctx.atomsE, toExpr p]
-    let inner := mkApp2 (mkConst ``Option.some [levelZero]) (mkConst ``Atom) defE
+    let lhs ← mkAppM ``getElem? #[bctx.atomsE, toExpr p]
+    let inner := mkApp2 (mkConst ``Option.some [levelZero]) (mkConst ``Atom)
+      (atomToExpr (.bool defCore))
     let outer := mkApp2 (mkConst ``Option.some [levelZero])
       (mkApp (mkConst ``Option [levelZero]) (mkConst ``Atom)) inner
     mkAppM ``Eq #[lhs, outer]
@@ -717,3 +791,486 @@ partial def mkProxyIff (bctx : BridgeCtx) (p : Nat) : TacticM Expr := do
   let result ← mkExpectedTypeHint result targetTy
   bctx.proxyCache.modify (·.insert p result)
   return result
+end
+
+/-- Inline a proxy's def at its own leaves (one level — children stay
+abstract). The taut-checkable form of a definitional clause is
+`inlineProxy p defCore (normNeg (clauseForm C))`. -/
+partial def inlineProxy (p : Nat) (d : BoolDef) : BoolDef → BoolDef
+  | .lit l => if l.bvar == p then (if l.neg then .neg d else d) else .lit l
+  | .and a b => .and (inlineProxy p d a) (inlineProxy p d b)
+  | .or a b => .or (inlineProxy p d a) (inlineProxy p d b)
+  | .neg a => .neg (inlineProxy p d a)
+  | .tru => .tru
+  | .fls => .fls
+
+/-- The shared proxy-boundary facts: `litHolds ⟨p,false⟩ ↔ bDH size def`
+(table lookup by decide) and `bDH size def ↔ eval oracle def`
+(order invariant + leaf bound by decide). -/
+def mkProxyFacts (bctx : BridgeCtx) (p : Nat) : TacticM (Expr × Expr) := do
+  let some (defCore, _) := bctx.proxies[p]?
+    | throwError "nonlinear_arith: internal: unregistered proxy {p}"
+  let defE := boolDefToExpr defCore
+  let lookupTy ← do
+    let lhs ← mkAppM ``getElem? #[bctx.atomsE, toExpr p]
+    let inner := mkApp2 (mkConst ``Option.some [levelZero]) (mkConst ``Atom)
+      (atomToExpr (.bool defCore))
+    let outer := mkApp2 (mkConst ``Option.some [levelZero])
+      (mkApp (mkConst ``Option [levelZero]) (mkConst ``Atom)) inner
+    mkAppM ``Eq #[lhs, outer]
+  let lookupPrf ← mkDecideProof lookupTy
+  let h1 ← mkAppM ``litHolds_bool
+    #[bctx.ρStar, bctx.atomsE, toExpr p, mkConst ``Bool.false, defE, lookupPrf]
+  let sizeE ← mkAppM ``Array.size #[bctx.atomsE]
+  let pltTy ← do
+    let app ← mkAppM ``proxyLeavesLT #[bctx.atomsE, sizeE, defE]
+    mkAppM ``Eq #[app, mkConst ``true]
+  let pltPrf ← mkDecideProof pltTy
+  let h2 ← mkAppM ``boolDefHolds_evalLitHolds
+    #[bctx.ρStar, bctx.atomsE, bctx.hordPrf, sizeE, defE, pltPrf]
+  return (h1, h2)
+
+/-- `eval oracle defCore ↔ litHolds ⟨p, false⟩` — the proxy-boundary
+link at the eval level. -/
+def mkProxyBoundary (bctx : BridgeCtx) (p : Nat) : TacticM Expr := do
+  let (h1, h2) ← mkProxyFacts bctx p
+  mkIffSymm (← mkIffTrans h1 h2)
+
+/-- The hyp-level NNF bridge: `(pol ? origE : ¬origE) ↔ expandedE` —
+term-mode recursion mirroring `reifyProp`, through the named
+propositional lemmas (`not_and`, `imp_iff_not_or`, `iff_cnf`, …). -/
+partial def mkNnfIff (origE : Expr) (pol : Bool) (expandedE : Expr) : TacticM Expr := do
+  let userSide ← if pol then pure origE else mkAppM ``Not #[origE]
+  let ascribe (pf : Expr) : MetaM Expr := do
+    let targetTy ← mkAppM ``Iff #[userSide, expandedE]
+    mkExpectedTypeHint pf targetTy
+  let decompose (e : Expr) (head : Name) : TacticM (Expr × Expr) :=
+    match e.getAppFnArgs with
+    | (h, #[x, y]) => if h == head then pure (x, y)
+      else throwError "nonlinear_arith: internal: expanded shape mismatch ({head}): {e}"
+    | _ => throwError "nonlinear_arith: internal: expanded shape mismatch ({head}): {e}"
+  match origE with
+  | .forallE _ a b _ =>
+    if b.hasLooseBVars then
+      throwError "nonlinear_arith: dependent ∀ unsupported: {origE}"
+    else if pol then
+      let (ex, ey) ← decompose expandedE ``Or
+      let step ← mkAppM ``imp_iff_not_or #[a, b]
+      ascribe (← mkIffTrans step (← mkAppM ``or_congr
+        #[← mkNnfIff a false ex, ← mkNnfIff b true ey]))
+    else
+      let (ex, ey) ← decompose expandedE ``And
+      let step ← mkAppM ``_root_.not_imp #[a, b]
+      ascribe (← mkIffTrans step (← mkAppM ``and_congr
+        #[← mkNnfIff a true ex, ← mkNnfIff b false ey]))
+  | _ =>
+  match origE.getAppFnArgs with
+  | (``Not, #[q]) =>
+    let child ← mkNnfIff q (!pol) expandedE
+    if pol then
+      ascribe child
+    else
+      let step ← mkAppOptM ``not_not #[some q]
+      ascribe (← mkIffTrans step child)
+  | (``And, #[a, b]) =>
+    if pol then
+      let (ex, ey) ← decompose expandedE ``And
+      ascribe (← mkAppM ``and_congr #[← mkNnfIff a true ex, ← mkNnfIff b true ey])
+    else
+      let (ex, ey) ← decompose expandedE ``Or
+      let step ← mkAppM ``not_and #[a, b]
+      ascribe (← mkIffTrans step (← mkAppM ``or_congr
+        #[← mkNnfIff a false ex, ← mkNnfIff b false ey]))
+  | (``Or, #[a, b]) =>
+    if pol then
+      let (ex, ey) ← decompose expandedE ``Or
+      ascribe (← mkAppM ``or_congr #[← mkNnfIff a true ex, ← mkNnfIff b true ey])
+    else
+      let (ex, ey) ← decompose expandedE ``And
+      let step ← mkAppM ``not_or #[a, b]
+      ascribe (← mkIffTrans step (← mkAppM ``and_congr
+        #[← mkNnfIff a false ex, ← mkNnfIff b false ey]))
+  | (``Iff, #[a, b]) =>
+    if pol then
+      let (e1, e2) ← decompose expandedE ``And
+      let (eaF, ebT) ← decompose e1 ``Or
+      let (ebF, eaT) ← decompose e2 ``Or
+      let step ← mkAppM ``iff_cnf #[a, b]
+      ascribe (← mkIffTrans step (← mkAppM ``and_congr
+        #[← mkAppM ``or_congr #[← mkNnfIff a false eaF, ← mkNnfIff b true ebT],
+          ← mkAppM ``or_congr #[← mkNnfIff b false ebF, ← mkNnfIff a true eaT]]))
+    else
+      let (e1, e2) ← decompose expandedE ``Or
+      let (eaT, ebF) ← decompose e1 ``And
+      let (eaF, ebT) ← decompose e2 ``And
+      let step ← mkAppM ``not_iff_cnf #[a, b]
+      ascribe (← mkIffTrans step (← mkAppM ``or_congr
+        #[← mkAppM ``and_congr #[← mkNnfIff a true eaT, ← mkNnfIff b false ebF],
+          ← mkAppM ``and_congr #[← mkNnfIff a false eaF, ← mkNnfIff b true ebT]]))
+  | (``ite, #[_, c, _, a, b]) =>
+    if pol then
+      let (e1, e2) ← decompose expandedE ``And
+      let (ecF, eaT) ← decompose e1 ``Or
+      let (ecT, ebT) ← decompose e2 ``Or
+      let step ← mkAppM ``ite_cnf #[c, a, b]
+      ascribe (← mkIffTrans step (← mkAppM ``and_congr
+        #[← mkAppM ``or_congr #[← mkNnfIff c false ecF, ← mkNnfIff a true eaT],
+          ← mkAppM ``or_congr #[← mkNnfIff c true ecT, ← mkNnfIff b true ebT]]))
+    else
+      let (e1, e2) ← decompose expandedE ``Or
+      let (ecT, eaF) ← decompose e1 ``And
+      let (ecF, ebF) ← decompose e2 ``And
+      let step ← mkAppM ``not_ite_cnf #[c, a, b]
+      ascribe (← mkIffTrans step (← mkAppM ``or_congr
+        #[← mkAppM ``and_congr #[← mkNnfIff c true ecT, ← mkNnfIff a false eaF],
+          ← mkAppM ``and_congr #[← mkNnfIff c false ecF, ← mkNnfIff b false ebF]]))
+  | _ =>
+    if origE.isConstOf ``True then
+      if pol then ascribe (← mkAppM ``Iff.refl #[origE])
+      else ascribe (← mkAppM ``not_true #[])
+    else if origE.isConstOf ``False then
+      if pol then ascribe (← mkAppM ``Iff.refl #[origE])
+      else ascribe (← mkAppM ``not_false #[])
+    else
+      match origE.getAppFnArgs with
+      | (``Eq, #[ty, a, b]) =>
+        match arithTyOf ty with
+        | some _ => ascribe (← mkAppM ``Iff.refl #[userSide])
+        | none =>
+          let inner ← do
+            if pol then
+              let (e1, e2) ← decompose expandedE ``And
+              let (eaF, ebT) ← decompose e1 ``Or
+              let (ebF, eaT) ← decompose e2 ``Or
+              let step ← mkAppM ``iff_cnf #[a, b]
+              mkIffTrans step (← mkAppM ``and_congr
+                #[← mkAppM ``or_congr #[← mkNnfIff a false eaF, ← mkNnfIff b true ebT],
+                  ← mkAppM ``or_congr #[← mkNnfIff b false ebF, ← mkNnfIff a true eaT]])
+            else
+              let (e1, e2) ← decompose expandedE ``Or
+              let (eaT, ebF) ← decompose e1 ``And
+              let (eaF, ebT) ← decompose e2 ``And
+              let step2 ← mkAppM ``not_iff_cnf #[a, b]
+              mkIffTrans step2 (← mkAppM ``or_congr
+                #[← mkAppM ``and_congr #[← mkNnfIff a true eaT, ← mkNnfIff b false ebF],
+                  ← mkAppM ``and_congr #[← mkNnfIff a false eaF, ← mkNnfIff b true ebT]])
+          let pe ← mkAppM ``prop_eq_iff #[a, b]
+          if pol then
+            ascribe (← mkIffTrans pe inner)
+          else
+            ascribe (← mkIffTrans (← mkNotCongr pe) inner)
+      | _ => ascribe (← mkAppM ``Iff.refl #[userSide])
+
+/-- The substitution link for a definitional clause: pairs the
+normalized clause form with the taut form (= the clause form with the
+defined proxy's def inlined), producing
+`eval oracle ncf ↔ eval oracle tautF`. Both sides are
+polarity-normalized, so non-inlined leaves pair as identical `.lit`s
+(possibly under a common `.neg` wrapper). -/
+partial def mkDefLink (bctx : BridgeCtx) (p : Nat) (defCore : BoolDef) :
+    (ncf tautF : BoolDef) → TacticM Expr
+  | .fls, .fls => do
+    let e := mkApp2 (mkConst ``BoolDef.eval) bctx.oracleE (boolDefToExpr .fls)
+    mkAppM ``Iff.refl #[e]
+  | .or a1 b1, .or a2 b2 => do
+    let h1 ← mkDefLink bctx p defCore a1 a2
+    let h2 ← mkDefLink bctx p defCore b1 b2
+    let pf ← mkAppM ``or_congr #[h1, h2]
+    let ltE := evalAppE bctx (.or a1 b1)
+    let rtE := evalAppE bctx (.or a2 b2)
+    mkExpectedTypeHint pf (← mkAppM ``Iff #[ltE, rtE])
+  | .neg a1, .neg a2 => do
+    let h ← mkDefLink bctx p defCore a1 a2
+    let pf ← mkNotCongr h
+    let ltE := evalAppE bctx (.neg a1)
+    let rtE := evalAppE bctx (.neg a2)
+    mkExpectedTypeHint pf (← mkAppM ``Iff #[ltE, rtE])
+  | .lit l, t => do
+    if l.bvar == p then
+      -- the inlined position: t is the proxy's def (native check)
+      unless t == defCore do
+        throwError "nonlinear_arith: internal: deflink inline mismatch"
+      let boundary ← mkProxyBoundary bctx p   -- eval defCore ↔ litHolds ⟨p,false⟩
+      let pf ← mkIffSymm boundary             -- litHolds ⟨p,false⟩ ↔ eval defCore
+      let ltE := evalAppE bctx (.lit l)
+      let rtE := evalAppE bctx t
+      mkExpectedTypeHint pf (← mkAppM ``Iff #[ltE, rtE])
+    else do
+      unless t == .lit l do
+        throwError "nonlinear_arith: internal: deflink leaf mismatch"
+      let e := evalAppE bctx (.lit l)
+      mkAppM ``Iff.refl #[e]
+  | _, _ => throwError "nonlinear_arith: internal: deflink shape mismatch"
+
+/-- The definitional-clause bridge: `clauseHolds ρ* atomsE C` from the
+taut check of the inline form. -/
+def mkDefClauseBridge (bctx : BridgeCtx) (C : List Literal) (p : Nat) : TacticM Expr := do
+  let ncf := BoolDef.normNeg (clauseForm C)
+  let some (defCore, _) := bctx.proxies[p]?
+    | throwError "nonlinear_arith: internal: unregistered proxy {p}"
+  let tautF := inlineProxy p defCore ncf
+  -- defs are stored normalized; the inline of a normalized form at a
+  -- normalized def is normalized (so `taut_sound`'s conclusion is
+  -- directly `eval oracle tautF` — the kernel checks this by
+  -- computation at ascription)
+  unless BoolDef.normNeg defCore == defCore do
+    throwError "nonlinear_arith: internal: proxy def not normalized"
+  unless BoolDef.normNeg tautF == tautF do
+    throwError "nonlinear_arith: internal: taut form not normalized"
+  let tautTy ← mkAppM ``Eq #[← mkAppM ``BoolDef.taut #[boolDefToExpr tautF],
+    mkConst ``true]
+  let tautPrf ← mkDecideProof tautTy
+  let sound ← mkAppM ``BoolDef.taut_sound #[tautPrf, bctx.oracleE]
+  let link ← mkDefLink bctx p defCore ncf tautF
+  let evalNcf ← mkAppM ``Iff.mpr #[link, sound]
+  let CE ← Walk.quoteLits C
+  let hdecTy ← mkAppM ``Eq #[← mkAppM ``clauseDecodable #[bctx.atomsE, CE],
+    mkConst ``true]
+  let hdecPrf ← mkDecideProof hdecTy
+  let bridge ← mkAppM ``clauseHolds_iff_evalNorm #[bctx.ρStar, bctx.atomsE, CE, hdecPrf]
+  mkAppM ``Iff.mpr #[bridge, evalNcf]
+
+
+/-- The per-literal Iff at the bridge site (dispatches arith vs proxy,
+polarity included). -/
+def mkLeafIff (bctx : BridgeCtx) (l : Literal) : TacticM Expr := do
+  match bctx.atoms[l.bvar]! with
+  | some (.ineq _) => mkLitIff bctx l
+  | some (.bool _) =>
+    let base ← mkProxyIff bctx l.bvar
+    if l.neg then mkNotCongr base else pure base
+  | _ => throwError "nonlinear_arith: internal: leaf at junk slot {repr l}"
+
+/-- Or-chain witness: position `j` of the clause's eval form from a
+`litHolds` proof. Explicit types (Or.inl/inr's implicit `b` can't be
+inferred from the proof alone). -/
+partial def mkOrWitness (bctx : BridgeCtx) (C : List Literal) (j : Nat)
+    (litPf : Expr) : TacticM Expr := do
+  match C with
+  | [] => throwError "nonlinear_arith: internal: witness position out of range"
+  | l₀ :: rest =>
+    let ltE := mkApp bctx.oracleE (Refute.litToExpr l₀)
+    if j == 0 then
+      let rtE := evalAppE bctx (clauseForm rest)
+      mkAppOptM ``Or.inl #[none, some rtE, some litPf]
+    else
+      let inner ← mkOrWitness bctx rest (j - 1) litPf
+      let rtE := evalAppE bctx (clauseForm rest)
+      mkAppOptM ``Or.inr #[some ltE, none, some inner]
+
+/-- From the fls leaf's user proof to `False`. `ud` is `False` or
+`¬True` (the only sources of `.fls` in reifyProp). -/
+def mkFlsToFalse (ud : Expr) (h : Expr) : TacticM Expr := do
+  if ud.isConstOf ``False then return h
+  if ud.isAppOf ``Not then
+    -- h : ¬True — apply to True.intro
+    return mkApp h (mkConst ``True.intro)
+  throwError "nonlinear_arith: internal: fls leaf with unexpected prop {ud}"
+
+/-- Evaluate the elimination plan: from `h` (the current expanded prop)
+to a proof of `eval oracleE (clauseForm C)`. -/
+partial def buildEvalFromPlan (bctx : BridgeCtx) (C : List Literal) :
+    ElimTree → Expr → TacticM Expr
+  | .witness l ud, h => do
+    let iffE ← mkLeafIff bctx l
+    unless (← isDefEq (← inferType h) ud) do
+      throwError "nonlinear_arith: internal: plan/user mismatch at {repr l}"
+    let litPf ← mkAppM ``Iff.mp #[iffE, h]
+    let some j := C.findIdx? (· == l)
+      | throwError "nonlinear_arith: internal: witness not in clause"
+    let pf ← mkOrWitness bctx C j litPf
+    mkExpectedTypeHint pf (evalAppE bctx (clauseForm C))
+  | .elimFalse ud, h => do
+    let fE ← mkFlsToFalse ud h
+    let pf ← mkAppOptM ``False.elim #[some (evalAppE bctx (clauseForm C)), some fE]
+    mkExpectedTypeHint pf (evalAppE bctx (clauseForm C))
+  | .andL t, h => do buildEvalFromPlan bctx C t (← mkAppM ``And.left #[h])
+  | .andR t, h => do buildEvalFromPlan bctx C t (← mkAppM ``And.right #[h])
+  | .orE t1 t2, h => do
+    let hTy ← inferType h
+    let (ua, ub) ← match hTy.getAppFnArgs with
+      | (``Or, #[ua, ub]) => pure (ua, ub)
+      | _ => throwError "nonlinear_arith: internal: orE on non-Or {hTy}"
+    let lamA ← withLocalDecl `ha .default ua fun haE => do
+      mkLambdaFVars #[haE] (← buildEvalFromPlan bctx C t1 haE)
+    let lamB ← withLocalDecl `hb .default ub fun hbE => do
+      mkLambdaFVars #[hbE] (← buildEvalFromPlan bctx C t2 hbE)
+    mkAppM ``Or.elim #[h, lamA, lamB]
+
+/-- The root-clause bridge: `clauseHolds ρ* atomsE C` from the source
+hypothesis via the NNF Iff + the elimination plan. -/
+def mkRootBridge (bctx : BridgeCtx) (e : RootEntry) : TacticM Expr := do
+  let nnf ← mkNnfIff e.origE true e.expandedE
+  let hExpanded ← mkAppM ``Iff.mp #[nnf, e.hypE]
+  let evalPf ← buildEvalFromPlan bctx e.clause e.plan hExpanded
+  let CE ← Walk.quoteLits e.clause
+  let bridge ← mkAppM ``clauseHolds_iff_eval #[bctx.ρStar, bctx.atomsE, CE]
+  mkAppM ``Iff.mpr #[bridge, evalPf]
+/-! ## Final assembly -/
+
+/-- The `∀ C ∈ Cs, clauseHolds ρ atoms C` dispatch: a lambda whose body
+eliminates the membership Or-chain (List.Mem unfolds to it
+definitionally — the `Walk.memChain` idiom in reverse), transporting
+the per-clause bridge along the Eq via `congrArg` + `Iff.of_eq`. -/
+partial def buildDispatch (bctx : BridgeCtx) (CsE : Expr)
+    (CsVals : List (List Literal)) (bridges : List Expr) : MetaM Expr := do
+  let listLitTy := mkApp (mkConst ``List [levelZero]) (mkConst ``Literal)
+  withLocalDecl `C .default listLitTy fun CE => do
+  let memTy ← mkAppM ``Membership.mem #[CsE, CE]
+  withLocalDecl `hC .default memTy fun hCE => do
+  -- the clauseHolds motive as a lambda (for the Eq transport)
+  let motive ← withLocalDecl `Cx .default listLitTy fun CxE => do
+    mkLambdaFVars #[CxE] (mkApp3 (mkConst ``clauseHolds) bctx.ρStar bctx.atomsE CxE)
+  let rec go (Cs : List (List Literal)) (bs : List Expr) (hCur : Expr) : MetaM Expr := do
+    match Cs, bs with
+    | [], [] =>
+      let goalTy ← mkAppM ``clauseHolds #[bctx.ρStar, bctx.atomsE, CE]
+      let pf ← mkAppOptM ``False.elim #[some goalTy,
+        some (← mkAppM' (mkConst ``List.not_mem_nil [levelZero]) #[hCur])]
+      mkExpectedTypeHint pf goalTy
+    | Cᵢ :: Crest, bᵢ :: brest =>
+      let headE ← Walk.quoteLits Cᵢ
+      let restE ← Walk.quoteLitsList Crest
+      let eqTy := mkApp3 (mkConst ``Eq [levelOne]) listLitTy CE headE
+      let restMemTy ← mkAppM ``Membership.mem #[restE, CE]
+      let goalTy := mkApp3 (mkConst ``clauseHolds) bctx.ρStar bctx.atomsE CE
+      let hiLam ← withLocalDecl `hi .default eqTy fun hiE => do
+        let cong ← mkAppM ``congrArg #[motive, hiE]
+        let iff ← mkAppM ``Iff.of_eq #[cong]
+        let tr ← mkAppM ``Iff.mpr #[iff, bᵢ]
+        mkLambdaFVars #[hiE] tr
+      let restLam ← withLocalDecl `hrest .default restMemTy
+        fun hrestE => do mkLambdaFVars #[hrestE] (← go Crest brest hrestE)
+      -- the Mem → Or conversion goes through `List.mem_cons` (the
+      -- Walk.memChain idiom, elimination direction)
+      let memCons ← mkAppOptM ``List.mem_cons
+        #[some listLitTy, some headE, some restE, some CE]
+      let hOr ← mkAppM ``Iff.mp #[memCons, hCur]
+      mkAppOptM ``Or.elim #[some eqTy, some restMemTy, some goalTy,
+        some hOr, some hiLam, some restLam]
+    | _, _ => throwError "nonlinear_arith: internal: dispatch arity mismatch"
+  let body ← go CsVals bridges hCE
+  mkLambdaFVars #[CE, hCE] body
+
+/-- Phase 1: reify + clausify all hypotheses (plus the ℕ nonneg
+clauses, decision 2 — Verus's own z3 encoding adds 0 ≤ n). -/
+def phase1 (hypFvs : Array FVarId) : RM ReifyState := do
+  for fv in hypFvs do
+    let ty ← instantiateMVars (← fv.getType)
+    let fe ← reifyProp ty true
+    clausify (mkFVar fv) ty fe.2 fe id
+  for i in [0 : (← get).vars.size] do
+    if (← get).varTy[i]! == .nat then
+      let nE := (← get).varKeys[i]!
+      let zeroN ← mkNumeral (mkConst ``Nat) 0
+      let origE ← mkAppM ``GE.ge #[nE, zeroN]
+      let lit ← reifyCmp .ge nE zeroN origE .nat true
+      let hypE ← mkAppM ``Nat.zero_le #[nE]
+      let some info := (← get).litProps[lit]?
+        | throwError "nonlinear_arith: internal: nat clause unregistered"
+      modify fun s => { s with roots := s.roots.push (⟨[lit], hypE, origE, origE, .witness lit info.userSide⟩) }
+  get
+
+/-- The Slice-2 deliverable (see the module doc): reduce the main goal
+`Γ ⊢ G` to the walk's refutation goal
+`∀ ρ, (integrality hyps) → (∀ C ∈ Cs, clauseHolds ρ atoms C) → False`,
+left as the new main goal (Slice 3 closes it via solver + walk). -/
+def toRefutationGoal : TacticM Unit := do
+  let g ← getMainGoal
+  let target ← instantiateMVars (← g.getType)
+  if target.isConstOf ``True then
+    g.assign (mkConst ``True.intro)
+    replaceMainGoal []
+    return
+  let gFalse ←
+    if target.isConstOf ``False then pure g
+    else do
+      let [g'] ← g.apply (mkConst ``Classical.byContradiction)
+        | throwError "nonlinear_arith: internal: byContradiction shape"
+      let (_, g'') ← g'.intro `hGN
+      pure g''
+  gFalse.withContext (n := TacticM) do
+    -- phase 1: reify + clausify all hyps (hGN included — its `Not` flips
+    -- to the goal at negative polarity inside reifyProp)
+    let hypFvs ← gFalse.getNondepPropHyps
+    let st ← (phase1 hypFvs).run' {}
+    -- phase 2: bridges
+    let atomsE ← atomsToExpr st.atoms
+    let ρStarE ← rhoStarExpr st.vars
+    let hordTy ← mkAppM ``Eq #[← mkAppM ``boolDefsOrdered #[atomsE], mkConst ``true]
+    let hordPrf ← mkDecideProof hordTy
+    let oracleE := mkApp2 (mkConst ``litHolds) ρStarE atomsE
+    let litCache ← IO.mkRef ({} : Std.HashMap Literal Expr)
+    let proxyCache ← IO.mkRef ({} : Std.HashMap Nat Expr)
+    let bctx : BridgeCtx :=
+      { ρStar := ρStarE, atomsE, atoms := st.atoms, hordPrf, oracleE,
+        litProps := st.litProps, proxies := st.proxies,
+        litCache, proxyCache }
+    let defBridges ← st.defClauses.toList.mapM fun (C, p) =>
+      mkDefClauseBridge bctx C p
+    let rootBridges ← st.roots.toList.mapM fun e => mkRootBridge bctx e
+    let CsVals := (st.defClauses.toList.map (·.1)) ++ (st.roots.toList.map (·.clause))
+    let CsE ← Walk.quoteLitsList CsVals
+    let dispatch ← buildDispatch bctx CsE CsVals (defBridges ++ rootBridges)
+    -- integrality witnesses (12e decision 1: per ℤ/ℕ slot, ahead of the
+    -- clause hyp in the refutation goal)
+    let intWits ← (List.range st.vars.size).filterMapM fun i =>
+      match st.varTy[i]! with
+      | .real => pure none
+      | ty => do
+        let srcE := st.varKeys[i]!
+        let valE := st.vars[i]!
+        -- the ∃ predicate `fun n : ℤ => ρ* i = ↑n`
+        let predLam ← withLocalDecl `n .default (mkConst ``Int) fun nE => do
+          let eqTy ← mkAppM ``Eq #[mkApp ρStarE (toExpr i),
+          ← mkAppOptM ``Int.cast #[some (mkConst ``Real), none, some nE]]
+          mkLambdaFVars #[nE] eqTy
+        let eqPrf ← do
+          match ty with
+          | .int =>
+            -- ρ* i = ↑srcE by ρ*'s reduction (valE = Int.cast srcE)
+            let tgt ← mkAppM ``Eq #[mkApp ρStarE (toExpr i), valE]
+            mkExpectedTypeHint (← mkEqRefl valE) tgt
+          | .nat =>
+            -- ρ* i = ↑(↑srcE : ℤ) via Int.cast_natCast
+            let wE ← mkAppOptM ``Nat.cast #[some (mkConst ``Int), none, some srcE]
+            let prf ← mkAppM ``Eq.symm #[← mkAppM ``Int.cast_natCast #[srcE]]
+            let tgt ← mkAppM ``Eq #[mkApp ρStarE (toExpr i),
+              ← mkAppOptM ``Int.cast #[some (mkConst ``Real), none, some wE]]
+            mkExpectedTypeHint prf tgt
+          | .real => throwError "nonlinear_arith: internal: real slot in intWits"
+        let witE ← match ty with
+          | .int => pure srcE
+          | .nat => mkAppM ``Nat.cast #[srcE]
+          | .real => throwError "nonlinear_arith: internal: real slot in intWits"
+        let w ← mkAppOptM ``Exists.intro #[none, some predLam, some witE, some eqPrf]
+        pure (some w)
+    -- the refutation goal type
+    let refTy ← withLocalDecl `ρ .default (← mkArrow (mkConst ``Nat) (mkConst ``Real))
+      fun ρE => do
+      let clauseHypTy ← withLocalDecl `C .default
+        (mkApp (mkConst ``List [levelZero]) (mkConst ``Literal)) fun CE => do
+        let memTy ← mkAppM ``Membership.mem #[CsE, CE]
+        let chTy := mkApp3 (mkConst ``clauseHolds) ρE atomsE CE
+        mkForallFVars #[CE] (← mkArrow memTy chTy)
+      let mut ty ← mkArrow clauseHypTy (mkConst ``False)
+      for i in (List.range st.vars.size).reverse do
+        match st.varTy[i]! with
+        | .real => pure ()
+        | _ =>
+          let intHypTy ← withLocalDecl `n .default (mkConst ``Int) fun nE => do
+            let eqTy ← mkAppM ``Eq #[mkApp ρE (toExpr i),
+            ← mkAppOptM ``Int.cast #[some (mkConst ``Real), none, some nE]]
+            let lam ← mkLambdaFVars #[nE] eqTy
+            mkAppM ``Exists #[lam]
+          ty ← pure (← mkArrow intHypTy ty)
+      mkForallFVars #[ρE] ty
+    let m ← mkFreshExprMVar refTy
+    let appArgs := #[ρStarE] ++ intWits.toArray ++ #[dispatch]
+    gFalse.assign (mkAppN m appArgs)
+    replaceMainGoal [m.mvarId!]
+
+/-- Debug/dev entry: `nla_frontend` runs the Slice-2 transform, leaving
+the refutation goal (close it by hand or `nlsat_refute` in pins). -/
+elab "nla_frontend" : tactic => toRefutationGoal
+
