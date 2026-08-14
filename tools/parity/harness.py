@@ -82,14 +82,24 @@ def parse_z3_log(path: Path):
 
 WARNING_RE = re.compile(r"^warning:\s*(.*)$")
 STATS_MARKER = "[nla16-stats]"
+MSG_SPAN_RE = re.compile(r"^\s+at\s+(.+?):(\d+):(\d+):\s*$")
 
 
 def parse_lean_log(path: Path):
-    """Returns (failed_fn_names, other_error_spans, stats_payloads, summary).
+    """Returns (failed_fns, other_error_spans, stats_payloads, summary).
+
+    failed_fns: list of (fn_name, file_or_None) — one entry per failed
+    OBLIGATION error. `fn_name` comes from the `failed for <name>:`
+    header; the file comes from the diagnostic's inner `at path:line:col:`
+    line (inside the tactic error message) or the trailing `-->` arrow.
+    Name-only attribution is WRONG for duplicate fn names across files
+    (tactus-algebra carries axiom_le_mul_nonneg_monotone in BOTH
+    rational.rs and traits/int_ring.rs — the same-name false-positive
+    was the first pilot catch).
 
     stats_payloads: list of (file, line, payload) for `[nla16-stats]`
     warnings (the NLA16_STATS=1 channel)."""
-    failed_fns = set()
+    failed_fns = []
     other_spans = []
     stats = []
     summary = None
@@ -97,7 +107,25 @@ def parse_lean_log(path: Path):
     for i, ln in enumerate(lines):
         m = LEAN_FAIL_RE.match(ln)
         if m:
-            failed_fns.add(m.group(1))
+            name = m.group(1)
+            span_file = None
+            # scan the error block (until the next top-level
+            # error:/note:/blank line cluster end) for `at path:line:col:`
+            # then the `-->` arrow
+            j = i + 1
+            while j < min(i + 60, len(lines)):
+                if j > i + 1 and ERROR_RE.match(lines[j]):
+                    break
+                mm = MSG_SPAN_RE.match(lines[j])
+                if mm:
+                    span_file = mm.group(1)
+                    break
+                sm = SPAN_RE.match(lines[j])
+                if sm:
+                    span_file = sm.group(1)
+                    break
+                j += 1
+            failed_fns.append((name, span_file))
             continue
         m = RESULTS_RE.search(ln)
         if m:
@@ -191,7 +219,18 @@ def main() -> int:
             z3 = "open" if (s["file"], s["line"]) in failed_norm else "closed"
         lean = "-"
         if args.lean_log:
-            lean = "open" if s["fn"] in lean_failed_fns else "closed"
+            for name, sfile in lean_failed_fns:
+                if name != s["fn"]:
+                    continue
+                if sfile is None:
+                    lean = "open"
+                    break
+                nf = norm_span_file(sfile, site_files)
+                if nf is None or nf == s["file"]:
+                    lean = "open"
+                    break
+            else:
+                lean = "closed"
         layers = ";".join(stats_by_fn.get((s["file"], s["fn"]), []))
         notes = []
         if z3 == "open" and s["fn"] in z3_other_fns:

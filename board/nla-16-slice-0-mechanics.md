@@ -1,94 +1,94 @@
-## nla-16 Slice 0 `WIP` (2026-08-14 eve) — harness mechanics + pilot cohort
+## nla-16 Slice 0 `done` (2026-08-14 eve) — harness mechanics + pilot cohort
 
 ### What landed
 
-- **`tools/parity/`** (repo-local; commits `3d8f1d8`, `549ae30`):
-  - `sites.py` — nonlinear-site scanner. Blanks comments/strings/chars
-    (offset-preserving), rough Rust lexer (nested block comments, raw
-    strings, char-vs-lifetime), attributes each site to its enclosing
-    `fn`. Comments blanking matters: the pre-implementation grep
-    census counted MENTIONS — qext's one "site" was a prose comment
-    about Z3's `by(nonlinear_arith)` limitation (true count 0).
-    **Corpus re-censused: 15 crates, ~2,595 sites** (was: 16/~2,613).
-    Plan doc corrected.
-  - `harness.py` — log parser + merger → per-site CSV
-    (`crate,file,line,fn,z3,lean,verdict,layers,notes`) with verdicts
-    `agree-closed / VIOLATION / both-open-bisect / lean-better`; the
-    `layers` column carries the stats channel; `z3_other_error` /
-    `lean_other_error` notes mark non-nonlinear failures.
-  - `run_crate.sh` — per-crate pair runner (raw cargo-verus + mirror
-    direct-verus paths; a lockfile SERIALIZES runs — the ≤4-thread
-    host rule: `NLA16_STATS=1` armed for lean runs, no `-V cache`).
-  - `run_pins.sh` + `pins/` — subprocess pins (see stats channel).
-  - `README.md` — conventions + log formats + attribution edges.
-- **Stats channel** (`reportStats`, Tactic/NonlinearArith.lean —
-  builds on `nonlinearArithCore`'s close points): env-gated
-  (`NLA16_STATS=1` exactly — POSIX has no set-via-unset), WARNING
-  severity (the only class verus's per-fn checker forwards on green
-  runs — `verifier.rs:2489` CheckResult::Success warnings;
-  `logInfo` is dropped), sandbox-safe (L1's rolled-back message log
-  can't leak a line — a surviving line means an actual CLOSE, so
-  `layer=1/2` names the closing layer, and ABSENCE means the ladder's
-  fallback closed). Payloads pinned byte-exact both directions via
-  subprocess pins (in-file `#guard_msgs` can't set env vars — no
-  `IO.setEnv` on v4.25; subprocess also exercises the worker-spawn env
-  inheritance shape the harness depends on). Build green 7615.
+- **`tools/parity/`** (commits `3d8f1d8`, `549ae30`, `25a526d` + this):
+  `sites.py` (comment/string-blank scanner), `harness.py` (log merger,
+  name+file lean attribution), `posthoc.py` (per-obligation stats
+  harvest), `run_crate.sh` (serialized runner), `run_pins.sh`, README.
+- **Stats channel** (`reportStats`, Tactic/NonlinearArith.lean):
+  env-gated `NLA16_STATS=1` (value gate — POSIX has no set-via-unset),
+  warning severity, sandbox-rollback-safe. Build green 7615,
+  run_pins.sh green. Consumed POST-HOC (below), not through verus.
+- **Corpus re-censused:** 15 crates, ~2,595 sites (comment-mention
+  inflation removed; qext = 0 sites, dropped). Plan doc corrected
+  (both census block and decision-2 pilot cohort).
 
-### Mechanics validated (pilot runs)
+### Pilot results
 
 | Crate | z3 | lean | Sites | Verdicts |
 |---|---|---|---|---|
-| tactus-algebra | 188/0 | 122/36 | 44 | 37 agree-closed, **7 VIOLATIONS** |
-| verus-2dcs (raw path) | mechanical OK | — | 1 | dep-chain verify works; 9 PRE-EXISTING qext `axiom_non_square` z3 errors (memory-confirmed baseline, not signal) |
+| tactus-algebra | 188/0 | 122/36 | 44 | 38 agree-closed, **6 VIOLATIONS** |
+| o139 probe | — | 1/0 (pkg-cache hit; post-hoc confirms) | 1 | agree-closed, **`layer=2 conflicts=6` exactly z3-4.12.5's count** |
+| verus-2dcs (raw path recon) | mechanical OK | — | 1 | dep-chain verify works; 9 PRE-EXISTING qext errors (memory-confirmed baseline) |
 
-- Raw-crate cargo-verus path works: `cargo verus verify … -p <crate>
-  -- --num-threads 4` (cargo args BEFORE `-p` — cargo-verus rejects
-  `--manifest-path` after Verus-irrelevant args; flag ordering trap).
-  Deps verify too → Slice-2 reports each crate from its OWN run only.
-- D1 baseline-source check: tactus binary without `--lean-backend`
-  runs stock z3 (spinoff config). `--lean-all-proofs` is GONE since
-  e5f7aea (verifier.rs comment); `--lean-backend` in the cargo-verus
-  passthrough is the routing flag. The pilot's lean-native diagnostics
-  confirm elaboration against Mathlib (not z3).
+### PF-1 — six violations, one class, arm ATTRIBUTED
 
-### PF-1 — pilot finding: 7/44 nonlinear-site violations, TIMEOUT class
+All six violations (5 fns): `(deterministic) timeout at whnf`,
+800000 heartbeats. **Arm-bisect attribution (post-hoc): nonlinear_arith
+is the budget sink.** Copying the failing pkg module and rewriting
+`nonlinear_arith` → `fail` (always-failing meta tactic) turns the whole
+module green in 18s — the fallback R-closure closes cheaply when it
+runs. The pilot shape: `PartialOrder.le` over unfolded `Rational`
+records fed into L1's `ring_nf at *`/whnf. This is simultaneously the
+ladder-arm-ordering cost (nla-15 put nonlinear_arith first; the crate's
+own gate history reads 127/31 vs our 122/36) and the G10
+resource-ceiling's first concrete corpus shape. Root-cause finalists
+for Slice 3 (not yet opened): L1 `ring_nf at *` whnf on
+Rational-def-folded comparisons; L2 reify prelude whnf; a budget/accounting
+interaction (`withLayerHeartbeats` fresh scope vs the theorem-level
+800k: several full budgets can be burned per call site). The bisect
+recipe is in the README (copy + `s/nonlinear_arith/fail/` + elaborate).
 
-All violations (6 fns, 7 sites — `axiom_mul_nonneg_monotone` carries
-two): 800000-heartbeat `(deterministic) timeout at whnf` at the
-requires-clause call site. General G10-resource-ceiling class; G8
-blocker classification (pending armed-run attribution: was the failing
-arm nonlinear_arith or a fallback? the stats lines answer it).
+### Mechanism decisions locked by pilot findings
 
-Second-order cause candidates to probe in Slice 2/3 (DO NOT preempt):
-(a) nonlinear_arith as FIRST arm spending whnf on goals the old ladder
-closed cheaper (the newly-armed run attributes this); (b)
-intervalMagnitude's verbatim-quirk formula (perf watch first suspect);
-(c) mkDecideProof whnf on big tables.
+- **Stats do not travel through verus.** CheckResult::Success warnings
+  are sorry-filtered (generate.rs `format_lean_check_result`,
+  "deliberately narrowed to sorry") — generic warnings are dropped on
+  green runs. The census channel is POST-HOC per-fn pkg elaboration:
+  pkg modules persist (`target/tactus-lean/<stem>/pkg/*.lean`),
+  elaborate standalone in ~ms–minutes each, stats positions carry rust
+  spans (`@rust:` comments). Per-OBLIGATION granularity (a fn's pkg
+  holds one theorem per obligation) — better than per-fn.
+- **Prelude root resolution:** pkg imports need a compatible
+  `~/.cache/tactus/prelude-<hash>/TactusDefs.olean` at LEAN_PATH head
+  (module root `TactusDefs`); posthoc.py auto-probes the cache by
+  mtime with an import test. Missing prelude → the cryptic
+  "unknown module prefix 'TactusDefs'" — worth the books.
+- **Dup-name fn attribution:** bare `failed for <name>:` matching
+  false-positives same-name fns in other files (axiom_le_mul_neg…
+  ×2). Harness attributes by name+file via the inner `at <src>:l:c:`
+  diagnostic line. (7 phony violations → 6 real.)
+- **cargo-verus arg order:** cargo args before `-p`, verus args after
+  `--`; the reverse is rejected.
+- **`--lean-all-proofs` is gone** (verifier.rs comment at the cache
+  tag: removed e5f7aea; proof fns always route under
+  `--lean-backend`).
+- **pkg cross-run cache caveat:** a cached crate re-run verifies in
+  seconds WITHOUT re-elaborating (the o139 probe's 0.76s 1/0). Stats
+  harvest then requires either pkg-text-change or post-hoc — the
+  harness never derives layer data from cached runs.
+- **No `IO.setEnv` on v4.25** → subprocess pins; the value gate
+  (`== some "1"`) documents itself (no set-via-unset on POSIX).
 
-### NLA15-era baseline comparison (arm-ordering flag)
+### Slice-2 decisions the pilot sharpens (for Danielle at Slice-1/2 kickoff)
 
-tactus-algebra's own git history recorded 127/31 (its last lean-gate
-commit); the Slice-0 unarmed run reads 122/36. Either arm-ordering
-cost (nonlinear_arith first = PF-1 corollary) or drift; the armed run
-discriminates.
+- Full-chain cargo-verus runs are dep-chain-slow uncached; options:
+  dep-order caching (verify deps first under same invocation) or
+  `-V cache` for dep layers only with the canonical-per-crate
+  constraint (target crate uncached).
+- Arm census from post-hoc will give the fallback-retirement data
+  (the R-arms closed 100% of pilot sites that nonlinear_arith
+  missed — but the "no fallback" question is corpus-wide).
 
-### Mechanics findings worth the books
+### Traps worth the books (cumulative with HANDOFF)
 
-- Comment-mention census inflation (site scanner MUST blank comments).
-- qext carries 0 nonlinear sites — pre-implementation census artifact.
-- Warning-severity is the only verus-forwarded channel on green runs.
-- No `IO.setEnv` on v4.25.0 → subprocess pins.
-- cargo-verus arg ORDER: cargo args before `-p`.
-- `verification results::` counts fns; nonlinear failures are
-  per-SITE on z3 (`assert_nonlinear_by` spans), per-FN on lean.
-
-### Next (Slice 0 residual)
-
-- Armed stats rerun on tactus-algebra (in flight): layer attribution
-  for all 37 agree-closed (which arm closed what — the ladder-arm
-  census pilot slice) and arm attribution for PF-1.
-- o139 probe through the armed channel (bootstrap-fixture
-  nla15_probe.rs).
-- Slice-2 decisions that pilot data now sharpens: `-V cache` default
-  for dep chains (cargo-verus re-verifies deps — un-cached full-chain
-  time is heavy); dep-time vs target-time split.
+- Census by raw grep counts comment MENTIONS — always blank comments.
+- verus drops success-path warnings (sorry-filter); post-hoc is the
+  only stats channel for green fns.
+- "unknown module prefix 'TactusDefs'" = missing prelude hash dir, not
+  a missing crate artifact.
+- Bare-name failure attribution across duplicate fn names is wrong.
+- `cargo verus` arg ORDER (cargo args first).
+- The pkg cross-run cache silently skips elaboration — a 0.76s "1
+  verified/0 errors" is cache-shaped, not a fresh gate.
