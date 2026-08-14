@@ -835,8 +835,14 @@ def mkProxyBoundary (bctx : BridgeCtx) (p : Nat) : TacticM Expr := do
 
 /-- The hyp-level NNF bridge: `(pol ? origE : ¬origE) ↔ expandedE` —
 term-mode recursion mirroring `reifyProp`, through the named
-propositional lemmas (`not_and`, `imp_iff_not_or`, `iff_cnf`, …). -/
+propositional lemmas (`not_and`, `imp_iff_not_or`, `iff_cnf`, …).
+`origE` is mdata-stripped at entry (nla-15: hyp types can carry
+elaboration mdata — e.g. hGN's `¬[mdata True]` after a preceding
+`have`; without this the True/False literal arms are skipped and the
+catch-all builds a refl where `not_true` is needed — kernel-caught).
+reifyProp consumes per-recursion; this is its bridge-side twin. -/
 partial def mkNnfIff (origE : Expr) (pol : Bool) (expandedE : Expr) : TacticM Expr := do
+  let origE := origE.consumeMData
   let userSide ← if pol then pure origE else mkAppM ``Not #[origE]
   let ascribe (pf : Expr) : MetaM Expr := do
     let targetTy ← mkAppM ``Iff #[userSide, expandedE]
@@ -1205,10 +1211,14 @@ inductive ClauseSrc where
 /-- The shared prelude: `True` short-circuit (goal closed, returns
 `none`), `byContradiction` + intro of the negated goal, then phase 1
 (reify + Tseitin clausify). Returns the `False`-goal mvar and the
-reify state for the phase-2/orchestration consumer. -/
+reify state for the phase-2/orchestration consumer. The target is
+mdata-stripped FIRST (nla-15: a preceding `have` wraps the goal in
+`noImplicitLambda` mdata — without `consumeMData` the short-circuit
+never fires in tactic-composed contexts, and the mdata leaks into
+hGN's type). -/
 def prelude : TacticM (Option (MVarId × ReifyState)) := do
   let g ← getMainGoal
-  let target ← instantiateMVars (← g.getType)
+  let target := (← instantiateMVars (← g.getType)).consumeMData
   if target.isConstOf ``True then
     g.assign (mkConst ``True.intro)
     replaceMainGoal []

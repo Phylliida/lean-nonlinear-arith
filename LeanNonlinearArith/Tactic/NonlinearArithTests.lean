@@ -462,6 +462,39 @@ variant, byte-exact (no fabricated conflict count). -/
 #guard_msgs (info) in
 example : True := by nonlinear_arith_stats
 
+/- mdata robustness (nla-15 — kernel-caught by the tactus fixture's
+degenerate `True` theorem): a preceding `have` wraps the goal in
+`noImplicitLambda` mdata, so `target.isConstOf ``True` missed the
+short-circuit AND the mdata leaked into hGN's type, where mkNnfIff's
+True/False arms (no consumeMData) were skipped and the catch-all
+ascribed `Iff.refl ¬True` where `not_true` was needed — the kernel's
+final check rejected the term. Both sites now consumeMData. This pin
+is the fixture's exact shape: have-then-True. -/
+run_cmd nlaL2Runs.set 0
+example : True := by
+  have _bc : 0 ≤ (3 : ℤ) := by omega
+  nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 1 && (← nlaL2Conflicts.get) == 0 do
+  throwError "mdata-wrapped True goal took the solver path"
+
+/- … and an mdata-wrapped REAL goal: hGN : ¬[mdata G] must bridge
+through mkNnfIff's consumed Not/comparison arms (defeq transparency
+saved those even before the fix, but the path is now pinned). -/
+run_cmd nlaL2Runs.set 0
+example (x : ℝ) (h : x * x < 0) : x ≠ 0 := by
+  have _bc : 0 ≤ (3 : ℤ) := by omega
+  nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 1 do
+  throwError "the mdata-goal driver did not take the L2 path"
+
+/- The `.fls` root directly: a `¬True` hyp clausifies to the EMPTY
+clause (stage-0 UNSAT) — unpinned before nla-15. -/
+example (h : ¬True) : False := by nla_solve
+
+/- … and the True leaf at negative polarity as a GOAL: hGN : ¬¬¬True
+is `.fls`-equivalent — the empty clause refutes it. -/
+example : ¬¬True := by nla_solve
+
 /- Genuine-SAT through the layering: L1 fails, the rollback wipes its
 messages, and L2's model display is the ONLY error — byte-identical to
 the nla_solve pin (decision 4; never a wrong close). -/
