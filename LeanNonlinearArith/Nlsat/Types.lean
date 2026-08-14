@@ -11,7 +11,11 @@ Untrusted search-side data. Fidelity notes:
   *product* of polynomials each tagged with its exponent parity (only
   parity matters for sign semantics); `root_atom` = `x ⋈ rootᵢ(p)` with
   1-based root index. Atom-to-boolean-variable mapping lives in the
-  solver's atom table (nla-12c), not here.
+  solver's atom table (nla-12c), not here. `Atom.bool` (nla-14) is the
+  checker-side extension for Tseitin proxies: z3's bare bool vars gain
+  their Boolean DEFINITION so definitional clauses can be re-proven
+  (search side unchanged — solver bool vars stay `none` in its table;
+  the tactic patches definitions into the extracted snapshot).
 * **Polynomials** are sparse multivariate over ℤ (`MPoly`, nla-26.2 —
   matching Z3's `mpz`-coefficient manager): terms `(coeff, monomial)`
   with monomials as strictly-increasing `(var, exp)` lists, exactly
@@ -268,21 +272,6 @@ structure RootAtom where
   p : MPoly
 deriving Repr, DecidableEq, Inhabited
 
-inductive Atom
-  | ineq (a : IneqAtom)
-  | root (a : RootAtom)
-deriving Repr, DecidableEq, Inhabited
-
-namespace Atom
-
-/-- The stage a literal belongs to: max variable of the atom
-(`atom::max_var`). -/
-def maxVar : Atom → Option Var
-  | .ineq a => a.factors.foldl (fun acc (p, _) => max acc (p.maxVar)) none
-  | .root a => max (some a.x) (a.p.maxVar)
-
-end Atom
-
 /-- Boolean literal over the solver's atom table (`sat::literal`). -/
 structure Literal where
   bvar : Nat
@@ -298,6 +287,41 @@ def index (l : Literal) : Nat := 2 * l.bvar + (if l.neg then 1 else 0)
 def negate (l : Literal) : Literal := ⟨l.bvar, !l.neg⟩
 
 end Literal
+
+/-- Boolean proxy definition (nla-14, Tseitin): the checker-side meaning
+of a solver bool var (z3 `mk_bool_var`, nlsat_solver.cpp:464-477 — a
+bvar with `m_atoms[b] = nullptr`). z3 keeps proxies as bare bool vars,
+the definitional clauses trusted as preprocessing output; we carry the
+definition IN the atom table so the checker re-proves each definitional
+clause instead of trusting it. Leaves are literals over ARITH atoms
+only — defs are flattened at emission, so table-level evaluation is
+non-recursive (a leaf that resolves to a proxy or a junk slot counts
+as not-holding, the sound direction). -/
+inductive BoolDef
+  | lit (l : Literal)
+  | and (a b : BoolDef)
+  | or (a b : BoolDef)
+  | neg (a : BoolDef)
+deriving Repr, DecidableEq, Inhabited
+
+inductive Atom
+  | ineq (a : IneqAtom)
+  | root (a : RootAtom)
+  | bool (d : BoolDef)
+deriving Repr, DecidableEq, Inhabited
+
+namespace Atom
+
+/-- The stage a literal belongs to: max variable of the atom
+(`atom::max_var`). `.bool` carries no local arith content (z3's bool
+vars have no `max_var` — `is_arith_atom` false); its leaves' stages
+are the referenced atoms' own. -/
+def maxVar : Atom → Option Var
+  | .ineq a => a.factors.foldl (fun acc (p, _) => max acc (p.maxVar)) none
+  | .root a => max (some a.x) (a.p.maxVar)
+  | .bool _ => none
+
+end Atom
 
 /-- Clause: literal array plus provenance (learned vs input) and the
 `deleted` marker (z3 `del_clause` — ids stay stable, no cid

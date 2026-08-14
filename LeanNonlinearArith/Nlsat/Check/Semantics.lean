@@ -832,10 +832,16 @@ end RootAtom
 namespace Atom
 
 /-- Full atom semantics: ineq atoms by sign semantics, root atoms by
-`RootAtom.Holds` (no-roots rule included). -/
+`RootAtom.Holds` (no-roots rule included). `.bool` has NO table-free
+semantics — a proxy's meaning lives in its definition's leaves, which
+resolve through the atom TABLE; the table-level semantics is
+`Assemble.interp`/`Assemble.litHolds`. Junk-False here is the sound
+direction (all direct consumers of `Atom.Holds`/`ALitHolds` operate
+on `.ineq`/`.root` shapes). -/
 def Holds (ρ : Nat → ℝ) : Atom → Prop
   | .ineq a => IneqAtom.Holds ρ a
   | .root a => RootAtom.Holds ρ a
+  | .bool _ => False
 
 end Atom
 

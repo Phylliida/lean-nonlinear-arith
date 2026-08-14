@@ -12,7 +12,12 @@ resolution glue, F3's heart). Two layers:
    `clauseHolds`, with the `interp` bridge to the interpretation form
    `litSatI`/`clauseSatI` the propositional engine is proved against.
    Undecodable bvars count as NOT holding (the sound direction — they
-   only make `clauseHolds` harder to establish).
+   only make `clauseHolds` harder to establish). `Atom.bool` proxy
+   slots (nla-14 Tseitin) decode through their definitions
+   (`boolDefHolds`, flattened/arith-only leaves); the `BoolDef.eval` /
+   `taut`/`conseq` reflection discharges definitional and root clause
+   bridges by `decide`-grade computation (`taut_sound`/`conseq_sound`,
+   axioms propext/choice/Quot.sound only).
 
 2. **The unit-propagation (RUP) engine (R1/F3).** Each bundle's learned
    lemma follows from its antecedent clauses + arith lemmas by
@@ -58,16 +63,37 @@ theorem not_litSatI_forall_dedup (I : Nat → Prop) (C : List Literal) :
     (∀ l ∈ C, ¬ litSatI I l) → ∀ l ∈ C.dedup, ¬ litSatI I l :=
   fun h l hl => h l (List.mem_dedup.mp hl)
 
+/-- Arith-only literal semantics for `BoolDef` leaves (nla-14):
+non-recursive by construction — a leaf resolving to a proxy or a junk
+slot counts as not holding (the sound direction; defs are flattened
+at emission so this restriction never bites a conformant table). -/
+def arithLitHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (l : Literal) : Prop :=
+  match atoms[l.bvar]? with
+  | some (some a@(.ineq _)) => ALitHolds ρ a l.neg
+  | some (some a@(.root _)) => ALitHolds ρ a l.neg
+  | _ => False
+
+/-- The atom-table interpretation of a proxy definition. -/
+def boolDefHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom)) : BoolDef → Prop
+  | .lit l => arithLitHolds ρ atoms l
+  | .and a b => boolDefHolds ρ atoms a ∧ boolDefHolds ρ atoms b
+  | .or a b => boolDefHolds ρ atoms a ∨ boolDefHolds ρ atoms b
+  | .neg a => ¬ boolDefHolds ρ atoms a
+
 /-- The atom-table interpretation: bvar `b` holds iff the table maps it
-to an atom that holds at `ρ`. Undecodable ↦ `False` (sound direction). -/
+to an atom that holds at `ρ`; a proxy (`Atom.bool`) holds iff its
+definition does. Undecodable ↦ `False` (sound direction). -/
 def interp (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (b : Nat) : Prop :=
   match atoms[b]? with
+  | some (some (.bool d)) => boolDefHolds ρ atoms d
   | some (some a) => Atom.Holds ρ a
   | _ => False
 
 /-- Solver-level literal semantics (the F2 extraction's form). -/
 def litHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (l : Literal) : Prop :=
   match atoms[l.bvar]? with
+  | some (some (.bool d)) => if l.neg then ¬ boolDefHolds ρ atoms d
+                             else boolDefHolds ρ atoms d
   | some (some a) => ALitHolds ρ a l.neg
   | _ => False
 
@@ -84,7 +110,7 @@ theorem litSatI_interp (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (l : Lit
     litSatI (interp ρ atoms) l ↔ litHolds ρ atoms l := by
   obtain ⟨a, ha⟩ := hdec
   obtain ⟨b, n⟩ := l
-  cases n <;> simp [litSatI, litHolds, interp, ALitHolds, ha]
+  cases a <;> cases n <;> simp [litSatI, litHolds, interp, ALitHolds, ha]
 
 theorem clauseSatI_interp (ρ : Nat → ℝ) (atoms : Array (Option Atom))
     (C : List Literal)
@@ -136,6 +162,151 @@ theorem clauseDecodable_true (atoms : Array (Option Atom)) :
       · rename_i a ha; exact ⟨a, ha⟩
       · simp at h1
     | tail _ hm => exact ih h2 l' hm
+
+/-! ## The Boolean-form reflection (nla-14 Slice 1: Tseitin proxy bridges)
+
+Definitional and root clauses over proxies unfold (via `boolDefHolds`)
+to propositional formulas over arith literals. Their validity is
+decidable data: `BoolDef.taut` enumerates the valuations of the leaves
+(Tseitin definitional clauses carry ≤ a handful of literals; root
+clauses the literals of one source hyp/goal fragment) and
+`taut_sound`/`conseq_sound` reflect a `true` verdict into
+`BoolDef.eval`. All junk paths fail toward `false` = rejection, same
+as the UP engine. -/
+
+namespace BoolDef
+
+open Classical
+
+/-- Propositional evaluation under a literal oracle. -/
+def eval (τ : Literal → Prop) : BoolDef → Prop
+  | .lit l => τ l
+  | .and a b => eval τ a ∧ eval τ b
+  | .or a b => eval τ a ∨ eval τ b
+  | .neg a => ¬ eval τ a
+
+/-- `boolDefHolds` IS `eval` at the arith-literal oracle (the bridge
+the discharges consume). -/
+theorem boolDefHolds_iff_eval (ρ : Nat → ℝ) (atoms : Array (Option Atom)) :
+    ∀ d : BoolDef, boolDefHolds ρ atoms d ↔ eval (arithLitHolds ρ atoms) d := by
+  intro d
+  induction d with
+  | lit l => exact Iff.rfl
+  | and a b iha ihb => exact and_congr iha ihb
+  | or a b iha ihb => exact or_congr iha ihb
+  | neg a ih => exact not_congr ih
+
+/-- Computable evaluation under a Boolean assignment. -/
+def evalB (σ : Literal → Bool) : BoolDef → Bool
+  | .lit l => σ l
+  | .and a b => evalB σ a && evalB σ b
+  | .or a b => evalB σ a || evalB σ b
+  | .neg a => !evalB σ a
+
+/-- The leaf literals, in occurrence order. -/
+def leaves : BoolDef → List Literal
+  | .lit l => [l]
+  | .and a b => leaves a ++ leaves b
+  | .or a b => leaves a ++ leaves b
+  | .neg a => leaves a
+
+/-- `evalB` depends only on the leaves. -/
+theorem evalB_ext {σ₁ σ₂ : Literal → Bool} (f : BoolDef)
+    (h : ∀ l ∈ f.leaves, σ₁ l = σ₂ l) : f.evalB σ₁ = f.evalB σ₂ := by
+  induction f with
+  | lit l => exact h l (by simp [leaves])
+  | and a b iha ihb =>
+    simp only [evalB, iha fun l hl => h l (List.mem_append_left _ hl),
+      ihb fun l hl => h l (List.mem_append_right _ hl)]
+  | or a b iha ihb =>
+    simp only [evalB, iha fun l hl => h l (List.mem_append_left _ hl),
+      ihb fun l hl => h l (List.mem_append_right _ hl)]
+  | neg a ih => simp only [evalB, ih h]
+
+/-- Computable evaluation at the `decide` oracle agrees with the
+propositional one. -/
+theorem evalB_decide (τ : Literal → Prop) (f : BoolDef) :
+    f.evalB (fun l => decide (τ l)) = decide (f.eval τ) := by
+  induction f with
+  | lit l => rfl
+  | and a b iha ihb => simp [evalB, eval, iha, ihb]
+  | or a b iha ihb => simp [evalB, eval, iha, ihb]
+  | neg a ih => simp [evalB, eval, ih]
+
+/-- All Boolean assignments over a literal list, as lookup lists. -/
+def allAssign : List Literal → List (List (Literal × Bool))
+  | [] => [[]]
+  | l :: ls => (allAssign ls).flatMap fun σ => [(l, false) :: σ, (l, true) :: σ]
+
+/-- Lookup in an assignment list (absent ↦ false — the engine only
+ever queries leaves, which are present by construction). Recursive
+(not `find?`) so the soundness lemmas rewrite by `simp [assignGet]`. -/
+def assignGet : List (Literal × Bool) → Literal → Bool
+  | [], _ => false
+  | (l', v) :: σ, l => if decide (l' = l) then v else assignGet σ l
+
+/-- The `decide`-canonical assignment is one of the enumerated ones. -/
+theorem mem_allAssign (ls : List Literal) (τ : Literal → Prop) :
+    (ls.map fun l => (l, decide (τ l))) ∈ allAssign ls := by
+  classical
+  induction ls with
+  | nil => exact List.mem_singleton_self _
+  | cons l ls ih =>
+    simp only [allAssign, List.map_cons, List.mem_flatMap]
+    exact ⟨_, ih, by cases h : decide (τ l) <;> simp⟩
+
+/-- On a nodup literal list, the canonical assignment's lookup agrees
+with `decide`. -/
+theorem assignGet_map (ls : List Literal) (τ : Literal → Prop) (l : Literal)
+    (hnd : ls.Nodup) (hl : l ∈ ls) :
+    assignGet (ls.map fun l' => (l', decide (τ l'))) l = decide (τ l) := by
+  classical
+  induction ls with
+  | nil => cases hl
+  | cons l' ls ih =>
+    obtain ⟨hd, ht⟩ := List.nodup_cons.mp hnd
+    by_cases he : l' = l
+    · subst he; simp [assignGet]
+    · have htl : l ∈ ls := by
+        cases hl with
+        | head => exact absurd rfl he
+        | tail _ h => exact h
+      simp [assignGet, he, ih ht htl]
+
+/-- Decidable tautology check: true iff every valuation of the
+(dedup'd) leaves satisfies `f`. -/
+def taut (f : BoolDef) : Bool :=
+  (allAssign f.leaves.dedup).all fun σ => f.evalB (assignGet σ)
+
+/-- Soundness of the tautology check: a `true` verdict reflects to
+propositional validity under ANY literal oracle. -/
+theorem taut_sound {f : BoolDef} (h : f.taut = true) (τ : Literal → Prop) :
+    f.eval τ := by
+  classical
+  have h' : (allAssign f.leaves.dedup).all (fun σ => f.evalB (assignGet σ)) = true := h
+  have hmem := mem_allAssign f.leaves.dedup τ
+  have hb : f.evalB (assignGet (f.leaves.dedup.map fun l => (l, decide (τ l)))) = true :=
+    List.all_eq_true.mp h' _ hmem
+  have hget : ∀ l ∈ f.leaves,
+      assignGet (f.leaves.dedup.map fun l' => (l', decide (τ l'))) l = decide (τ l) :=
+    fun l hl => assignGet_map _ _ _ (List.nodup_dedup _) (List.mem_dedup.mpr hl)
+  rw [evalB_ext f hget, evalB_decide] at hb
+  exact of_decide_eq_true hb
+
+/-- Consequence check: every valuation satisfying `g` satisfies `f`
+(the root-clause bridge shape — the clause follows from its source
+hypothesis's form). -/
+def conseq (g f : BoolDef) : Bool := taut (or (neg g) f)
+
+theorem conseq_sound {g f : BoolDef} (h : conseq g f = true) (τ : Literal → Prop)
+    (hg : g.eval τ) : f.eval τ := by
+  have h' : (or (neg g) f).eval τ := taut_sound h τ
+  simp only [eval] at h'
+  rcases h' with hn | hf
+  · exact absurd hg hn
+  · exact hf
+
+end BoolDef
 
 /-! ## The unit-propagation engine (R1/F3) -/
 

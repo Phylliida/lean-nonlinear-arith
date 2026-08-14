@@ -292,6 +292,8 @@ def degreeAtom (a : Atom) : Nat :=
     match a with
     | .ineq ia => ia.factors.foldl (fun acc (p, _) => max acc (p.degreeIn v)) 0
     | .root ra => ra.p.degreeIn v
+    -- unreachable (`maxVar (.bool _) = none` exits above); junk 0
+    | .bool _ => 0
 
 /-- z3 `degree(clause)`: 0 for null max_var, else max atom degree. -/
 def degreeClause (s : Solver) (c : Clause) : Nat := Id.run do
@@ -318,10 +320,12 @@ def optVarLt : Option Var → Option Var → Bool
   | some _, none => true
   | _, _ => false
 
-/-- z3 `atom::is_eq` (EQ or ROOT_EQ). -/
+/-- z3 `atom::is_eq` (EQ or ROOT_EQ). Proxies are not equalities
+(search-side unreachable: solver bool vars are `none` in the table). -/
 def atomIsEq : Atom → Bool
   | .ineq a => a.kind == .eq
   | .root a => a.kind == .eq
+  | .bool _ => false
 
 def litLt (s : Solver) (l1 l2 : Literal) : Bool :=
   match s.atoms[l1.bvar]?, s.atoms[l2.bvar]? with
@@ -581,6 +585,9 @@ def value (l : Literal) : SolverM (Option LBool) := do
         match (← liftC (evalRoot ra l.neg s.assignment)) with
         | some b => return some (LBool.ofBool b)
         | none => return none
+      -- no arith content to evaluate (z3 evaluates arith atoms only;
+      -- proxies get their values from the bvar assignment above)
+      | .bool _ => return some .undef
   | _ => return some .undef
 
 /-- z3 `is_satisfied(clause)` (`:1196`). -/
@@ -682,6 +689,9 @@ def processArithClause (x : Var) (cid : Nat) (satisfyLearned : Bool) :
           liftC (infeasibleIntervalsIneq ia l.bvar l.neg (← get).assignment (some cid))
         | .root ra =>
           liftC (infeasibleIntervalsRoot ra l.bvar l.neg (← get).assignment (some cid))
+        -- never undef at the arith stage (proxies carry bvar
+        -- assignments); none = the evaluator-abort degradation (29.5)
+        | .bool _ => pure none
       match currSet? with
       | none => return none -- evaluator abort image (29.5)
       | some currSet =>
@@ -1102,6 +1112,9 @@ def isFullDimLit (s : Solver) (l : Literal) : Bool :=
       | .eq => l.neg
       | .lt | .gt => !l.neg
       | .le | .ge => l.neg
+    -- no equality/non-strict content (z3's case table is arith-only;
+    -- bool vars pass through the `none` arm above search-side)
+    | .bool _ => true
 
 /-- z3 `is_full_dimensional()` (`:2638`): over the INPUT clauses. -/
 def isFullDimensional (s : Solver) : Bool :=
@@ -1135,6 +1148,7 @@ def collectVarInfo (s : Solver) : Array (Nat × Nat) := Id.run do
           match a with
           | .ineq ia => ia.factors.map (fun (p, _) => p)
           | .root ra => [ra.p]
+          | .bool _ => []  -- no polys (search-side unreachable)
         for p in polys do
           for x in MPoly.vars p do
             numOcc := numOcc.set! x (numOcc[x]! + 1)
@@ -1209,7 +1223,10 @@ def renameAtoms (σ : Var → Var) : SolverM Unit := do
         some (.ineq { a with factors := a.factors.map fun (p, e) =>
           (p.renameVars σ, e) })
       | some (.root a) =>
-        some (.root { a with x := σ a.x, p := a.p.renameVars σ }) }
+        some (.root { a with x := σ a.x, p := a.p.renameVars σ })
+      -- defs reference BVARS, not vars — unchanged by var renaming
+      -- (never occurs search-side regardless: solver bool vars are none)
+      | some (.bool d) => some (.bool d) }
 
 /-- z3 `reorder(sz, p)` (`:2387`): `p` maps internal vars to their new
 positions. Verbatim order: reset watches, build the permuted

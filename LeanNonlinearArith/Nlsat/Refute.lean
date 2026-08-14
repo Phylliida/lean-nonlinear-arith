@@ -74,10 +74,14 @@ def thomStepToExpr (k : RootKind) (y : Var) (i : Nat) (p : MPoly)
 def mpolyVars (p : MPoly) : List Var :=
   p.flatMap fun (_, m) => m.map Prod.fst
 
-/-- All variables occurring anywhere in an atom. -/
+/-- All variables occurring anywhere in an atom. `.bool`: none —
+proxy defs reference bvars (table-less resolution is impossible here)
+and the pd lanes never rebuild proxies (z3 `simplify` passes non-ineq
+literals through unmodified, nlsat_explain.cpp:1100-1103). -/
 def atomVars : Atom → List Var
   | .ineq a => a.factors.flatMap fun (p, _) => mpolyVars p
   | .root a => a.x :: mpolyVars a.p
+  | .bool _ => []
 
 /-- Classification of an extracted ℝ-level fact, for the zero-product
 index (G1/G2 + R-b) and the pre-mangle chain-split loop (R-e). -/
@@ -154,6 +158,10 @@ def extractPosFacts (ρ : Expr) (a : Atom) (hH : Expr) :
     -- pair fact (count bound + rootCmp) is the extraction; the
     -- definite-disc close consumes it.
     return [(hH, .rootPair k y i p)]
+  | .bool _ =>
+    -- no direct arith facts: a proxy's meaning unfolds at the CLAUSE
+    -- level via `boolDefHolds` (the Tseitin bridge), not per-literal
+    return []
 
 /-- Negative-side extraction: facts from a proof `hNH` of
 `¬ Atom.Holds ρ a` (the `l.neg = false` lane of `extractFacts`, and
@@ -192,6 +200,7 @@ def extractNegFacts (ρ : Expr) (a : Atom) (hNH : Expr) :
     -- G11: positive-polarity root literal in the clause (`¬atom`
     -- failing): the `¬ Holds` fact.
     return [(hNH, .negRoot k y i p)]
+  | .bool _ => return []  -- see extractPosFacts
 
 /-- The fact-extraction for one literal: ℝ-level fact proof terms with
 their classifications, or `[]` if the shape is not (yet) handled —
@@ -2186,6 +2195,7 @@ unsafe def pdRewriteLane (mvar : MVarId) (ρ IE : Expr) (steps : Array TraceStep
     match a with
     | .ineq ⟨k', fs_r⟩ => S ← transportLit S l k' fs_r h_iFv
     | .root _ => continue
+    | .bool _ => continue  -- proxies are never rebuilt (see atomVars)
   pure (S.mvar, S.eqFacts, S.diseqFacts, S.signPosFacts, S.prodEqFacts, S.chainFacts)
 
 /-! ## 12e — the intBranch split-clause discharge (checker side)
@@ -2405,6 +2415,7 @@ unsafe def proveClauseSat (mvar : MVarId) (steps : Array TraceStep := #[]) :
       match a with
       | .ineq _ => litAtoms := litAtoms.push (l, a, h_iFvar)
       | .root _ => pure ()
+      | .bool _ => pure ()  -- proxies skip the pd transport lane
     | some (some a), none => vars := vars ++ atomVars a
     | _, _ => pure ()
     eqFacts := eqFacts ++ factInfo.1
