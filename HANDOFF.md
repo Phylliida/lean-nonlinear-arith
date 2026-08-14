@@ -5,7 +5,10 @@
 # 1 verified/0 errors (nlinarith structurally can't close it); fixture
 # at its pre-existing baseline. Review R-i fixed same-day
 # (message-classified skip; pre-scan deleted).
-# Next = nla-16 (parity harness) = M6.
+# Next = nla-16 (parity harness) = M6. **PLAN BOARDED 2026-08-14 eve:
+# board/nla-16-plan.md** — recon + census (16 crates, ~2,613 sites),
+# owned-items→slice map, decisions 1–5 for Danielle, slices 0–3.
+# Commit d659a75.
 
 Read first: `board/nla-14-plan.md` (the nla-14 spec, decisions 1–5),
 then `board/nla-14-slice-4-tactic-acceptance.md` (plan + close-out —
