@@ -360,7 +360,7 @@ is the layer-pin mechanism; `run_cmd` sandwiches read it. -/
 
 namespace LeanNonlinearArith.Nlsat.Tests.NonlinearArith
 
-open LeanNonlinearArith.Nlsat.Frontend (nlaL2Runs)
+open LeanNonlinearArith.Nlsat.Frontend (nlaL2Runs nlaL2Conflicts)
 
 /- L1-never-touches-L2 (THE Slice-4 layering pin): a saturate-closable
 ℤ goal must close without entering the solver. -/
@@ -449,8 +449,18 @@ run_cmd do unless (← nlaL2Runs.get) == 1 do
 
 /- The prelude's True short-circuit survives the layering (L1 cannot
 work on `True`; L2's prelude assigns `True.intro` before any solver
-work). -/
+work — Slice-4 review R-i: the entry-hook semantics are counter-pinned
+here, L2 entered exactly once with zero solver conflicts). -/
+run_cmd nlaL2Runs.set 0
 example : True := by nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 1 && (← nlaL2Conflicts.get) == 0 do
+  throwError "the True goal did not take the L2 prelude short-circuit"
+
+/- R-i: the stats line names what actually happened — the prelude
+variant, byte-exact (no fabricated conflict count). -/
+/-- info: nonlinear_arith: L1 failed to close the goal; closed by L2's prelude (True goal — no solver work) -/
+#guard_msgs (info) in
+example : True := by nonlinear_arith_stats
 
 /- Genuine-SAT through the layering: L1 fails, the rollback wipes its
 messages, and L2's model display is the ONLY error — byte-identical to

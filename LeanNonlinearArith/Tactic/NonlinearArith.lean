@@ -1314,17 +1314,28 @@ def toRefutationGoal : TacticM Unit := do
 
 /-- L2-invocation counter / last-run conflict count (Slice 4) — bumped
 inside `orchestrate`, reported by `nonlinear_arith_stats`; the counter
-backs the L1-never-touches-L2 pin. -/
+backs the L1-never-touches-L2 pin. Entry semantics: the bump is at
+orchestrate's ENTRY (L2 entered — incl. prelude-failure exits), and the
+conflict count is zeroed there and set for real after the solver run,
+so a short-circuit exit never reports a stale count. -/
 initialize nlaL2Runs : IO.Ref Nat ← IO.mkRef 0
 initialize nlaL2Conflicts : IO.Ref Nat ← IO.mkRef 0
+
+/-- How an `orchestrate` run closed the goal (Slice-4 review R-i:
+stats exactness). `prelude` = the True short-circuit fired before any
+solver work; `refuted` = the full search → trace → walk pipeline ran
+(SAT/undef exits throw). -/
+inductive OrchestrateExit | prelude | refuted
 
 /-- Slice 3: reify → register → solve → patch → bridge → walk,
 end-to-end. On UNSAT the original goal is closed by the walked
 refutation; on SAT a per-var model display fails the tactic (decision
 4 — never a wrong close); on undef a bounded-exit error names the
 gate. -/
-unsafe def orchestrate : TacticM Unit := do
-  let some (gFalse, st) ← prelude | return
+unsafe def orchestrate : TacticM OrchestrateExit := do
+  nlaL2Runs.modify (· + 1)
+  nlaL2Conflicts.set 0
+  let some (gFalse, st) ← prelude | return .prelude
   -- W3: registration (SolverM is exception-free — alignment is asserted
   -- on the post-registration state below, in TacticM)
   let reg : SolverM Unit := do
@@ -1357,7 +1368,6 @@ unsafe def orchestrate : TacticM Unit := do
       throwError "nonlinear_arith: internal: atom slot {slot} misaligned after registration"
   let ((r, perm), sFin) :=
     (Solver.checkCapturing (Solver.resolve Explain.explain)).run sReg
-  nlaL2Runs.modify (· + 1)
   nlaL2Conflicts.set sFin.conflicts
   match r with
   | some .false =>
@@ -1411,6 +1421,7 @@ unsafe def orchestrate : TacticM Unit := do
       so the goal is not provable:{intNote}\n{MessageData.joinSep lines.toList "\n"}"
   | _ =>
     throwError "nonlinear_arith: nlsat search exited undef (fragment gate or bound)"
+  return .refuted
 
 /-- Debug/dev entry: `nla_frontend` runs the Slice-2 transform, leaving
 the refutation goal (close it by hand or `nlsat_refute` in pins). -/
@@ -1418,7 +1429,7 @@ elab "nla_frontend" : tactic => toRefutationGoal
 
 /-- Dev entry for Slice 3: `nla_solve` runs reify → solve → quote →
 walk end-to-end (no hand-written snapshot). -/
-elab "nla_solve" : tactic => unsafe (do orchestrate)
+elab "nla_solve" : tactic => unsafe (do let _ ← orchestrate)
 
 /-! ## nla-14 Slice 4 — the `nonlinear_arith` elab + L1/L2 layering
 
@@ -1455,10 +1466,15 @@ unsafe def nonlinearArithCore (stats : Bool) (maxRounds : Option Nat) :
   if l1 then
     if stats then logInfo "nonlinear_arith: closed by L1 (saturate)"
   else
-    Tactic.withLayerHeartbeats orchestrate
+    let exit ← Tactic.withLayerHeartbeats orchestrate
     if stats then
-      logInfo s!"nonlinear_arith: L1 failed to close the goal; closed by L2 \
-        (nlsat search → trace → kernel-checked walk, {← nlaL2Conflicts.get} conflicts)"
+      match exit with
+      | .prelude =>
+        logInfo "nonlinear_arith: L1 failed to close the goal; closed by \
+          L2's prelude (True goal — no solver work)"
+      | .refuted =>
+        logInfo s!"nonlinear_arith: L1 failed to close the goal; closed by L2 \
+          (nlsat search → trace → kernel-checked walk, {← nlaL2Conflicts.get} conflicts)"
 
 /-- `nonlinear_arith (n)?` — the user-facing layered closer (nla-14):
 L1 `nla_saturate` fast path (most goals), on failure L2's nlsat

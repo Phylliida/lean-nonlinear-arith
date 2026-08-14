@@ -1,17 +1,19 @@
-# HANDOFF — 2026-08-14 — nla-14 Slice 4 DONE (implementation + pins):
-# `nonlinear_arith` ships — sandboxed L1 (`saturateCore`) fast path,
-# clean rollback to the original goal, L2 = Slice-3 orchestrate, each
-# layer a fresh user heartbeat budget; acceptance + negative probes
-# green. Next = Slice-4 DESIGN REVIEW (Danielle), then nla-15 (tactus
-# wiring).
+# HANDOFF — 2026-08-14 — nla-14 DONE (all four slices + Slice-4 design
+# review landed same-day): `nonlinear_arith` ships — sandboxed L1
+# (`saturateCore`) fast path, clean rollback to the original goal, L2 =
+# Slice-3 orchestrate, per-layer fresh heartbeat budgets. Review: R-i
+# instrumentation entry-semantics fixed same-day (OrchestrateExit), R-ii
+# div/mod × nlsat-tier composition gap boarded to nla-16.
+# Next = nla-15 (tactus wiring, ½ session — THE PAYOFF).
 
 Read first: `board/nla-14-plan.md` (the nla-14 spec, decisions 1–5),
 then `board/nla-14-slice-4-tactic-acceptance.md` (plan + close-out —
 D1 dev elabs stay / D2 round numeral mirrors nla_saturate / D3 no
 maxConflicts threading, all resolved by the standing principles;
 probe-verified per-driver layer table; the run_cmd counter-sandwich
-pin mechanism). Build green (7615 jobs), WORKING TREE CLEAN at the
-close-out commit.
+pin mechanism), then `board/nla-14-slice-4-design-review.md` (R-i/R-ii
++ the verified-clean audit notes). Build green, WORKING TREE CLEAN at
+the review commit.
 
 **Source-of-truth rule: all ports cite `git show z3-4.12.5:<path>`
 (repo `verus-cad/z3`), never the working tree.** Standing directive
@@ -25,8 +27,11 @@ Slice 4 landed same-day: `Tactic/NonlinearArith.lean` gains
 (withLayerHeartbeats saturateCore) → `g0.isAssigned` check → on failure
 full restoreState + withLayerHeartbeats orchestrate), the
 `nonlinear_arith (n)?` / `nonlinear_arith_stats (n)?` elabs, and the
-`nlaL2Runs`/`nlaL2Conflicts` instrumentation refs (the ONLY
-orchestrate change). No new trusted surface; no existing pin touched.
+`nlaL2Runs`/`nlaL2Conflicts` instrumentation refs. The same-day design
+review added `OrchestrateExit` (orchestrate returns `.prelude` /
+`.refuted`; entry-semantics hook) — R-i. No new trusted surface; the
+only pre-existing-pin-touching change is `nla_solve` discarding the
+return value.
 
 **Probe finding that reshaped the acceptance set:** int1, int2, and
 the R-iii driver all close in L1 (mined `x*x = 2` down-propagates to
@@ -46,22 +51,18 @@ the nla_solve surfaces, unsupported-hyp (∃) loud rejection.
 
 ## Next
 
-1. **Slice-4 design review (Danielle)** — the usual divergence/regret
-   frame, this time on the layering: rollback fidelity (restoreState
-   wipes L1's context+messages), budget shape (per-layer fresh
-   budgets; o139's 800k moved onto the test), per-driver layer
-   assignment (probe table above), D1–D3. Then nla-14 `done`.
-2. **nla-15** (tactus wiring, ½ session): `require` line in
+1. **nla-15** (tactus wiring, ½ session): `require` line in
    tactus/lean-project (pins already identical: lean+mathlib v4.25.0),
    emit `nonlinear_arith` for `by(nonlinear_arith)` sites, crate-local
    check.sh gate. THIS is the payoff: all Verus nonlinear sites get
    the Lean backend.
-3. **nla-16** (parity harness, 1–2 + findings): owns G8/G9/G10 + the
+2. **nla-16** (parity harness, 1–2 + findings): owns G8/G9/G10 + the
    R-iii pd-driver/int1 z3-binary differential probes via
    `/tmp/z3-4.12.5` + the mk_ineq_atom normalization gap +
-   glue-subsumption watch = M6. Also the perf watch (mkDecideProof
-   whnf on big tables; intervalMagnitude's verbatim-quirk formula is
-   the first suspect if pacing drifts).
+   glue-subsumption watch + **the R-ii div/mod × nlsat-tier
+   composition gap (board file updated)** = M6. Also the perf watch
+   (mkDecideProof whnf on big tables; intervalMagnitude's
+   verbatim-quirk formula is the first suspect if pacing drifts).
 Q7 open: re-offer 11a (resultants) as interleave.
 
 ## Session mechanics + traps (cumulative; older entries in prior
@@ -88,8 +89,14 @@ New this slice (details in the Slice-4 board close-out):
 - `Tactic.saturateCore` resolves unqualified from the Frontend
   namespace via enclosing-namespace lookup (LeanNonlinearArith.Tactic)
   — no open needed, no clash with `Lean.Elab.Tactic`.
+- (review R-i) instrumentation hooks belong at ENTRY semantics: a
+  post-hoc counter reads "reached the solver", the pin's intent was
+  "entered L2" — and short-circuit exits report STALE data unless the
+  refs are zeroed at entry. The pin mechanism itself needs the
+  adversarial read.
 
-Commits: `41e32a2` (plan), the core+pins commit, the close-out commit.
+Commits: `41e32a2` (plan), `f6d3064` (core+pins), `9c769d0`
+(close-out), the review commit.
 Memory `verus-cad/memory/project_tactus_nonlinear_port.md` appended
 (catch-up: the file had NO nla-14 content — the Slice-3 HANDOFF's
 "appended" claim never landed; the stale description line fixed too).
