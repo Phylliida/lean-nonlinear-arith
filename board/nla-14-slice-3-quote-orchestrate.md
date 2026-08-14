@@ -184,3 +184,67 @@ everything via walkRefutation). Then Slice 4 (the `nonlinear_arith`
 elab, L1/L2 layering with `withLayerHeartbeats`, acceptance + design
 review) closes nla-14 → nla-15 (tactus wiring, ½) → nla-16 (parity
 harness; owns G8/G9/G10 + the R-iii probes) = M6.
+
+---
+
+## Close-out (2026-08-14, same day) — LANDED, build green 7615
+
+Commits: `15fa48d` (this plan), `24ecfb6` (core), `a5ed72c` (pins).
+
+**Landed as planned, decision A verbatim:** `Solver.checkCapturing`
+(the `check` body with the perm read off between snapshot capture and
+`restoreOrder`; `check = (·.1) <$> checkCapturing`, one code path, no
+drift). `Nlsat/Quote.lean`: the moved atom/BoolDef quoters + the full
+grammar (all 9 TraceStep arms, Clause/TraceBundle/snapshot; MPoly via
+core `toExpr`, arrays via the `List.toArray` idiom).
+`Tactic/NonlinearArith.lean`: `prelude` (True-short-circuit +
+byContradiction + phase1 returning `ReifyState`), `assembleRefutation`
+(bridge/dispatch/intWits/refTy parameterized on table + perm + clause
+selection — Slice-2's `toRefutationGoal` is the identity-perm all-
+clauses special case, pins unmodified), `orchestrate` = reify →
+register → run → patch (bvar-keyed `.bool` defs into the snapshot
+table) → referenced-inputs Cs rebuild (solver-sorted literal lists,
+cid−1 frontend indexing) → bridges against the patched internal table
+→ `walkRefutation`. SAT exit: per-var model display off the
+post-restore assignment (`RAlg.refineUntilPrec 10`, proxy vars absent
+by construction, ℤ-relaxation caveat when integer vars exist). undef:
+bounded-exit error.
+
+**Pins (NonlinearArithTests, `Tests.Orchestrate`):** sq/disj/proxy/
+int1/int2/o139 in user syntax via `nla_solve` (NO hand-written
+snapshots — the WalkTests data pipeline replaced end-to-end; o139 at
+800k heartbeats, Slice 4 owns the budgeting); reorder driver `x < y*y
+∧ y*y < x − 1` + the solver-seam `perm == #[1,0]` guard; D-1 guard
+(learned clauses [5,6] carry the proxy bvar, final bundle resolves
+them); foreign-`.arith`-with-proxy sound rejection (RUP-invariant
+poisoning of a `.clause` antecedent into an `.arith` marker — precheck
+passes, the arith discharge rejects; EXACT error message pinned);
+SAT model display (exact message: `x := 1/2`); div/mod error surface;
+undef via `maxConflicts := 0` (needs a BACKJUMPING input — sq and the
+lt-cycle refute at stage 0 without one; the proxy driver trips it).
+
+**Catches worth the books:**
+- **Kernel caught a REAL Slice-2 bridge bug**: the `.le/.ge` arms at
+  negative polarity (disproving an `a ≤ b`/`a ≥ b` goal — first
+  exercised by o139's conclusion) assembled `¬(a≤b) ↔ ¬¬litHolds` —
+  one `not_congr` too many. Now `not_congr (symm castLink) ∙ not_le ∙
+  tailChain`. No Slice-2 pin had a ≤/≥ GOAL; the walk's kernel
+  re-check of the full bridge chain did its job.
+- Registration must `mkVar` BEFORE atoms/clauses (forgotten on the
+  first pass: every pin reported SAT with an empty model — watches
+  silently no-op'd on the empty `watches` array). Alignment assertions
+  now cover isInt/atoms/clauses sizes + per-slot content.
+- `mkAlign`'s sandbox needed `try push_cast`/`try ring`: simp fully
+  closes LINEAR alignments (`evalP ρ* [(-1,[(1,1)])] = 0 - da`), and
+  a trailing step on zero goals failed the sandbox (o139's `0 < da`).
+- `Solver.run'` drops the state — use `(prog.run Solver.empty)`;
+  `Solver.init` creates bvar 0 + cid 0 (the +1 shift);
+  `st.roots`/`st.defClauses` lack Inhabited (`[i]?` + loud error);
+  TraceStep lacks BEq/Inhabited (match, don't `==`/`[i]!`); doc
+  comment above `#guard`/`set_option…in` still fails parsing;
+  `return f a\n b` doesn't absorb multi-line applications (parens).
+
+**Next: Slice 4** — the `nonlinear_arith` elab, L1/L2 layering
+(`withLayerHeartbeats` sandboxed saturateCore, roll back to the
+original goal on L1 failure), acceptance + negative probes, stats
+variant, design review.
