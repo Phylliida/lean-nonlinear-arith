@@ -28,23 +28,34 @@ the walk's goal shape is `∀ ρ, (integrality hyps) → (∀ C ∈ Cs,
 clauseHolds ρ atoms C) → False` with integrality hyps BEFORE the
 clause hyp (12e decision 1).
 
-**Slice 1 landed the checker side of Tseitin:** `Atom.bool (d :
-BoolDef)` with flattened arith-literal-leaf definitions,
+**Slice 1 landed the checker side of Tseitin** (+ same-day design
+review, R-i fix): `Atom.bool (d :
+BoolDef)` with HIERARCHICAL definitions (leaves may reference other
+proxies — z3's Tseitin nests; fuel-bounded table recursion, cycles
+poison to False),
 `interp`/`litHolds` arms (`boolDefHolds`), and the decide-grade
 `BoolDef.taut`/`conseq` + `taut_sound`/`conseq_sound` reflection
 (the upRefutes idiom). `Walk.precheck`/`clauseDecodable` UNCHANGED by
 design. 12 churn arms in Solver/Refute, all junk/defensive. Pins in
-AssembleTests incl. the end-to-end {¬b1, b0} definitional clause via
-`taut_sound`.
+AssembleTests incl. nested-proxy evaluation, cyclic-def poisoning, and
+the end-to-end {¬b1, b0} definitional clause via `taut_sound`.
+Review-verified against 4.12.5 source: bool-var negative-first decide
+(:1536 = Solver.lean:845), proxies never in arith justifications
+(:1764-1813), `max_var(bool) = null_var` (:376).
 
 ## Next: nla-14 Slice 2 — reify+Tseitin+bridge
 
 Per the plan's slice list. The components: Expr→MPoly/Atom parser
 (ℤ/ℕ/ℝ comparisons; `+ - * ^nat`, casts), var table (ℤ→`mkVar true`
 + integrality hyp emission; ℕ→ℤ + `0 ≤ ↑n` clause per decision 2; ℝ
-direct), Tseitin clausification with `mkBoolVar` slots + flattened
-defs, per-clause bridges (`conseq_sound` for root clauses,
-`taut_sound` for definitional), `byContradiction` assembly. First
+direct), Tseitin clausification with `mkBoolVar` slots + TOP-LEVEL
+proxy per hyp/¬goal (unit root clauses; bridges by construction —
+per-literal relaxation Iffs at the leaves; review R-ii — NO truth
+table exceeds one definitional clause), definitional-clause bridges
+via `taut_sound` (child proxies abstract), `byContradiction` assembly.
+Load-bearing R-i consequence: `boolDefHolds` is WF-compiled — NO
+kernel defeq through proxies; bridges rewrite via its equation lemmas
+(simp/mkAppM), the `holds_single_*` idiom generalized. First
 recon question (recorded in the Slice-1 close-out): the proxy-def
 patch applies to the extracted snapshot POST-reorder — defs reference
 bvars (stable across `heuristicReorder`), but the atom table the walk
@@ -66,6 +77,12 @@ probes + mk_ineq_atom gap + glue-subsumption watch) = M6. Tier B
 New this session (details in the Slice-1 board entry):
 - **`open Classical` inside the namespace** for `decide (τ l)` in
   STATEMENTS (the `classical` tactic can't help signatures).
+- **WF-compiled defs (`termination_by` with a mixed measure) have NO
+  kernel defeq** — consumers rewrite via the auto equation lemmas
+  (simp only [f] at hyp AND goal — variable-headed applications stay
+  folded, constructor-headed ones unfold — then congr); plain `simp`
+  (not `simp only`) reduces `#[...][i]?` lookups; don't simp under a
+  lambda whose bound var blocks iota (rcases/split FIRST).
 - The MPoly evaluator is **`Check.evalP`** (Semantics.lean:77), NOT
   Kernel's (that's the PairQ certificate evaluator — the
   unknown-constant error disguises itself as "Function expected ...

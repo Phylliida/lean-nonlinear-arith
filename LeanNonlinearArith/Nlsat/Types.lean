@@ -293,10 +293,10 @@ of a solver bool var (z3 `mk_bool_var`, nlsat_solver.cpp:464-477 — a
 bvar with `m_atoms[b] = nullptr`). z3 keeps proxies as bare bool vars,
 the definitional clauses trusted as preprocessing output; we carry the
 definition IN the atom table so the checker re-proves each definitional
-clause instead of trusting it. Leaves are literals over ARITH atoms
-only — defs are flattened at emission, so table-level evaluation is
-non-recursive (a leaf that resolves to a proxy or a junk slot counts
-as not-holding, the sound direction). -/
+clause instead of trusting it. Leaves are literals; they may reference
+OTHER PROXIES (z3's Tseitin nests — hierarchical defs, design-review
+R-i), with cycles/junk poisoning to not-holding at evaluation (fuel
+budget = table size + 1, `Assemble.boolDefHolds`). -/
 inductive BoolDef
   | lit (l : Literal)
   | and (a b : BoolDef)

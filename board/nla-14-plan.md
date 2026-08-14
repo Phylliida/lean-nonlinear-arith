@@ -54,8 +54,9 @@ one additive trusted-layer extension.
 **The three new components:**
 
 0. **Boolean-proxy checker support (TRUSTED, additive).** `Atom`
-   gains `.bool (def : BoolForm)` (proxy definitions over arith
-   literals, flattened); `interp`/`litHolds`/`clauseDecodable` gain
+   gains `.bool (def : BoolDef)` (proxy definitions as literal trees —
+   HIERARCHICAL, post-review R-i); `interp`/`litHolds`/
+   `clauseDecodable` gain
    the arm; a decide-grade Boolean reflection (`BoolForm` eval under
    `I : Nat → Prop`, kernel `taut`/`conseq` check + soundness, the
    upRefutes idiom) discharges definitional/root clause bridges.
@@ -125,19 +126,26 @@ deferred; 4 = same mechanism as z3, for the same performance):**
      reject them (Assemble.lean:63-72, :113-117; Walk.lean:167-171) —
      junk-poison, not a usable Boolean. NEW TRUSTED COMPONENT:
      extend `Atom` with a `.bool` variant carrying the proxy's
-     Boolean DEFINITION over arith literals (flattened at emission —
-     defs reference arith literals only, so `interp`'s new arm is
-     non-recursive); `litHolds`/`clauseDecodable` gain the arm.
+     Boolean DEFINITION as a `BoolDef` tree; `interp`/`litHolds` gain
+     the arm (fuel-bounded table recursion — defs may NEST, z3's
+     Tseitin shape; post-review amendment, R-i of
+     board/nla-14-slice-1-design-review.md: flattening was the v1
+     design and was struck for reintroducing the blowup Tseitin
+     exists to avoid).
      Additive change: existing snapshots/tests elaborate untouched
      (new constructor, new match arms — NOT the SnapshotTy-shape churn
      12e decision 1-(b) was rejected over).
-   - **Bridges: one decide-grade mechanism.** Tseitin definitional
-     clauses and root clauses (clausified hyps/¬goal over proxies)
-     unfold under the extended `interp` to PROPOSITIONAL tautologies /
-     hyp-consequences over the `Atom.Holds ρ a` leaves. A small
-     verified Boolean-form reflection (`BoolForm` tree, eval under
-     `I : Nat → Prop`, kernel-computable `taut`/`conseq` check +
-     soundness lemma, discharged by `decide`) covers both — the
+   - **Bridges: one decide-grade mechanism + a by-construction root.**
+     Tseitin definitional clauses unfold (child proxies ABSTRACT) to
+     propositional tautologies over a ≤ handful of literals —
+     `taut_sound`. Root clauses: give the hyp / negated goal ITSELF a
+     top-level proxy whose def is its full Boolean tree; the root
+     clause is the unit `[top]` and its bridge is by-construction
+     (the def tree IS the relaxed hyp; per-literal ℤ→ℝ Iffs at the
+     leaves) — NO truth table ever exceeds one definitional clause
+     (R-ii of the design review). `conseq_sound` stays for ad-hoc
+     use. The reflection: `BoolDef.eval` under an oracle, kernel-
+     computable `taut`/`conseq` + soundness, `decide` — the
      upRefutes idiom, same trust shape.
    Fidelity note: z3's VERUS path puts proxies in the outer SAT
    solver with nlsat as one-shot theory oracle; we put them INSIDE
@@ -168,25 +176,31 @@ deferred; 4 = same mechanism as z3, for the same performance):**
   the bool-var findings (search-side already ported, checker-side the
   gap) + decisions 1–5 resolved.
 - **Slice 1 — proxy checker support (trusted, additive):**
-  `Atom.bool (def : BoolForm)`; `interp`/`litHolds`/`clauseDecodable`
-  arms (Assemble.lean); the `BoolForm` reflection + `taut`/`conseq`
+  `Atom.bool (def : BoolDef)`; `interp`/`litHolds`/`clauseDecodable`
+  arms (Assemble.lean); the `BoolDef` reflection + `taut`/`conseq`
   decide-grade check + soundness lemmas; precheck re-pin. Pins:
   definitional-clause decodability through the new arm, tautology
   discharge on the standard Tseitin clause shapes, garbage-def /
-  proxy-over-proxy rejection, existing snapshots untouched (the whole
-  WalkTests/RefuteTests suite stays green unmodified).
+  cyclic-def poisoning, nested-proxy evaluation, existing snapshots
+  untouched (the whole WalkTests/RefuteTests suite stays green
+  unmodified). `DONE 2026-08-13 eve (+ same-day design review, R-i
+  hierarchical-defs fix landed).`
 - **Slice 2 — reify+Tseitin+bridge:** Expr→MPoly/Atom parser over the
   comparison grammar (`= ≠ < ≤ > ≥` on ℤ/ℕ/ℝ; `+ - * ^nat` literals,
   `Int.cast`/`Nat.cast` coercions); var table + `mkVar` order record;
   Tseitin clausification of BOTH the hyps and the negated goal
-  (decision 1) with proxy slots via `mkBoolVar`; integrality hyps;
+  (decision 1) with proxy slots via `mkBoolVar`; TOP-LEVEL PROXY per
+  hyp/¬goal with unit root clauses (R-ii — by-construction bridges,
+  per-literal relaxation Iffs at the leaves); integrality hyps;
   refutation-goal
-  assembly via `byContradiction`. Pins: relaxed-goal shape probes
+  assembly via `byContradiction`. Bridge construction uses the
+  `boolDefHolds` EQUATION LEMMAS (WF-compiled — no kernel defeq
+  through proxies, R-i consequence). Pins: relaxed-goal shape probes
   (bridge closes; wrong-var integrality rejected — 12e's probes ported
   to user syntax), div/mod hard-fail probe, disjunctive-hyp AND
   disjunctive-goal round trips (proxies exercised both sides),
-  nested-alternation stress (the Tseitin-linear-clause-count property
-  — the reason decision 1 exists).
+  nested-alternation stress (Tseitin linear clause count — the reason
+  decision 1 exists).
 - **Slice 3 — quote+orchestrate:** the five quoters (incl. the
   `.bool` atom arm); TacticM solver
   run; end-to-end `False` close on the sq/xl/int1/int2 drivers stated

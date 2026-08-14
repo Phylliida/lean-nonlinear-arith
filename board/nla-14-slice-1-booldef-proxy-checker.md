@@ -1,5 +1,16 @@
 ## nla-14 Slice 1 `done` (2026-08-13 eve) — Tseitin proxy checker support
 
+**POST-REVIEW AMENDMENT (same evening,
+board/nla-14-slice-1-design-review.md, R-i):** the "flattened,
+arith-atom-leaves-only, non-recursive" design below was STRUCK at the
+design review — flattened defs reintroduce the exponential blowup
+Tseitin exists to avoid (def data on shared circuits + truth tables on
+inlined subtrees). As LANDED: `BoolDef` leaves may reference other
+proxies; `boolDefHolds` is fuel-bounded table recursion (fuel =
+`atoms.size + 1`; cycles poison to `False`). Consequence: no kernel
+defeq through proxies (WF-compiled) — bridges rewrite via equation
+lemmas.
+
 Per the plan (board/nla-14-plan.md, decision 1: full Boolean structure
 via Tseitin proxies, z3's mechanism, performance parity). Build green
 (7612 jobs), commit `72c3b6a`. Axioms on all new soundness lemmas:

@@ -63,37 +63,45 @@ theorem not_litSatI_forall_dedup (I : Nat → Prop) (C : List Literal) :
     (∀ l ∈ C, ¬ litSatI I l) → ∀ l ∈ C.dedup, ¬ litSatI I l :=
   fun h l hl => h l (List.mem_dedup.mp hl)
 
-/-- Arith-only literal semantics for `BoolDef` leaves (nla-14):
-non-recursive by construction — a leaf resolving to a proxy or a junk
-slot counts as not holding (the sound direction; defs are flattened
-at emission so this restriction never bites a conformant table). -/
-def arithLitHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (l : Literal) : Prop :=
-  match atoms[l.bvar]? with
-  | some (some a@(.ineq _)) => ALitHolds ρ a l.neg
-  | some (some a@(.root _)) => ALitHolds ρ a l.neg
-  | _ => False
-
-/-- The atom-table interpretation of a proxy definition. -/
-def boolDefHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom)) : BoolDef → Prop
-  | .lit l => arithLitHolds ρ atoms l
-  | .and a b => boolDefHolds ρ atoms a ∧ boolDefHolds ρ atoms b
-  | .or a b => boolDefHolds ρ atoms a ∨ boolDefHolds ρ atoms b
-  | .neg a => ¬ boolDefHolds ρ atoms a
+/-- Table-level semantics of a proxy definition (nla-14). Leaves may
+reference OTHER PROXIES — z3's Tseitin nests, and the sharing is the
+point (defs stay small; the definitional-clause checks stay local).
+Proxy chasing descends the atom table on a fuel budget (top-level
+callers use `atoms.size + 1`: an acyclic chain has depth ≤ the proxy
+count; running dry means a CYCLE, which poisons to `False` — the
+sound direction). Arith leaves get the usual semantics; junk slots
+poison. -/
+def boolDefHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (fuel : Nat) (d : BoolDef) : Prop :=
+  match d with
+  | .lit l =>
+    match atoms[l.bvar]? with
+    | some (some (.bool d')) =>
+      match fuel with
+      | 0 => False
+      | fuel' + 1 =>
+        if l.neg then ¬ boolDefHolds ρ atoms fuel' d'
+        else boolDefHolds ρ atoms fuel' d'
+    | some (some a) => ALitHolds ρ a l.neg
+    | _ => False
+  | .and a b => boolDefHolds ρ atoms fuel a ∧ boolDefHolds ρ atoms fuel b
+  | .or a b => boolDefHolds ρ atoms fuel a ∨ boolDefHolds ρ atoms fuel b
+  | .neg a => ¬ boolDefHolds ρ atoms fuel a
+termination_by (fuel, d)
 
 /-- The atom-table interpretation: bvar `b` holds iff the table maps it
 to an atom that holds at `ρ`; a proxy (`Atom.bool`) holds iff its
 definition does. Undecodable ↦ `False` (sound direction). -/
 def interp (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (b : Nat) : Prop :=
   match atoms[b]? with
-  | some (some (.bool d)) => boolDefHolds ρ atoms d
+  | some (some (.bool d)) => boolDefHolds ρ atoms (atoms.size + 1) d
   | some (some a) => Atom.Holds ρ a
   | _ => False
 
 /-- Solver-level literal semantics (the F2 extraction's form). -/
 def litHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (l : Literal) : Prop :=
   match atoms[l.bvar]? with
-  | some (some (.bool d)) => if l.neg then ¬ boolDefHolds ρ atoms d
-                             else boolDefHolds ρ atoms d
+  | some (some (.bool d)) => if l.neg then ¬ boolDefHolds ρ atoms (atoms.size + 1) d
+                             else boolDefHolds ρ atoms (atoms.size + 1) d
   | some (some a) => ALitHolds ρ a l.neg
   | _ => False
 
@@ -166,13 +174,14 @@ theorem clauseDecodable_true (atoms : Array (Option Atom)) :
 /-! ## The Boolean-form reflection (nla-14 Slice 1: Tseitin proxy bridges)
 
 Definitional and root clauses over proxies unfold (via `boolDefHolds`)
-to propositional formulas over arith literals. Their validity is
-decidable data: `BoolDef.taut` enumerates the valuations of the leaves
-(Tseitin definitional clauses carry ≤ a handful of literals; root
-clauses the literals of one source hyp/goal fragment) and
+to propositional formulas over literals — with child proxies ABSTRACT
+(hierarchical defs, R-i of the design review: each definitional clause
+checks locally over its ≤ handful of leaves, never the inlined
+subtree). `BoolDef.taut` enumerates the valuations of the leaves and
 `taut_sound`/`conseq_sound` reflect a `true` verdict into
-`BoolDef.eval`. All junk paths fail toward `false` = rejection, same
-as the UP engine. -/
+`BoolDef.eval` under ANY oracle — instantiated at the leaf semantics,
+this discharges the bridge. All junk paths fail toward `false` =
+rejection, same as the UP engine. -/
 
 namespace BoolDef
 
@@ -185,16 +194,21 @@ def eval (τ : Literal → Prop) : BoolDef → Prop
   | .or a b => eval τ a ∨ eval τ b
   | .neg a => ¬ eval τ a
 
-/-- `boolDefHolds` IS `eval` at the arith-literal oracle (the bridge
-the discharges consume). -/
+/-- `boolDefHolds` IS `eval` at the leaf-semantics oracle (the bridge
+the discharges consume — proxy leaves abstract, so the `taut` checks
+stay local to each definitional clause). -/
 theorem boolDefHolds_iff_eval (ρ : Nat → ℝ) (atoms : Array (Option Atom)) :
-    ∀ d : BoolDef, boolDefHolds ρ atoms d ↔ eval (arithLitHolds ρ atoms) d := by
-  intro d
+    ∀ (fuel : Nat) (d : BoolDef), boolDefHolds ρ atoms fuel d ↔
+      eval (fun l => boolDefHolds ρ atoms fuel (.lit l)) d := by
+  intro fuel d
   induction d with
   | lit l => exact Iff.rfl
-  | and a b iha ihb => exact and_congr iha ihb
-  | or a b iha ihb => exact or_congr iha ihb
-  | neg a ih => exact not_congr ih
+  | and a b iha ihb =>
+    simp only [boolDefHolds] at iha ihb ⊢; exact and_congr iha ihb
+  | or a b iha ihb =>
+    simp only [boolDefHolds] at iha ihb ⊢; exact or_congr iha ihb
+  | neg a ih =>
+    simp only [boolDefHolds] at ih ⊢; exact not_congr ih
 
 /-- Computable evaluation under a Boolean assignment. -/
 def evalB (σ : Literal → Bool) : BoolDef → Bool

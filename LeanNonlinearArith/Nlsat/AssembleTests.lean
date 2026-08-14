@@ -68,6 +68,20 @@ private def pinAtomsBad : Array (Option Atom) :=
   #[some (.ineq ⟨.lt, [([(1, [(0, 1)])], false)]⟩),
     some (.bool (.lit ⟨9, false⟩))]
 
+/-- Hierarchical (design-review R-i): b1 ⇔ b0, b2 ⇔ ¬b1 — a proxy
+whose def leaf is another PROXY. -/
+private def pinAtomsNested : Array (Option Atom) :=
+  #[some (.ineq ⟨.lt, [([(1, [(0, 1)])], false)]⟩),
+    some (.bool (.lit ⟨0, false⟩)),
+    some (.bool (.neg (.lit ⟨1, false⟩)))]
+
+/-- Cyclic defs (b1 ⇔ b2, b2 ⇔ b1): fuel runs dry, poison to False —
+the sound direction. -/
+private def pinAtomsCyc : Array (Option Atom) :=
+  #[none,
+    some (.bool (.lit ⟨2, false⟩)),
+    some (.bool (.lit ⟨1, false⟩))]
+
 -- decodability through the `.bool` arm (precheck's gate, unchanged code)
 example : clauseDecodable pinAtoms [⟨1, false⟩, ⟨0, true⟩] = true := by native_decide
 -- control: junk slots still rejected
@@ -76,18 +90,27 @@ example : clauseDecodable pinAtomsBad [⟨1, false⟩] = true := by native_decid
 
 -- proxy semantics: interp unfolds the definition
 example (ρ : Nat → ℝ) : interp ρ pinAtoms 1 ↔ evalP ρ [(1, [(0, 1)])] < 0 := by
-  simp [interp, boolDefHolds, arithLitHolds, ALitHolds, pinAtoms, Check.Atom.Holds,
+  simp [interp, boolDefHolds, ALitHolds, pinAtoms, Check.Atom.Holds,
     holds_single_lt]
 
 -- literal polarity on a proxy
 example (ρ : Nat → ℝ) :
     litHolds ρ pinAtoms ⟨1, true⟩ ↔ ¬ evalP ρ [(1, [(0, 1)])] < 0 := by
-  simp [litHolds, boolDefHolds, arithLitHolds, ALitHolds, pinAtoms, Check.Atom.Holds,
+  simp [litHolds, boolDefHolds, ALitHolds, pinAtoms, Check.Atom.Holds,
     holds_single_lt]
 
 -- junk leaves poison to False (the sound direction — degrades, never unsound)
 example (ρ : Nat → ℝ) : interp ρ pinAtomsBad 1 ↔ False := by
-  simp [interp, boolDefHolds, arithLitHolds, pinAtomsBad]
+  simp [interp, boolDefHolds, pinAtomsBad]
+
+-- hierarchical defs: the nested proxy evaluates THROUGH the child proxy
+example (ρ : Nat → ℝ) : interp ρ pinAtomsNested 2 ↔ ¬ evalP ρ [(1, [(0, 1)])] < 0 := by
+  simp [interp, boolDefHolds, ALitHolds, pinAtomsNested, Check.Atom.Holds,
+    holds_single_lt]
+
+-- cyclic defs poison (fuel = size + 1 runs dry; the sound direction)
+example (ρ : Nat → ℝ) : interp ρ pinAtomsCyc 1 ↔ False := by
+  simp [interp, boolDefHolds, pinAtomsCyc]
 
 -- taut: the three Tseitin definitional-clause shapes for p ⇔ (l0 ∧ l1),
 -- with the proxy's def inlined (the Slice-2 compiler's output shape)
@@ -123,13 +146,17 @@ example : BoolDef.conseq (.lit ⟨0, false⟩) (.lit ⟨1, false⟩) = false := 
   native_decide
 
 -- end-to-end: with b1 ⇔ b0 in the table, the definitional clause
--- {¬b1, b0} holds at every ρ — proved by `taut_sound` alone
+-- {¬b1, b0} holds at every ρ — proved by `taut_sound` alone, oracle =
+-- the full literal semantics (proxy-chasing included)
 example (ρ : Nat → ℝ) : clauseHolds ρ pinAtoms [⟨1, true⟩, ⟨0, false⟩] := by
   have ht : BoolDef.taut (.or (.neg (.lit ⟨0, false⟩)) (.lit ⟨0, false⟩)) = true := by
     native_decide
-  have h := BoolDef.taut_sound ht (arithLitHolds ρ pinAtoms)
+  have h := BoolDef.taut_sound ht (fun l => litHolds ρ pinAtoms l)
   rcases h with h | h
-  · exact ⟨⟨1, true⟩, by decide, h⟩
+  · refine ⟨⟨1, true⟩, by decide, ?_⟩
+    simp only [BoolDef.eval] at h
+    simp [litHolds, pinAtoms, boolDefHolds] at h ⊢
+    exact h
   · exact ⟨⟨0, false⟩, by decide, h⟩
 
 end LeanNonlinearArith.Nlsat
