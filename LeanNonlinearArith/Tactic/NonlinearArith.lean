@@ -1494,6 +1494,24 @@ tryGrobner's (Saturate.lean:1899-1904): saveState + tryCatchRuntimeEx
 (ring_nf'd hyps, noted facts) and its failure messages, so L2's
 prelude sees the user's original goal. -/
 
+/-- nla-16 parity-harness channel (Slice 0): when the spawned lean process
+carries `NLA16_STATS=1` in its environment, every successful close emits a
+single `[nla16-stats] <payload>` WARNING line. Warning severity is
+deliberate: verus's per-fn lean checker forwards diagnostics of severity
+`warning` on CheckResult::Success even for verified fns
+(`verifier.rs:2489`), while info diagnostics are dropped — so warning is
+the only channel that reaches the verus log on green runs. Default-off
+(the env var is absent in normal runs; no verus-side change needed). The
+gate is on the VALUE `1` exactly (presence alone is not enough — POSIX has
+no unset-via-set, IO.setEnv with "" otherwise stays armed).
+Sandbox note: the L1 attempt's message log is restored on rollback, so a
+stats line can only survive on an actual close — exactly the census
+semantics (`layer=1` ⇒ L1 closed; `layer=2-…` ⇒ L2; absent ⇒ this arm
+failed and the ladder's fallback closed). -/
+unsafe def reportStats (payload : String) : TacticM Unit := do
+  if (← IO.getEnv "NLA16_STATS") == some "1" then
+    logWarning s!"[nla16-stats] {payload}"
+
 /-- The §2.7 layering driver. L1's failure is exception-shaped (the
 tier-2 omega leaf is deliberately unwrapped, Saturate.lean:2031), so a
 normal return means the goal it worked on closed; the `g0.isAssigned`
@@ -1516,6 +1534,7 @@ unsafe def nonlinearArithCore (stats : Bool) (maxRounds : Option Nat) :
     (fun _ => do restoreState s; pure false)
   if l1 then
     if stats then logInfo "nonlinear_arith: closed by L1 (saturate)"
+    reportStats "layer=1"
   else
     let exit ← Tactic.withLayerHeartbeats orchestrate
     if stats then
@@ -1526,6 +1545,9 @@ unsafe def nonlinearArithCore (stats : Bool) (maxRounds : Option Nat) :
       | .refuted =>
         logInfo s!"nonlinear_arith: L1 failed to close the goal; closed by L2 \
           (nlsat search → trace → kernel-checked walk, {← nlaL2Conflicts.get} conflicts)"
+    match exit with
+    | .prelude => reportStats "layer=2-prelude"
+    | .refuted => reportStats s!"layer=2 conflicts={← nlaL2Conflicts.get}"
 
 /-- `nonlinear_arith (n)?` — the user-facing layered closer (nla-14):
 L1 `nla_saturate` fast path (most goals), on failure L2's nlsat

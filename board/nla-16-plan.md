@@ -28,14 +28,17 @@ findings/fallout budget, per DESIGN-endgame §2.10.
 
 ### Recon (2026-08-14 eve — done before planning)
 
-- **Corpus census (this session, `grep -rE "by ?\( *nonlinear_arith"`):**
-  16 crates carry sites, ~2,613 total. Verus-rational 433,
-  fixed-point 648, mandelbrot 519, cutedsl 373, physics2d 144,
-  bigint 133, computability-theory 86, group-theory 70, vulkan 40,
-  interval-arithmetic 38, gui 25, ray-marching 18, canvas 9,
-  algebra 12, quadratic-extension 1, 2d-constraint-satisfaction 1.
-  (Line-count proxy; the harness's per-function extraction replaces
-  it with exact numbers.)
+- **Corpus census (Slice-0 session, `tools/parity/sites.py` —
+  comment/string-blanked, TRUE counts):** 15 crates carry sites,
+  ~2,595 total. Verus-rational 433, fixed-point 636, mandelbrot 518,
+  cutedsl 373, bigint 133, computability-theory 86, group-theory 70,
+  physics2d 140, vulkan 40, interval-arithmetic 38, gui 25,
+  ray-marching 18, canvas 9, algebra 12, 2d-constraint-satisfaction 1.
+  (The pre-implementation grep numbers were inflated by comment/text
+  mentions — e.g. quadratic-extension's single "site" is a prose
+  mention of Z3's `by(nonlinear_arith)` limitation in a comment;
+  qext carries ZERO sites and drops out of the corpus/pilot.
+  Catch class: comment-mention over-counting — worth the books.)
 - **Per-function granularity exists end-to-end.** Verus reports
   verified/error counts per crate and errors carry file:line spans;
   mapping site→function = syntactic containment (the span of the
@@ -70,10 +73,13 @@ findings/fallout budget, per DESIGN-endgame §2.10.
    frontend bytes → per-goal divergence isolates to the backend
    exactly. z3 config stays the established spinoff shape
    (smt.arith.solver=6, MBQI off, nlsat enabled).
-2. **Corpus order — pilot cohort, then all 16** (Danielle).
-   Pilot: quadratic-extension (1 site) + the tactus-algebra mirror +
-   the nla-15 o139 probe. Then worst-first: fixed-point (648) →
-   mandelbrot (519) → rational (433) → cutedsl (373) → tail.
+2. **Corpus order — pilot cohort, then all 15** (Danielle).
+   Pilot (updated post-census — qext's "site" was a comment
+   mention): the tactus-algebra mirror (46 sites, direct-verus
+   path) + verus-2d-constraint-satisfaction (1 site, raw-crate
+   cargo-verus path) + the nla-15 o139 probe. Then worst-first:
+   fixed-point (636) → mandelbrot (518) → rational (433) →
+   cutedsl (373) → tail.
 3. **Multi-site functions, ambiguous attribution — bisect on
    demand** (proposed default adopted). Per-function granularity is
    the census default; per-site bisection (`--verify-function`-style
