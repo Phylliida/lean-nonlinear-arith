@@ -1,4 +1,6 @@
 import LeanNonlinearArith.Nlsat.Walk
+import LeanNonlinearArith.Nlsat.Quote
+import LeanNonlinearArith.Nlsat.Explain
 
 /-!
 # nla-14 Slice 2 — reify + Tseitin + bridge (the `nonlinear_arith` frontend core)
@@ -39,44 +41,13 @@ namespace LeanNonlinearArith.Nlsat.Frontend
 open Lean Meta Elab Tactic
 open LeanNonlinearArith.Nlsat
 open LeanNonlinearArith.Nlsat.Check
+open LeanNonlinearArith.Nlsat.Quote
 
-/-! ## Quoting (shared with Slice 3) -/
+/-! ## Quoting
 
-/-- Quote an `IneqKind`. -/
-def ineqKindToExpr : IneqKind → Expr
-  | .eq => mkConst ``IneqKind.eq
-  | .lt => mkConst ``IneqKind.lt
-  | .gt => mkConst ``IneqKind.gt
-
-/-- Quote a `BoolDef` (recursive). -/
-partial def boolDefToExpr : BoolDef → Expr
-  | .lit l => mkApp (mkConst ``BoolDef.lit) (Refute.litToExpr l)
-  | .and a b => mkApp2 (mkConst ``BoolDef.and) (boolDefToExpr a) (boolDefToExpr b)
-  | .or a b => mkApp2 (mkConst ``BoolDef.or) (boolDefToExpr a) (boolDefToExpr b)
-  | .neg a => mkApp (mkConst ``BoolDef.neg) (boolDefToExpr a)
-  | .tru => mkConst ``BoolDef.tru
-  | .fls => mkConst ``BoolDef.fls
-
-/-- Quote an `Atom` (structure-ctor applications — defeq to any
-elaboration spelling). -/
-def atomToExpr : Atom → Expr
-  | .ineq a => mkApp (mkConst ``Atom.ineq)
-      (mkApp2 (mkConst ``IneqAtom.mk) (ineqKindToExpr a.kind) (toExpr a.factors))
-  | .root a => mkApp (mkConst ``Atom.root)
-      (mkApp4 (mkConst ``RootAtom.mk) (Refute.rootKindToExpr a.kind)
-        (toExpr a.x) (toExpr a.i) (toExpr a.p))
-  | .bool d => mkApp (mkConst ``Atom.bool) (boolDefToExpr d)
-
-/-- Quote an `Option Atom`. -/
-def optAtomToExpr : Option Atom → Expr
-  | none => mkApp (mkConst ``Option.none [levelZero]) (mkConst ``Atom)
-  | some a => mkApp2 (mkConst ``Option.some [levelZero]) (mkConst ``Atom) (atomToExpr a)
-
-/-- Quote the atom table (`Array (Option Atom)` via `List.toArray`). -/
-def atomsToExpr (atoms : Array (Option Atom)) : MetaM Expr := do
-  let elemTy := mkApp (mkConst ``Option [levelZero]) (mkConst ``Atom)
-  let listE ← mkListLit elemTy (atoms.toList.map optAtomToExpr)
-  mkAppM ``List.toArray #[listE]
+The atom/BoolDef quoters moved to `Nlsat/Quote.lean` at Slice 3
+(`atomToExpr`/`atomsToExpr`/…, shared with the snapshot quoters);
+`rhoStarExpr` stays here (the frontend's `ρ` instantiation). -/
 
 /-- The `ρ` instantiation: `fun i => if i = 0 then v₀ else … else 0`
 with `vᵢ` the slot's ℝ-level value expr. (Reduction check: the kernel
@@ -1171,17 +1142,23 @@ def phase1 (hypFvs : Array FVarId) : RM ReifyState := do
       modify fun s => { s with roots := s.roots.push (⟨[lit], hypE, origE, origE, .witness lit info.userSide⟩) }
   get
 
-/-- The Slice-2 deliverable (see the module doc): reduce the main goal
-`Γ ⊢ G` to the walk's refutation goal
-`∀ ρ, (integrality hyps) → (∀ C ∈ Cs, clauseHolds ρ atoms C) → False`,
-left as the new main goal (Slice 3 closes it via solver + walk). -/
-def toRefutationGoal : TacticM Unit := do
+/-- Which bridge a selected clause gets (Slice 3: the post-run clause
+selection mixes definitional and root clauses in referenced-cid order). -/
+inductive ClauseSrc where
+  | defClause (p : Nat)
+  | root (e : RootEntry)
+
+/-- The shared prelude: `True` short-circuit (goal closed, returns
+`none`), `byContradiction` + intro of the negated goal, then phase 1
+(reify + Tseitin clausify). Returns the `False`-goal mvar and the
+reify state for the phase-2/orchestration consumer. -/
+def prelude : TacticM (Option (MVarId × ReifyState)) := do
   let g ← getMainGoal
   let target ← instantiateMVars (← g.getType)
   if target.isConstOf ``True then
     g.assign (mkConst ``True.intro)
     replaceMainGoal []
-    return
+    return none
   let gFalse ←
     if target.isConstOf ``False then pure g
     else do
@@ -1194,32 +1171,55 @@ def toRefutationGoal : TacticM Unit := do
     -- to the goal at negative polarity inside reifyProp)
     let hypFvs ← gFalse.getNondepPropHyps
     let st ← (phase1 hypFvs).run' {}
-    -- phase 2: bridges
-    let atomsE ← atomsToExpr st.atoms
-    let ρStarE ← rhoStarExpr st.vars
+    return some (gFalse, st)
+
+/-- Phase 2 + final assembly, parameterized on the atom table, the
+internal→external variable permutation, and the clause selection
+(Slice-2 dev path: `st.atoms`, the identity, ALL def+root clauses in
+emission order; Slice-3 orchestrate path: the patched snapshot table,
+the reorder capture, the referenced inputs in cid order with
+solver-sorted literal lists). Builds the per-clause bridges, the
+dispatch, the integrality witnesses and the refutation goal type;
+assigns `gFalse` and returns the refutation-goal mvar.
+
+`perm` maps INTERNAL (snapshot/goal `ρ`) indices to external
+(`st.vars`) slots — after `Solver.heuristicReorder`, `s.perm` is
+exactly this (verified in `Solver.reorder`'s remap: post-reorder
+`perm[internal] = external`; identity when no reorder ran). -/
+def assembleRefutation (gFalse : MVarId) (st : ReifyState)
+    (atomsV : Array (Option Atom)) (perm : Array Var)
+    (cls : List (List Literal × ClauseSrc)) : TacticM MVarId := do
+  gFalse.withContext (n := TacticM) do
+    -- phase 2: bridges (against the GIVEN table + permuted ρ*)
+    let atomsE ← atomsToExpr atomsV
+    let valsI := (List.range st.vars.size).toArray.map fun i => st.vars[perm[i]!]!
+    let ρStarE ← rhoStarExpr valsI
     let hordTy ← mkAppM ``Eq #[← mkAppM ``boolDefsOrdered #[atomsE], mkConst ``true]
     let hordPrf ← mkDecideProof hordTy
     let oracleE := mkApp2 (mkConst ``litHolds) ρStarE atomsE
     let litCache ← IO.mkRef ({} : Std.HashMap Literal Expr)
     let proxyCache ← IO.mkRef ({} : Std.HashMap Nat Expr)
     let bctx : BridgeCtx :=
-      { ρStar := ρStarE, atomsE, atoms := st.atoms, hordPrf, oracleE,
+      { ρStar := ρStarE, atomsE, atoms := atomsV, hordPrf, oracleE,
         litProps := st.litProps, proxies := st.proxies,
         litCache, proxyCache }
-    let defBridges ← st.defClauses.toList.mapM fun (C, p) =>
-      mkDefClauseBridge bctx C p
-    let rootBridges ← st.roots.toList.mapM fun e => mkRootBridge bctx e
-    let CsVals := (st.defClauses.toList.map (·.1)) ++ (st.roots.toList.map (·.clause))
+    let bridges ← cls.mapM fun (C, src) =>
+      match src with
+      | .defClause p => mkDefClauseBridge bctx C p
+      | .root e => mkRootBridge bctx { e with clause := C }
+    let CsVals := cls.map (·.1)
     let CsE ← Walk.quoteLitsList CsVals
-    let dispatch ← buildDispatch bctx CsE CsVals (defBridges ++ rootBridges)
+    let dispatch ← buildDispatch bctx CsE CsVals bridges
     -- integrality witnesses (12e decision 1: per ℤ/ℕ slot, ahead of the
-    -- clause hyp in the refutation goal)
+    -- clause hyp in the refutation goal; internal slot i ↔ external
+    -- var perm[i])
     let intWits ← (List.range st.vars.size).filterMapM fun i =>
-      match st.varTy[i]! with
+      let ext := perm[i]!
+      match st.varTy[ext]! with
       | .real => pure none
       | ty => do
-        let srcE := st.varKeys[i]!
-        let valE := st.vars[i]!
+        let srcE := st.varKeys[ext]!
+        let valE := st.vars[ext]!
         -- the ∃ predicate `fun n : ℤ => ρ* i = ↑n`
         let predLam ← withLocalDecl `n .default (mkConst ``Int) fun nE => do
           let eqTy ← mkAppM ``Eq #[mkApp ρStarE (toExpr i),
@@ -1255,7 +1255,7 @@ def toRefutationGoal : TacticM Unit := do
         mkForallFVars #[CE] (← mkArrow memTy chTy)
       let mut ty ← mkArrow clauseHypTy (mkConst ``False)
       for i in (List.range st.vars.size).reverse do
-        match st.varTy[i]! with
+        match st.varTy[perm[i]!]! with
         | .real => pure ()
         | _ =>
           let intHypTy ← withLocalDecl `n .default (mkConst ``Int) fun nE => do
@@ -1268,9 +1268,132 @@ def toRefutationGoal : TacticM Unit := do
     let m ← mkFreshExprMVar refTy
     let appArgs := #[ρStarE] ++ intWits.toArray ++ #[dispatch]
     gFalse.assign (mkAppN m appArgs)
-    replaceMainGoal [m.mvarId!]
+    return m.mvarId!
+
+/-- The Slice-2 deliverable (see the module doc): reduce the main goal
+`Γ ⊢ G` to the walk's refutation goal
+`∀ ρ, (integrality hyps) → (∀ C ∈ Cs, clauseHolds ρ atoms C) → False`,
+left as the new main goal (Slice 3 closes it via solver + walk). -/
+def toRefutationGoal : TacticM Unit := do
+  if let some (gFalse, st) ← prelude then
+    let cls := (st.defClauses.toList.map fun (C, p) => (C, ClauseSrc.defClause p))
+      ++ (st.roots.toList.map fun e => (e.clause, ClauseSrc.root e))
+    let m ← assembleRefutation gFalse st st.atoms (Array.range st.vars.size) cls
+    replaceMainGoal [m]
+
+/-- The walk's referenced-input contract, value side (mirrors
+`Walk.precheck`'s collection exactly): bundle-less cids cited by a
+`.resolution (.clause _)` step of any learned bundle or the final
+bundle, deduped, ascending. -/
+def referencedInputs (clauses : Array Clause)
+    (bundles : Array (Option TraceBundle)) (final : TraceBundle) : Array Nat := Id.run do
+  let mut refSet : Array Nat := #[]
+  for cid in [0:clauses.size] do
+    if let some b := bundles[cid]! then
+      for step in b.steps do
+        if let .resolution (.clause cid') := step then
+          if cid' < bundles.size && bundles[cid']!.isNone && !refSet.contains cid' then
+            refSet := refSet.push cid'
+  for step in final.steps do
+    if let .resolution (.clause cid') := step then
+      if cid' < bundles.size && bundles[cid']!.isNone && !refSet.contains cid' then
+        refSet := refSet.push cid'
+  return refSet.qsort (· < ·)
+
+/-- Slice 3: reify → register → solve → patch → bridge → walk,
+end-to-end. On UNSAT the original goal is closed by the walked
+refutation; on SAT a per-var model display fails the tactic (decision
+4 — never a wrong close); on undef a bounded-exit error names the
+gate. -/
+unsafe def orchestrate : TacticM Unit := do
+  let some (gFalse, st) ← prelude | return
+  -- W3: registration (SolverM is exception-free — alignment is asserted
+  -- on the post-registration state below, in TacticM)
+  let reg : SolverM Unit := do
+    Solver.init
+    for slot in [1:st.atoms.size] do
+      match st.atoms[slot]! with
+      | some (.ineq ia) => let _ ← Solver.mkIneqAtom ia
+      | some (.bool _) => let _ ← Solver.mkBoolVar
+      -- unreachable: the frontend never emits root atoms, and slot 0 is
+      -- the only `none` (the true-bvar reservation, created by `init`)
+      | _ => pure ()
+    for (C, _) in st.defClauses do
+      let _ ← Solver.mkClause C.toArray false
+    for e in st.roots do
+      let _ ← Solver.mkClause e.clause.toArray false
+  let ((), sReg) := reg.run Solver.empty
+  -- hash-cons collapse guard (mkIneqAtom dedups structurally — the
+  -- frontend's arithMap should already prevent it; fail loud if not)
+  unless sReg.atoms.size == st.atoms.size &&
+      sReg.clauses.size == 1 + st.defClauses.size + st.roots.size do
+    throwError "nonlinear_arith: internal: solver registration misaligned \
+      ({sReg.atoms.size} atoms vs {st.atoms.size}, {sReg.clauses.size} clauses vs \
+      {1 + st.defClauses.size + st.roots.size})"
+  for slot in [1:st.atoms.size] do
+    unless (sReg.atoms[slot]! == st.atoms[slot]! ||
+        (st.atoms[slot]! matches some (.bool _)) && sReg.atoms[slot]!.isNone) do
+      throwError "nonlinear_arith: internal: atom slot {slot} misaligned after registration"
+  let ((r, perm), sFin) :=
+    (Solver.checkCapturing (Solver.resolve Explain.explain)).run sReg
+  match r with
+  | some .false =>
+    let some snap := sFin.refutation
+      | throwError "nonlinear_arith: internal: UNSAT exit without a refutation snapshot"
+    let (snapAtoms, snapClauses, snapBundles, snapFinal) := snap
+    -- W4: patch the proxy defs into the snapshot's atom table
+    -- (bvar-keyed — heuristicReorder never permutes bvar slots), and
+    -- rebuild Cs to the REFERENCED bundle-less inputs (precheck's
+    -- contract), with the solver-sorted literal lists.
+    let mut patched := snapAtoms
+    for (p, (defCore, _)) in st.proxies.toArray do
+      patched := patched.set! p (some (.bool defCore))
+    let refCids := referencedInputs snapClauses snapBundles snapFinal
+    let cls ← refCids.toList.mapM fun cid => do
+      if cid == 0 then
+        throwError "nonlinear_arith: trace references the true-bvar clause \
+          (cid 0) — unsupported (pin: never observed)"
+      let C := snapClauses[cid]!.lits.toList
+      let fidx := cid - 1
+      if fidx < st.defClauses.size then
+        pure (C, ClauseSrc.defClause st.defClauses[fidx]!.2)
+      else
+        let some e := st.roots[fidx - st.defClauses.size]?
+          | throwError "nonlinear_arith: internal: referenced cid {cid} out of range"
+        pure (C, ClauseSrc.root e)
+    let m ← assembleRefutation gFalse st patched perm cls
+    let snapE ← Quote.snapshotToExpr (patched, snapClauses, snapBundles, snapFinal)
+    replaceMainGoal [m]
+    Walk.walkRefutation (← getMainGoal) snapE
+  | some .true =>
+    -- decision 4: per-var model display off the post-restore (external
+    -- order) assignment. Proxy bvars carry no assignment — skipped by
+    -- construction.
+    let mut lines : Array MessageData := #[]
+    for (x, cid) in sFin.assignment do
+      if x < st.varKeys.size then
+        let key := st.varKeys[x]!
+        let vStr : String := match sFin.store[cid]! with
+          | .rat q => s!"{repr q}"
+          | v@(.root ..) =>
+            match Kernel.RAlg.refineUntilPrec v 10 with
+            | .rat q => s!"{repr q}"
+            | .root p a b _ => s!"root of {repr p} in [{a}, {b}]"
+        lines := lines.push m!"  {key} := {vStr}"
+    let intNote : MessageData :=
+      if st.varTy.any (· != .real) then
+        m!"\n(note: the model is over ℝ — it need not specialize to the integer-valued vars)"
+      else m!""
+    throwError "nonlinear_arith: satisfiable — the negated goal has a model, \
+      so the goal is not provable:{intNote}\n{MessageData.joinSep lines.toList "\n"}"
+  | _ =>
+    throwError "nonlinear_arith: nlsat search exited undef (fragment gate or bound)"
 
 /-- Debug/dev entry: `nla_frontend` runs the Slice-2 transform, leaving
 the refutation goal (close it by hand or `nlsat_refute` in pins). -/
 elab "nla_frontend" : tactic => toRefutationGoal
+
+/-- Dev entry for Slice 3: `nla_solve` runs reify → solve → quote →
+walk end-to-end (no hand-written snapshot). -/
+elab "nla_solve" : tactic => unsafe (do orchestrate)
 

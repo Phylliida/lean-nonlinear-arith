@@ -1360,9 +1360,16 @@ def searchCheck (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBoo
     r ← search resolve
   return r
 
-/-- z3 `check()` (`:1607`): init, full-dimensional flag for 12d's
-explain, reorder, watch sorting, search, restore order. -/
-def check (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBool) := do
+/-- z3 `check()` (`:1607`) with the reorder permutation captured at the
+extraction seam: returns the result AND the internal→external variable
+permutation in force when the refutation snapshot was taken (the
+identity when no reorder ran — `mkVar` seeds identity entries and only
+`heuristicReorder`/`restoreOrder` mutate the perms). nla-14 Slice 3:
+the tactic needs this map to build `ρ*`/integrality hyps against the
+snapshot's INTERNAL var numbering. Same code path as `check` — which
+is now exactly `(·.1) <$> checkCapturing …`. -/
+def checkCapturing (resolve : Nat → SolverM (Option Bool)) :
+    SolverM (Option LBool × Array Var) := do
   initSearch
   modify fun s => { s with fullDimensional := isFullDimensional s }
   let mut reordered := false
@@ -1377,11 +1384,17 @@ def check (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBool) := 
     modify fun s => { s with
       refutation := s.finalRefutation.map fun fin =>
         (s.atoms, s.clauses, s.traceBundles, fin) }
+  let permCapture := (← get).perm
   if reordered then
     restoreOrder
   -- z3 SASSERT(r != l_true || check_satisfied(m_clauses)) — the pins
   -- discharge this externally via `modelChecksOut`.
-  return r
+  return (r, permCapture)
+
+/-- z3 `check()` (`:1607`): init, full-dimensional flag for 12d's
+explain, reorder, watch sorting, search, restore order. -/
+def check (resolve : Nat → SolverM (Option Bool)) : SolverM (Option LBool) :=
+  (·.1) <$> checkCapturing resolve
 
 end Solver
 
