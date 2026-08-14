@@ -95,5 +95,6 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
 - [nla-15 `done` (2026-08-14) — tactus closer wiring: require line + `nonlinear_arith` as the ladder's first arm + LeanNonlinearArith preamble import; forced two frontend changes (inert-hyp skipping — the bc-haves finding; consumeMData — kernel-caught by the fixture's degenerate-True theorem); gate: o139-over-int probe 1/0 (nlinarith can't close it), fixture at pre-existing baseline](board/nla-15-tactus-closer-wiring-emit.md) `done`
 - [nla-15 design review `done` (2026-08-14 eve, Danielle-requested) — R-i REAL (∀-wrapped div/mod hyps misclassified strict by the syntactic pre-scan; classification moved to the reifier's own error channel; R-ii frame: the second-source-of-truth lesson)](board/nla-15-design-review.md) `done`
 - [nla-16 `todo` Parity harness: run the full workspace nonlinear corpus](board/nla-16-parity-harness-run-the.md) `todo`
+- [nla-16 plan `boarded` (2026-08-14 eve, pre-implementation planning sweep — census 16 crates/~2,613 sites, owned-items→slice map, decisions 1–5 for Danielle, slices 0–3)](board/nla-16-plan.md) `boarded`
 
 - [Milestone ladder (proof-first)](board/milestone-ladder.md)
