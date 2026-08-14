@@ -87,6 +87,12 @@ Q7 open: re-offer 11a (resultants) as interleave.
 ## Session mechanics + traps (cumulative; older entries in prior
 ## HANDOFFs — the Slice-1/2/3 lists all still apply)
 
+- **HOST BUILD CONSTRAINT (Danielle, 2026-08-14 eve): build with ≤4
+  threads or the machine crashes.** `lake build -j4` (or fewer),
+  `make -j4`, cargo likewise. Applies to the nla-16 harness runs too
+  (Slice-2 full-corpus verus runs spawn lean per fn — cap the crate
+  concurrency, never parallel-crate).
+
 New this slice (details in the Slice-4 board close-out):
 - **run_cmd counter sandwiches** pin tactic-internal state: IO.Ref
   instrumentation set inside the tactic, reset/read by `run_cmd`
