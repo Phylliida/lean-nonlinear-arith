@@ -346,3 +346,131 @@ emitted via the captured perm. -/
 example (y x : ℤ) (h1 : y < x) (h2 : x * x = 2) : False := by nla_solve
 
 end LeanNonlinearArith.Nlsat.Tests.Orchestrate
+
+/-! ## nla-14 Slice 4 pins — the layered `nonlinear_arith` tactic
+
+L1 = sandboxed `saturateCore` fast path; L2 = the Slice-3 orchestrate
+pipeline. Layer assignments are PROBE-VERIFIED (scratch_layerprobe.lean,
+2026-08-14): int1/int2 close in L1 (the mined `x*x = 2` down-propagates
+to |x| ≤ 1 and the corner rules refute — no B&B needed), so the
+B&B-through-layering coverage is carried by the `x*(x+1) = 3` drivers
+(L1 cannot bound x from the equation alone: `x*x = 3−x` gives only the
+one-sided x ≤ 3). The `nlaL2Runs` counter (bumped inside `orchestrate`)
+is the layer-pin mechanism; `run_cmd` sandwiches read it. -/
+
+namespace LeanNonlinearArith.Nlsat.Tests.NonlinearArith
+
+open LeanNonlinearArith.Nlsat.Frontend (nlaL2Runs)
+
+/- L1-never-touches-L2 (THE Slice-4 layering pin): a saturate-closable
+ℤ goal must close without entering the solver. -/
+run_cmd nlaL2Runs.set 0
+example (x : ℤ) : 0 ≤ x * x := by nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 0 do
+  throwError "L2 ran on an L1-closable goal"
+
+/- L1, second shape: the tangent-plane specimen (corner rules + mined
+anchors); the optional round numeral is exercised here. -/
+run_cmd nlaL2Runs.set 0
+example (x y : ℤ) (h1 : 1 ≤ x) (h2 : 1 ≤ y) : x + y ≤ x * y + 1 := by
+  nonlinear_arith 5
+run_cmd do unless (← nlaL2Runs.get) == 0 do
+  throwError "L2 ran on the tangent specimen"
+
+/- PROBE FINDING: int1 closes in L1 — no B&B needed. The 12e integer
+path stays pinned at the nla_solve seam (Tests.Orchestrate) and by the
+B&B drivers below. -/
+run_cmd nlaL2Runs.set 0
+example (x : ℤ) (h : x * x = 2) : False := by nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 0 do
+  throwError "int1 fell through to L2"
+
+/- L2 acceptance: sq over ℝ (L1's omega leaf is ℤ-native; ℝ goals fall
+through by design, §2.7). -/
+run_cmd nlaL2Runs.set 0
+example (x y : ℝ) (h : x * x + y * y < 0) : False := by nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 1 do
+  throwError "sq did not take the L2 path"
+
+/- The same sq driver through `nonlinear_arith_stats`: L1 throws before
+its stats print, so the closing-layer line is the ONLY info message —
+pinned byte-for-byte, conflict count included (deterministic solver). -/
+/-- info: nonlinear_arith: L1 failed to close the goal; closed by L2 (nlsat search → trace → kernel-checked walk, 4 conflicts) -/
+#guard_msgs (info) in
+example (x y : ℝ) (h : x * x + y * y < 0) : False := by nonlinear_arith_stats
+
+/- The rest of the Slice-3 driver set through the layered entry
+(acceptance sweep): disj, proxy, int2 (L1 refutes it from one square
+equation alone — the unused-hyp linter is suppressed, the second
+equation is the int2 SHAPE), the ℝ reorder driver, and the decision-2
+ℕ path (L2 — L1 does not mine the ℕ casts). -/
+example (x y : ℝ) (h : x * x < 0 ∨ y * y < 0) : False := by nonlinear_arith
+example (x : ℝ) (h : (x ≥ 1 ∧ x < 1) ∨ x * x < 0) : False := by nonlinear_arith
+set_option linter.unusedVariables false in
+example (x y : ℤ) (hx : x * x = 2) (hy : y * y = 3) : False := by nonlinear_arith
+example (x y : ℝ) (h1 : x < y * y) (h2 : y * y < x - 1) : False := by nonlinear_arith
+example (n : ℕ) (h : n * n = 2) : False := by nonlinear_arith
+
+/- B&B through the layering: `x*(x+1) = 3` has the real root
+(−1+√13)/2 but no integer one; L1 cannot bound x from the equation
+alone, so this falls to L2 and the 12e intBranch splits refute it.
+Carries the int1/int2-class-through-B&B acceptance for the layered
+tactic. -/
+run_cmd nlaL2Runs.set 0
+example (x : ℤ) (h : x * (x + 1) = 3) : False := by nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 1 do
+  throwError "the B&B driver did not take the L2 path"
+
+/- … × non-identity reorder (the R-iii interaction through the
+layering): h1 registers y first (deg 1 — it exists for the registration
+order, hence the suppressed lint), x second (deg 2), so `reorder_lt`
+swaps (perm = #[1,0]) and the intBranch split on x discharges against
+the integrality hyp at the INTERNAL index. -/
+run_cmd nlaL2Runs.set 0
+set_option linter.unusedVariables false in
+example (y x : ℤ) (h1 : y < x) (h2 : x * (x + 1) = 3) : False := by
+  nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 1 do
+  throwError "the B&B×reorder driver did not take the L2 path"
+
+/- o139 census goal, user syntax, end-to-end through the layering: L1
+fails (degree-3 cross products are nlsat-tier) and rolls back clean;
+L2 walks the 6-conflict refutation. The budget lives ON THE TEST —
+each layer gets the fresh user maxHeartbeats (Slice 4 owns budgeting). -/
+run_cmd nlaL2Runs.set 0
+set_option maxHeartbeats 800000 in
+example (a b c da db dc : ℝ)
+    (h1 : a * db ≤ b * da) (h2 : b * dc ≤ c * db)
+    (h3 : 0 < da) (h4 : 0 < db) (h5 : 0 < dc) :
+    a * dc ≤ c * da := by
+  nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 1 do
+  throwError "o139 did not take the L2 path"
+
+/- The prelude's True short-circuit survives the layering (L1 cannot
+work on `True`; L2's prelude assigns `True.intro` before any solver
+work). -/
+example : True := by nonlinear_arith
+
+/- Genuine-SAT through the layering: L1 fails, the rollback wipes its
+messages, and L2's model display is the ONLY error — byte-identical to
+the nla_solve pin (decision 4; never a wrong close). -/
+/-- error: nonlinear_arith: satisfiable — the negated goal has a model, so the goal is not provable:
+  x := 1/2 -/
+#guard_msgs (error) in
+example (x : ℝ) (h : x ≥ 0) : x ≥ 1 := by nonlinear_arith
+
+/- div/mod through the layering: L1 owns div/mod but this goal is
+unprovable (x = 0 satisfies the hyp), so L1 fails and L2's reify
+boundary hard-fails — byte-identical to the nla_solve surface. -/
+/-- error: nonlinear_arith: div reaches the L2 frontend — the L1-owned invariant is broken: x / 2 -/
+#guard_msgs (error) in
+example (x : ℤ) (h : x / 2 * 2 = x) : False := by nonlinear_arith
+
+/- Corrupted-context rejection: a hypothesis outside the reify grammar
+(an existential) is a loud error, never a silent drop. -/
+/-- error: nonlinear_arith: unsupported hypothesis shape: ∃ y, x < y -/
+#guard_msgs (error) in
+example (x : ℝ) (h : ∃ y : ℝ, x < y) : x * x < 0 := by nonlinear_arith
+
+end LeanNonlinearArith.Nlsat.Tests.NonlinearArith

@@ -1,6 +1,7 @@
 import LeanNonlinearArith.Nlsat.Walk
 import LeanNonlinearArith.Nlsat.Quote
 import LeanNonlinearArith.Nlsat.Explain
+import LeanNonlinearArith.Tactic.Saturate
 
 /-!
 # nla-14 Slice 2 — reify + Tseitin + bridge (the `nonlinear_arith` frontend core)
@@ -38,7 +39,10 @@ pipeline — reify → register → `Solver.checkCapturing` (the permutation
 seam; decision A) → proxy-def patch → referenced-inputs Cs rebuild →
 bridges against the PATCHED internal-order table →
 `Walk.walkRefutation` — closing the goal end-to-end, with the SAT-exit
-model display (decision 4) and the undef bounded-exit error.
+model display (decision 4) and the undef bounded-exit error;
+`nonlinearArithCore` + the `nonlinear_arith`/`nonlinear_arith_stats`
+elabs (Slice 4) layer it behind the sandboxed L1 `saturateCore` fast
+path with per-layer fresh heartbeat budgets (DESIGN-endgame §2.7).
 -/
 
 namespace LeanNonlinearArith.Nlsat.Frontend
@@ -1308,6 +1312,12 @@ def toRefutationGoal : TacticM Unit := do
 `Walk.referencedInputCids` (single source, shared with `precheck` and
 `walkRefutation` — Slice-3 review R-i). -/
 
+/-- L2-invocation counter / last-run conflict count (Slice 4) — bumped
+inside `orchestrate`, reported by `nonlinear_arith_stats`; the counter
+backs the L1-never-touches-L2 pin. -/
+initialize nlaL2Runs : IO.Ref Nat ← IO.mkRef 0
+initialize nlaL2Conflicts : IO.Ref Nat ← IO.mkRef 0
+
 /-- Slice 3: reify → register → solve → patch → bridge → walk,
 end-to-end. On UNSAT the original goal is closed by the walked
 refutation; on SAT a per-var model display fails the tactic (decision
@@ -1347,6 +1357,8 @@ unsafe def orchestrate : TacticM Unit := do
       throwError "nonlinear_arith: internal: atom slot {slot} misaligned after registration"
   let ((r, perm), sFin) :=
     (Solver.checkCapturing (Solver.resolve Explain.explain)).run sReg
+  nlaL2Runs.modify (· + 1)
+  nlaL2Conflicts.set sFin.conflicts
   match r with
   | some .false =>
     let some snap := sFin.refutation
@@ -1407,4 +1419,59 @@ elab "nla_frontend" : tactic => toRefutationGoal
 /-- Dev entry for Slice 3: `nla_solve` runs reify → solve → quote →
 walk end-to-end (no hand-written snapshot). -/
 elab "nla_solve" : tactic => unsafe (do orchestrate)
+
+/-! ## nla-14 Slice 4 — the `nonlinear_arith` elab + L1/L2 layering
+
+DESIGN-endgame §2.7's verbatim shape: a sandboxed L1 fast path
+(`saturateCore`); on ANY failure roll back to the ORIGINAL goal and run
+L2 (`orchestrate`); each layer under its own fresh user budget
+(`withLayerHeartbeats` — the BUDGET-SHAPE lesson: per-layer fresh
+scopes, never fraction-of-remaining). The sandbox idiom is
+tryGrobner's (Saturate.lean:1899-1904): saveState + tryCatchRuntimeEx
++ restoreState — the restore wipes both L1's context/env churn
+(ring_nf'd hyps, noted facts) and its failure messages, so L2's
+prelude sees the user's original goal. -/
+
+/-- The §2.7 layering driver. L1's failure is exception-shaped (the
+tier-2 omega leaf is deliberately unwrapped, Saturate.lean:2031), so a
+normal return means the goal it worked on closed; the `g0.isAssigned`
+check is the defensive cover for saturateCore's goal-agnostic early
+returns (a throw there falls through to L2, which is the safe side).
+Known edge (considered-not-engineered, Slice-4 plan): `ring_nf at *`
+can close g0 outright, after which saturateCore works on the NEXT goal;
+a throw there resurrects g0 via the rollback and L2 closes it —
+correct, at worst redundant. -/
+unsafe def nonlinearArithCore (stats : Bool) (maxRounds : Option Nat) :
+    TacticM Unit := do
+  let g0 ← getMainGoal
+  let s ← saveState
+  let l1 ← tryCatchRuntimeEx
+    (do Tactic.withLayerHeartbeats
+          (Tactic.saturateCore (stats := stats) (maxRounds := maxRounds))
+        unless ← g0.isAssigned do
+          throwError "nonlinear_arith: internal: L1 returned without closing the goal"
+        pure true)
+    (fun _ => do restoreState s; pure false)
+  if l1 then
+    if stats then logInfo "nonlinear_arith: closed by L1 (saturate)"
+  else
+    Tactic.withLayerHeartbeats orchestrate
+    if stats then
+      logInfo s!"nonlinear_arith: L1 failed to close the goal; closed by L2 \
+        (nlsat search → trace → kernel-checked walk, {← nlaL2Conflicts.get} conflicts)"
+
+/-- `nonlinear_arith (n)?` — the user-facing layered closer (nla-14):
+L1 `nla_saturate` fast path (most goals), on failure L2's nlsat
+search → trace → kernel-checked walk. The optional numeral overrides
+L1's round bound (default: depth-adaptive). Each layer runs under its
+own fresh user heartbeat budget (`withLayerHeartbeats`). -/
+elab "nonlinear_arith" n:(num)? : tactic =>
+  unsafe (do nonlinearArithCore false (n.map (·.getNat)))
+
+/-- `nonlinear_arith_stats (n)?` — the layered closer with L1's phase
+timings/counters plus the closing layer and L2's conflict count. -/
+elab "nonlinear_arith_stats" n:(num)? : tactic => unsafe (do
+  Tactic.nlaLitFast.set 0; Tactic.nlaCacheHit.set 0; Tactic.nlaTacticCall.set 0
+  nlaL2Runs.set 0; nlaL2Conflicts.set 0
+  nonlinearArithCore true (n.map (·.getNat)))
 

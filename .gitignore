@@ -3,3 +3,4 @@
 scratch_*.lean
 !scratch_dump.lean
 !scratch_probe.lean
+!scratch_layerprobe.lean
