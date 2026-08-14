@@ -114,6 +114,27 @@ def nodeFSet (clauses : Array Clause) (bundles : Array (Option TraceBundle))
     | _ => pure ()
   return F
 
+/-- The referenced bundle-less (INPUT) cids of a snapshot, deduped,
+ascending — the input-clause contract's cid set. Single source used by
+`precheck` (the contract check), `walkRefutation` (the input-fact
+lookup), and the Slice-3 frontend's post-run Cs rebuild
+(nla-14 Slice-3 review R-i: the three hand-mirrored copies were a
+drift risk). -/
+def referencedInputCids (bundles : Array (Option TraceBundle))
+    (final : TraceBundle) : Array Nat := Id.run do
+  let mut refSet : Array Nat := #[]
+  for b in bundles do
+    if let some b := b then
+      for step in b.steps do
+        if let .resolution (.clause cid') := step then
+          if cid' < bundles.size && bundles[cid']!.isNone && !refSet.contains cid' then
+            refSet := refSet.push cid'
+  for step in final.steps do
+    if let .resolution (.clause cid') := step then
+      if cid' < bundles.size && bundles[cid']!.isNone && !refSet.contains cid' then
+        refSet := refSet.push cid'
+  return refSet.qsort (· < ·)
+
 /-- All native walk pre-checks in one compiled function (see the module
 doc for why this is not interpreter-evaluated pieces): sizes, per-bundle
 v0 gate, V1 lemma/ clause-table agreement, per-node RUP (the same
@@ -147,18 +168,7 @@ def precheck (snap : SnapshotTy) (goalAtoms : Array (Option Atom))
   let Ff ← nodeFSet clauses bundles learnedLemmas final
   if !upRefutes (Ff.map (·.dedup)) [] then throw "final bundle: RUP check failed"
   -- input-clause contract: referenced input cids, increasing order
-  let mut refSet : Array Nat := #[]
-  for cid in [0:clauses.size] do
-    if let some b := bundles[cid]! then
-      for step in b.steps do
-        if let .resolution (.clause cid') := step then
-          if cid' < bundles.size && bundles[cid']!.isNone && !refSet.contains cid' then
-            refSet := refSet.push cid'
-  for step in final.steps do
-    if let .resolution (.clause cid') := step then
-      if cid' < bundles.size && bundles[cid']!.isNone && !refSet.contains cid' then
-        refSet := refSet.push cid'
-  let refSorted := refSet.qsort (· < ·)
+  let refSorted := referencedInputCids bundles final
   let expected := refSorted.toList.map fun cid => clauses[cid]!.lits.toList
   if !(expected.length == goalInputs.length &&
       (expected.zip goalInputs).all fun (a, b) => litsEq a b) then
@@ -373,18 +383,7 @@ unsafe def walkRefutation (mvar : MVarId) (snapE : Expr) : TacticM Unit := do
     let IE := mkApp2 (mkConst ``interp) ρE atomsE
     let motiveE := mkApp (mkConst ``clauseSatI) IE
     -- Referenced input cids (precheck-verified to match CsV in order).
-    let mut refSet : Array Nat := #[]
-    for cid in [0:clausesV.size] do
-      if let some b := bundlesV[cid]! then
-        for step in b.steps do
-          if let .resolution (.clause cid') := step then
-            if cid' < bundlesV.size && bundlesV[cid']!.isNone && !refSet.contains cid' then
-              refSet := refSet.push cid'
-    for step in finalV.steps do
-      if let .resolution (.clause cid') := step then
-        if cid' < bundlesV.size && bundlesV[cid']!.isNone && !refSet.contains cid' then
-          refSet := refSet.push cid'
-    let refSorted := refSet.qsort (· < ·)
+    let refSorted := referencedInputCids bundlesV finalV
     -- Input facts: hypothesis → clauseHolds → (bridge) clauseSatI.
     let mut inputFacts : Array (Nat × List Literal × Expr) := #[]
     for i in [0:refSorted.size] do

@@ -893,12 +893,16 @@ partial def mkNnfIff (origE : Expr) (pol : Bool) (expandedE : Expr) : TacticM Ex
       ascribe (← mkIffTrans step (← mkAppM ``or_congr
         #[← mkAppM ``and_congr #[← mkNnfIff a true eaT, ← mkNnfIff b false ebF],
           ← mkAppM ``and_congr #[← mkNnfIff a false eaF, ← mkNnfIff b true ebT]]))
-  | (``ite, #[_, c, _, a, b]) =>
+  | (``ite, #[_, c, inst, a, b]) =>
     if pol then
       let (e1, e2) ← decompose expandedE ``And
       let (ecF, eaT) ← decompose e1 ``Or
       let (ecT, ebT) ← decompose e2 ``Or
-      let step ← mkAppM ``ite_cnf #[c, a, b]
+      -- pin the USER's Decidable instance (Slice-3 review R-ii: the
+      -- trailing `[Decidable c]` was left unsynthesized by mkAppM —
+      -- binder order is (c a b)[inst]) — a freshly synthesized one
+      -- need not be defeq to the user's
+      let step ← mkAppOptM ``ite_cnf #[some c, some a, some b, some inst]
       ascribe (← mkIffTrans step (← mkAppM ``and_congr
         #[← mkAppM ``or_congr #[← mkNnfIff c false ecF, ← mkNnfIff a true eaT],
           ← mkAppM ``or_congr #[← mkNnfIff c true ecT, ← mkNnfIff b true ebT]]))
@@ -906,7 +910,7 @@ partial def mkNnfIff (origE : Expr) (pol : Bool) (expandedE : Expr) : TacticM Ex
       let (e1, e2) ← decompose expandedE ``Or
       let (ecT, eaF) ← decompose e1 ``And
       let (ecF, ebF) ← decompose e2 ``And
-      let step ← mkAppM ``not_ite_cnf #[c, a, b]
+      let step ← mkAppOptM ``not_ite_cnf #[some c, some a, some b, some inst]
       ascribe (← mkIffTrans step (← mkAppM ``or_congr
         #[← mkAppM ``and_congr #[← mkNnfIff c true ecT, ← mkNnfIff a false eaF],
           ← mkAppM ``and_congr #[← mkNnfIff c false ecF, ← mkNnfIff b false ebF]]))
@@ -1247,16 +1251,20 @@ def assembleRefutation (gFalse : MVarId) (st : ReifyState)
             let tgt ← mkAppM ``Eq #[mkApp ρStarE (toExpr i), valE]
             mkExpectedTypeHint (← mkEqRefl valE) tgt
           | .nat =>
-            -- ρ* i = ↑(↑srcE : ℤ) via Int.cast_natCast
+            -- ρ* i = ↑(↑srcE : ℤ) via Int.cast_natCast — R pinned
+            -- explicit (Slice-3 review R-ii: binders are
+            -- {R} [AddGroupWithOne R] (n) — mkAppM can't synthesize the
+            -- instance with ?R still a mvar)
             let wE ← mkAppOptM ``Nat.cast #[some (mkConst ``Int), none, some srcE]
-            let prf ← mkAppM ``Eq.symm #[← mkAppM ``Int.cast_natCast #[srcE]]
+            let prf ← mkAppM ``Eq.symm #[← mkAppOptM ``Int.cast_natCast
+              #[some (mkConst ``Real), none, some srcE]]
             let tgt ← mkAppM ``Eq #[mkApp ρStarE (toExpr i),
               ← mkAppOptM ``Int.cast #[some (mkConst ``Real), none, some wE]]
             mkExpectedTypeHint prf tgt
           | .real => throwError "nonlinear_arith: internal: real slot in intWits"
         let witE ← match ty with
           | .int => pure srcE
-          | .nat => mkAppM ``Nat.cast #[srcE]
+          | .nat => mkAppOptM ``Nat.cast #[some (mkConst ``Int), none, some srcE]
           | .real => throwError "nonlinear_arith: internal: real slot in intWits"
         let w ← mkAppOptM ``Exists.intro #[none, some predLam, some witE, some eqPrf]
         pure (some w)
@@ -1296,24 +1304,9 @@ def toRefutationGoal : TacticM Unit := do
     let m ← assembleRefutation gFalse st st.atoms (Array.range st.vars.size) cls
     replaceMainGoal [m]
 
-/-- The walk's referenced-input contract, value side (mirrors
-`Walk.precheck`'s collection exactly): bundle-less cids cited by a
-`.resolution (.clause _)` step of any learned bundle or the final
-bundle, deduped, ascending. -/
-def referencedInputs (clauses : Array Clause)
-    (bundles : Array (Option TraceBundle)) (final : TraceBundle) : Array Nat := Id.run do
-  let mut refSet : Array Nat := #[]
-  for cid in [0:clauses.size] do
-    if let some b := bundles[cid]! then
-      for step in b.steps do
-        if let .resolution (.clause cid') := step then
-          if cid' < bundles.size && bundles[cid']!.isNone && !refSet.contains cid' then
-            refSet := refSet.push cid'
-  for step in final.steps do
-    if let .resolution (.clause cid') := step then
-      if cid' < bundles.size && bundles[cid']!.isNone && !refSet.contains cid' then
-        refSet := refSet.push cid'
-  return refSet.qsort (· < ·)
+/- The walk's referenced-input contract is computed by
+`Walk.referencedInputCids` (single source, shared with `precheck` and
+`walkRefutation` — Slice-3 review R-i). -/
 
 /-- Slice 3: reify → register → solve → patch → bridge → walk,
 end-to-end. On UNSAT the original goal is closed by the walked
@@ -1366,7 +1359,7 @@ unsafe def orchestrate : TacticM Unit := do
     let mut patched := snapAtoms
     for (p, (defCore, _)) in st.proxies.toArray do
       patched := patched.set! p (some (.bool defCore))
-    let refCids := referencedInputs snapClauses snapBundles snapFinal
+    let refCids := Walk.referencedInputCids snapBundles snapFinal
     let cls ← refCids.toList.mapM fun cid => do
       if cid == 0 then
         throwError "nonlinear_arith: trace references the true-bvar clause \

@@ -270,7 +270,7 @@ private def corruptSnap : Walk.SnapshotTy := Id.run do
 /-- The corrupt snapshot's referenced inputs (the goal's `Cs` must equal
 these — the walk's input-clause contract). -/
 private def corruptCs : List (List Literal) :=
-  (Frontend.referencedInputs corruptSnap.2.1 corruptSnap.2.2.1
+  (Walk.referencedInputCids corruptSnap.2.2.1
     corruptSnap.2.2.2).toList.map fun cid => corruptSnap.2.1[cid]!.lits.toList
 
 /- Foreign `.arith`-with-proxy: sound rejection. The poisoned `.arith`
@@ -298,5 +298,51 @@ this as the bounded-exit error, never a wrong close. -/
 #guard
   let ((r, _), _) := proxyDriverRun.run { Solver.empty with maxConflicts := 0 }
   r == some .undef
+
+/-! ## Slice-3 review R-ii/R-iii — bridge-arm + interaction coverage
+
+The kernel caught the `.le/.ge,false` double-negation precisely because
+no Slice-2 pin had a ≤/≥ GOAL. These pins close the (ck, polarity)
+matrix — every `mkLitIff` arm now has an end-to-end driver — plus the
+reifyProp Iff/ite shapes and the decision-2 ℕ path. All tiny/linear;
+the bridge is built before the (trivial) search either way. -/
+
+/-- `.lt,true` arm (negated lt literal — a `<` goal disproved). -/
+example (x : ℝ) (h : x ≤ 0) : x < 1 := by nla_solve
+
+/-- `.gt,true` arm (a `>` goal disproved). -/
+example (x : ℝ) (h : x ≥ 2) : x > 1 := by nla_solve
+
+/-- `.eq,true` (goal) + `.eq,false` (hyp) arms in one driver. -/
+example (x : ℝ) (h : x = 2) : x = 2 := by nla_solve
+
+/-- `.ge,false` arm (a `≥` goal disproved — the fixed code path;
+o139 pins `.le,false`). -/
+example (x : ℝ) (h : x ≥ 2) : x ≥ 1 := by nla_solve
+
+/-- `.ne,true` arm (a ≠ hyp, positive polarity). -/
+example (x : ℝ) (h1 : x ≠ 0) (h2 : x * x ≤ 0) : False := by nla_solve
+
+/-- `.ne,false` arm (a ≠ goal — the `not_not` chain). -/
+example (x : ℝ) (h : x * x < 0) : x ≠ 0 := by nla_solve
+
+/-- Iff hyp through the frontend (iff_cnf + proxies under the and). -/
+example (x : ℝ) (h : x ≥ 1 ↔ x ≥ 2) (h1 : x ≥ 1) (h2 : x < 2) : False := by
+  nla_solve
+
+/-- ite-in-prop-position hyp (ite_cnf). -/
+example (x : ℝ) (h : if x ≥ 1 then x ≥ 2 else x ≤ 0) (h1 : x ≥ 1) (h2 : x < 2) :
+    False := by
+  nla_solve
+
+/-- The decision-2 ℕ path: cast links, the `0 ≤ ↑n` root clause, the
+ℕ integrality witness, and B&B over a nat var. -/
+example (n : ℕ) (h : n * n = 2) : False := by nla_solve
+
+/-- R-iii: intBranch × non-identity reorder — y registers first (deg 1),
+x second (deg 2), so `reorder_lt` swaps them (perm = #[1, 0]) and the
+B&B split on x lands on an INTERNAL index whose integrality hyp was
+emitted via the captured perm. -/
+example (y x : ℤ) (h1 : y < x) (h2 : x * x = 2) : False := by nla_solve
 
 end LeanNonlinearArith.Nlsat.Tests.Orchestrate

@@ -1,12 +1,16 @@
-# HANDOFF — 2026-08-14 — nla-14 Slice 3 DONE (quote+orchestrate:
-# `nla_solve` runs reify → solve → patch → bridge → walk end-to-end,
-# NO hand-written snapshots; next = Slice 4: the `nonlinear_arith`
-# elab + L1/L2 layering + acceptance)
+# HANDOFF — 2026-08-14 — nla-14 Slice 3 DONE + DESIGN REVIEW DONE
+# (quote+orchestrate: `nla_solve` runs reify → solve → patch → bridge
+# → walk end-to-end, NO hand-written snapshots; review R-i/R-ii/R-iii
+# fixed same-day; next = Slice 4: the `nonlinear_arith` elab + L1/L2
+# layering + acceptance)
 
 Read first: `board/nla-14-plan.md` (the nla-14 spec, decisions 1–5),
-then `board/nla-14-slice-3-quote-orchestrate.md` (plan + close-out with
-the new catches). Build green (7615 jobs), WORKING TREE CLEAN at
-`a5ed72c`.
+then `board/nla-14-slice-3-quote-orchestrate.md` (plan + close-out),
+then `board/nla-14-slice-3-design-review.md` (R-i shared
+referencedInputCids; R-ii TWO more latent Slice-2 bugs — ite trailing
+instance, nat cast binder order — found by pinning the full (ck,
+polarity) × reifyProp-shape matrices; R-iii intBranch×reorder pin).
+Build green (7615 jobs), WORKING TREE CLEAN at the review commit.
 
 **Source-of-truth rule: all ports cite `git show z3-4.12.5:<path>`
 (repo `verus-cad/z3`), never the working tree.** Standing directive
@@ -68,6 +72,13 @@ New this slice (details in the Slice-3 board close-out):
 - Rat has `ToString` (`1/2`); `repr` gives `(1 : Rat)/2`.
 - z3's budget check fires only after a BACKJUMPING resolve — stage-0
   refutations (sq, lt-cycle) never see `maxConflicts`.
+- (review R-ii) mkAppM stops after the LAST EXPLICIT arg — a trailing
+  `[inst]` binder (ite_cnf's `[Decidable c]`) is left unsynthesized;
+  use mkAppOptM and pin the USER's instance from the term.
+- (review R-ii) lemmas with `{R} [Class R] (x)` binder order
+  (Int.cast_natCast, Nat.cast) can't go through mkAppM — the instance
+  synthesizes only after R is pinned; mkAppOptM with R explicit.
 
-Commits: `15fa48d` (plan), `24ecfb6` (core), `a5ed72c` (pins).
+Commits: `15fa48d` (plan), `24ecfb6` (core), `a5ed72c` (pins), the
+review commit.
 Memory `verus-cad/memory/project_tactus_nonlinear_port.md` appended.
