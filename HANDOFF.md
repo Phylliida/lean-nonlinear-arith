@@ -1,10 +1,9 @@
-# HANDOFF — 2026-08-14 — nla-14 DONE (all four slices + Slice-4 design
-# review landed same-day): `nonlinear_arith` ships — sandboxed L1
-# (`saturateCore`) fast path, clean rollback to the original goal, L2 =
-# Slice-3 orchestrate, per-layer fresh heartbeat budgets. Review: R-i
-# instrumentation entry-semantics fixed same-day (OrchestrateExit), R-ii
-# div/mod × nlsat-tier composition gap boarded to nla-16.
-# Next = nla-15 (tactus wiring, ½ session — THE PAYOFF).
+# HANDOFF — 2026-08-14 (late) — nla-14 DONE + nla-15 DONE:
+# `nonlinear_arith` is wired into tactus — first arm of the nonlinear
+# ladder, `import LeanNonlinearArith` in the scope preamble, path-dep
+# require in lean-project. Gate: o139-over-int probe 1 verified/0
+# errors (nlinarith structurally can't close it); fixture at its
+# pre-existing baseline. Next = nla-16 (parity harness) = M6.
 
 Read first: `board/nla-14-plan.md` (the nla-14 spec, decisions 1–5),
 then `board/nla-14-slice-4-tactic-acceptance.md` (plan + close-out —
@@ -49,20 +48,35 @@ through the layering (800k on the test, fresh per layer), True
 short-circuit, SAT model display / div/mod hard-fail byte-identical to
 the nla_solve surfaces, unsupported-hyp (∃) loud rejection.
 
+**nla-15 (same day, evening): the tactic is LIVE in tactus.**
+`tactic_select.nonlin_ladder` gains `nonlinear_arith` as the first arm;
+the scope preamble gains `import LeanNonlinearArith`; lean-project
+gains the path-dep require (lake env covers every crate). Two forced
+frontend changes, both pinned: (1) INERT-HYP SKIPPING in phase1 — the
+`_tactus_bc_*` ∀-axiom haves sit in every emitted proof context, so
+hyps outside the arithmetic fragment are now skipped+counted (z3's
+spinoff-inert class; goal + div/mod stay strict; the SAT message
+discloses the skip count); (2) mdata robustness — kernel-caught by the
+fixture's degenerate-True theorem (a preceding `have` mdata-wraps the
+goal; prelude + mkNnfIff now consumeMData). Gate: o139-over-int probe
+(bootstrap-fixture/nla15_probe.rs) 1 verified/0 errors — nlinarith
+structurally cannot close it; fixture lib.rs at its pre-existing
+24/10 baseline (rot, not regression; direct-elaboration confirmed).
+
 ## Next
 
-1. **nla-15** (tactus wiring, ½ session): `require` line in
-   tactus/lean-project (pins already identical: lean+mathlib v4.25.0),
-   emit `nonlinear_arith` for `by(nonlinear_arith)` sites, crate-local
-   check.sh gate. THIS is the payoff: all Verus nonlinear sites get
-   the Lean backend.
-2. **nla-16** (parity harness, 1–2 + findings): owns G8/G9/G10 + the
-   R-iii pd-driver/int1 z3-binary differential probes via
-   `/tmp/z3-4.12.5` + the mk_ineq_atom normalization gap +
-   glue-subsumption watch + **the R-ii div/mod × nlsat-tier
-   composition gap (board file updated)** = M6. Also the perf watch
-   (mkDecideProof whnf on big tables; intervalMagnitude's
-   verbatim-quirk formula is the first suspect if pacing drifts).
+1. **nla-16** (parity harness, 1–2 + findings) = M6: full workspace
+   nonlinear corpus through the tactic, site-for-site vs Z3
+   (`/tmp/z3-4.12.5`); acceptance: no site Z3 closes that we don't.
+   Owns G8/G9/G10 + the R-iii pd-driver/int1 differential probes + the
+   mk_ineq_atom normalization gap + glue-subsumption watch + the R-ii
+   div/mod × nlsat-tier composition gap + the perf watch (mkDecideProof
+   whnf on big tables; intervalMagnitude's verbatim-quirk formula first
+   suspect if pacing drifts) + NOW: which ladder arm closes what (the
+   nlinarith fallback arms vs the nonlinear_arith primary — the
+   census decides whether the fallback can be retired) and the
+   fixture rot (10 pre-existing errors incl. known-red fill_zeros —
+   not ours, but the harness will keep tripping on them).
 Q7 open: re-offer 11a (resultants) as interleave.
 
 ## Session mechanics + traps (cumulative; older entries in prior
@@ -94,9 +108,25 @@ New this slice (details in the Slice-4 board close-out):
   "entered L2" — and short-circuit exits report STALE data unless the
   refs are zeroed at entry. The pin mechanism itself needs the
   adversarial read.
+- (nla-15) **mdata is everywhere in tactic-composed contexts**: a
+  preceding `have` wraps the goal in `noImplicitLambda` mdata —
+  `isConstOf`-based goal-shape checks MUST consumeMData, and so must
+  any bridge code pattern-matching hyp types (mkNnfIff's True/False
+  arms were skipped; only the kernel's final check caught the refl —
+  comparisons survived because mdata is defeq-transparent, so pins
+  without a preceding `have` NEVER see it).
+- (nla-15) tactus gate mechanics: check.sh convention exports
+  `LEAN_PATH="$(cd tactus/lean-project && lake env printenv
+  LEAN_PATH)"` (stmt-olean/per-fn builds bypass lake otherwise —
+  "unknown module prefix 'Mathlib'" is a missing env, not a
+  regression); `--lean-all-proofs` is REMOVED (probe headers stale);
+  lean-project's `lake build` fails on missing TactusCheck.lean
+  (pre-existing, env-only package — verus uses `lake env lean`).
 
 Commits: `41e32a2` (plan), `f6d3064` (core+pins), `9c769d0`
-(close-out), the review commit.
+(close-out), `4cab930` (Slice-4 review), `c7e752c` (nla-15 inert-skip),
+`199a57a` (nla-15 mdata fix), the nla-15 close-out commit; tactus side:
+the wiring commit.
 Memory `verus-cad/memory/project_tactus_nonlinear_port.md` appended
 (catch-up: the file had NO nla-14 content — the Slice-3 HANDOFF's
 "appended" claim never landed; the stale description line fixed too).

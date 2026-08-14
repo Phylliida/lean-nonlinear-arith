@@ -92,7 +92,7 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
 - [nla-14 `todo` Front-end tactic `nonlinear_arith`: Int -> Real relaxation,](board/nla-14-front-end-tactic-nonlinear.md) `todo`
 
 ## Integration
-- [nla-15 `todo` tactus closer wiring: emit `nonlinear_arith` for](board/nla-15-tactus-closer-wiring-emit.md) `todo`
+- [nla-15 `done` (2026-08-14) — tactus closer wiring: require line + `nonlinear_arith` as the ladder's first arm + LeanNonlinearArith preamble import; forced two frontend changes (inert-hyp skipping — the bc-haves finding; consumeMData — kernel-caught by the fixture's degenerate-True theorem); gate: o139-over-int probe 1/0 (nlinarith can't close it), fixture at pre-existing baseline](board/nla-15-tactus-closer-wiring-emit.md) `done`
 - [nla-16 `todo` Parity harness: run the full workspace nonlinear corpus](board/nla-16-parity-harness-run-the.md) `todo`
 
 - [Milestone ladder (proof-first)](board/milestone-ladder.md)
