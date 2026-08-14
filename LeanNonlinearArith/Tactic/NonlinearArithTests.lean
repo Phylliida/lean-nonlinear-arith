@@ -534,4 +534,17 @@ never a skip (skipping hGN would change the meaning of the query). -/
 #guard_msgs (error) in
 example (x : ℝ) (h : x ≥ 0) : ∃ y : ℝ, x < y := by nonlinear_arith
 
+/- nla-15 review R-i: a ∀-WRAPPED div/mod hyp (vstd's div/mod lemma
+shape — a plausible background-axiom member) is INERT: reifyProp's ∀
+arm throws before the div subterm is ever reached, so only genuinely
+in-fragment div/mod raises the L1-owned-invariant error. The first cut
+pre-scanned hyps for div/mod syntactically and misclassified these as
+strict — a loud failure on a closable goal. -/
+run_cmd nlaL2Runs.set 0
+example (x : ℤ) (hax : ∀ y : ℤ, y % 2 = 0 ∨ y % 2 = 1) (h : x * (x + 1) = 3) :
+    False := by
+  nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 1 do
+  throwError "the ∀-wrapped-div driver did not take the L2 path"
+
 end LeanNonlinearArith.Nlsat.Tests.NonlinearArith

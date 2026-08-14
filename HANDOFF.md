@@ -1,9 +1,11 @@
-# HANDOFF — 2026-08-14 (late) — nla-14 DONE + nla-15 DONE:
-# `nonlinear_arith` is wired into tactus — first arm of the nonlinear
-# ladder, `import LeanNonlinearArith` in the scope preamble, path-dep
-# require in lean-project. Gate: o139-over-int probe 1 verified/0
-# errors (nlinarith structurally can't close it); fixture at its
-# pre-existing baseline. Next = nla-16 (parity harness) = M6.
+# HANDOFF — 2026-08-14 (late) — nla-14 DONE + nla-15 DONE (+ its
+# design review): `nonlinear_arith` is wired into tactus — first arm of
+# the nonlinear ladder, `import LeanNonlinearArith` in the scope
+# preamble, path-dep require in lean-project. Gate: o139-over-int probe
+# 1 verified/0 errors (nlinarith structurally can't close it); fixture
+# at its pre-existing baseline. Review R-i fixed same-day
+# (message-classified skip; pre-scan deleted).
+# Next = nla-16 (parity harness) = M6.
 
 Read first: `board/nla-14-plan.md` (the nla-14 spec, decisions 1–5),
 then `board/nla-14-slice-4-tactic-acceptance.md` (plan + close-out —
@@ -122,6 +124,15 @@ New this slice (details in the Slice-4 board close-out):
   regression); `--lean-all-proofs` is REMOVED (probe headers stale);
   lean-project's `lake build` fails on missing TactusCheck.lean
   (pre-existing, env-only package — verus uses `lake env lean`).
+- (nla-15 review R-i) the skip/strict boundary is a CLASSIFICATION
+  problem — the right classifier is the reifier's OWN error channel;
+  a parallel syntactic pre-scan is a second source of truth and
+  second sources of truth drift (same shape as Slice-3's R-i).
+  Rethrow only `L1-owned invariant` + `internal:`; skip the rest.
+
+Follow-up noted (not urgent): lean-project's require is a relative
+PATH dep (`../../lean-nonlinear-arith`) — switch to a pinned git
+require once lean-nonlinear-arith is pushed.
 
 Commits: `41e32a2` (plan), `f6d3064` (core+pins), `9c769d0`
 (close-out), `4cab930` (Slice-4 review), `c7e752c` (nla-15 inert-skip),

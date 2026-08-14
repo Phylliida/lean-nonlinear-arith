@@ -1162,32 +1162,34 @@ partial def buildDispatch (bctx : BridgeCtx) (CsE : Expr)
 /-- Phase 1: reify + clausify all hypotheses (plus the ℕ nonneg
 clauses, decision 2 — Verus's own z3 encoding adds 0 ≤ n).
 
-Hyp discipline (nla-15): `strictFvs` (the negated goal `hGN`) and any
-hyp mentioning div/mod (the L1-owned invariant) reify STRICTLY — a
-failure throws with the reifier's own message. All other hyps are
-best-effort: shapes outside the arithmetic fragment (dependent ∀ —
-e.g. the ambient axiom clusters tactus emits into every proof context —
-∃, unsupported-type comparisons, prop applications) are SKIPPED and
-counted, never reified. Skipping is sound (weakening) and z3-faithful:
-the spinoff query carries those facts too, and nlsat never consumes
-them (MBQI off). `internal:`-prefixed failures rethrow — a reify bug
-must never masquerade as an inert hyp. A partially-completed reify may
-leave unused var/atom slots behind (z3's created-but-unused atoms —
-inert: no clause references them, and the walk's precheck compares the
-table against itself). -/
-def mentionsDivMod (e : Expr) : Bool :=
-  (e.find? fun e => e.isAppOf ``HDiv.hDiv || e.isAppOf ``HMod.hMod).isSome
-
+Hyp discipline (nla-15): `strictFvs` (the negated goal `hGN`) reifies
+STRICTLY — any failure throws. All other hyps are best-effort: shapes
+outside the arithmetic fragment (dependent ∀ — e.g. the ambient axiom
+clusters tactus emits into every proof context — ∃, unsupported-type
+comparisons, prop applications) are SKIPPED and counted, never
+reified. Skipping is sound (weakening) and z3-faithful: the spinoff
+query carries those facts too, and nlsat never consumes them (MBQI
+off). The classification is BY THE REIFIER'S OWN ERROR, not a
+syntactic pre-scan (review R-i: a `mentionsDivMod` pre-scan
+misclassified ∀-WRAPPED div/mod hyps — vstd's div/mod lemma shape —
+as strict; reifyProp's ∀ arm throws before the div is ever reached, so
+only genuinely in-fragment div/mod produces the L1-owned-invariant
+error): `L1-owned invariant` (div/mod) and `internal:` (bug
+visibility) rethrow; everything else skips. A partially-completed
+reify may leave unused var/atom slots behind (z3's created-but-unused
+atoms — inert: no clause references them, and the walk's precheck
+compares the table against itself). -/
 def phase1 (hypFvs : Array FVarId) (strictFvs : Array FVarId) : RM ReifyState := do
   for fv in hypFvs do
     let ty ← instantiateMVars (← fv.getType)
-    let strict := strictFvs.contains fv || mentionsDivMod ty
+    let strict := strictFvs.contains fv
     try
       let fe ← reifyProp ty true
       clausify (mkFVar fv) ty fe.2 fe id
     catch ex =>
       let msg ← ex.toMessageData.toString
-      if strict || msg.startsWith "nonlinear_arith: internal:" then
+      if strict || msg.containsSubstr "L1-owned invariant"
+          || msg.startsWith "nonlinear_arith: internal:" then
         throw ex
       modify fun s => { s with skippedInert := s.skippedInert + 1 }
   for i in [0 : (← get).vars.size] do
