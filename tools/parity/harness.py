@@ -80,10 +80,18 @@ def parse_z3_log(path: Path):
     return failed_sites, other_spans, summary
 
 
+WARNING_RE = re.compile(r"^warning:\s*(.*)$")
+STATS_MARKER = "[nla16-stats]"
+
+
 def parse_lean_log(path: Path):
-    """Returns (failed_fn_names:set, other_error_spans:list, summary)."""
+    """Returns (failed_fn_names, other_error_spans, stats_payloads, summary).
+
+    stats_payloads: list of (file, line, payload) for `[nla16-stats]`
+    warnings (the NLA16_STATS=1 channel)."""
     failed_fns = set()
     other_spans = []
+    stats = []
     summary = None
     lines = path.read_text(errors="replace").splitlines()
     for i, ln in enumerate(lines):
@@ -95,13 +103,22 @@ def parse_lean_log(path: Path):
         if m:
             summary = (int(m.group(1)), int(m.group(2)))
             continue
+        wm = WARNING_RE.match(ln)
+        if wm and wm.group(1).strip().startswith(STATS_MARKER):
+            payload = wm.group(1).strip()[len(STATS_MARKER):].strip()
+            for j in range(i + 1, min(i + 12, len(lines))):
+                sm = SPAN_RE.match(lines[j])
+                if sm:
+                    stats.append((sm.group(1), int(sm.group(2)), payload))
+                    break
+            continue
         if ERROR_RE.match(ln):
             for j in range(i + 1, min(i + 12, len(lines))):
                 sm = SPAN_RE.match(lines[j])
                 if sm:
                     other_spans.append((sm.group(1), int(sm.group(2))))
                     break
-    return failed_fns, other_spans, summary
+    return failed_fns, other_spans, stats, summary
 
 
 def norm_span_file(span_file: str, sites_files: set[str]) -> str | None:
@@ -129,9 +146,10 @@ def main() -> int:
     z3_failed_sites, z3_other_spans, z3_summary = set(), [], None
     if args.z3_log:
         z3_failed_sites, z3_other_spans, z3_summary = parse_z3_log(Path(args.z3_log))
-    lean_failed_fns, lean_other_spans, lean_summary = set(), [], None
+    lean_failed_fns, lean_other_spans, lean_stats, lean_summary = set(), [], [], None
     if args.lean_log:
-        lean_failed_fns, lean_other_spans, lean_summary = parse_lean_log(Path(args.lean_log))
+        lean_failed_fns, lean_other_spans, lean_stats, lean_summary = \
+            parse_lean_log(Path(args.lean_log))
 
     # attribute "other" spans to fns
     def attr_fn(fspan):
@@ -153,6 +171,18 @@ def main() -> int:
         for f, l in z3_failed_sites
         if (nf := (norm_span_file(f, site_files), l))[0] is not None
     }
+    # stats payloads per (file, fn): verus attaches warnings at the fn's
+    # span, so a stats line's span falls near fn_start within its span.
+    stats_by_fn = {}  # (file, fn_name) -> [payload]
+    for sfile, sline, payload in lean_stats:
+        nf = norm_span_file(sfile, site_files)
+        if nf is None:
+            continue
+        for s in sites:
+            if (s["file"] == nf and s["fn_start"] <= sline <= s["fn_end"]
+                    and sline - s["fn_start"] <= 5):
+                stats_by_fn.setdefault((nf, s["fn"]), []).append(payload)
+
     rows = []
     counts = defaultdict(int)
     for s in sites:
@@ -162,6 +192,7 @@ def main() -> int:
         lean = "-"
         if args.lean_log:
             lean = "open" if s["fn"] in lean_failed_fns else "closed"
+        layers = ";".join(stats_by_fn.get((s["file"], s["fn"]), []))
         notes = []
         if z3 == "open" and s["fn"] in z3_other_fns:
             notes.append("z3_other_error")
@@ -179,14 +210,15 @@ def main() -> int:
                 verdict = "agree-closed"
             counts[verdict] += 1
         rows.append([args.crate, s["file"], s["line"], s["fn"],
-                     z3, lean, verdict, ";".join(notes)])
+                     z3, lean, verdict, layers, ";".join(notes)])
 
     out = sys.stdout
     if args.csv:
         out = open(args.csv, "w", newline="")
     try:
         w = csv.writer(out)
-        w.writerow(["crate", "file", "line", "fn", "z3", "lean", "verdict", "notes"])
+        w.writerow(["crate", "file", "line", "fn", "z3", "lean",
+                    "verdict", "layers", "notes"])
         w.writerows(rows)
     finally:
         if args.csv:
