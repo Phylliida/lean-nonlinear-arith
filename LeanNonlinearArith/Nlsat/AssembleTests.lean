@@ -130,6 +130,13 @@ example : BoolDef.taut
       (.or (.lit ⟨0, false⟩) (.lit ⟨1, false⟩)))
     = true := by native_decide
 
+-- polarity normalization (Slice 2): opposite-polarity literals of one
+-- bvar are NOT independent — `l ∨ ¬l` must check
+example : BoolDef.taut (.or (.lit ⟨0, true⟩) (.lit ⟨0, false⟩)) = true := by
+  native_decide
+example : BoolDef.taut (.or (.lit ⟨0, true⟩) (.lit ⟨1, false⟩)) = false := by
+  native_decide
+
 -- non-tautologies are rejected (the sound direction)
 example : BoolDef.taut (.or (.lit ⟨0, false⟩) (.lit ⟨1, false⟩)) = false := by
   native_decide
@@ -154,7 +161,6 @@ example (ρ : Nat → ℝ) : clauseHolds ρ pinAtoms [⟨1, true⟩, ⟨0, false
   have h := BoolDef.taut_sound ht (fun l => litHolds ρ pinAtoms l)
   rcases h with h | h
   · refine ⟨⟨1, true⟩, by decide, ?_⟩
-    simp only [BoolDef.eval] at h
     simp [litHolds, pinAtoms, boolDefHolds] at h ⊢
     exact h
   · exact ⟨⟨0, false⟩, by decide, h⟩

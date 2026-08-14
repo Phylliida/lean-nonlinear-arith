@@ -160,6 +160,7 @@ theorem evalP_neg (ρ : Nat → ℝ) (p : MPoly) : evalP ρ p.neg = -evalP ρ p 
     push_cast
     ring
 
+
 /-! ## evalP homomorphism suite (continued): smulTerm, mul, atoms -/
 
 theorem evalP_smulTerm (ρ : Nat → ℝ) (c : Int) (mo : Monomial) (p : MPoly) :

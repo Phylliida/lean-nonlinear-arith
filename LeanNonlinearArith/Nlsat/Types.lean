@@ -232,7 +232,7 @@ end MPoly
 
 /-- `ineq_atom` kinds (Z3 `atom::kind`, values `EQ/LT/GT`). -/
 inductive IneqKind | eq | lt | gt
-deriving Repr, DecidableEq, Inhabited
+deriving Repr, DecidableEq, Inhabited, Hashable
 
 /-- z3 `atom::flip` (nlsat_types.h:69): negation of the sign condition. -/
 def IneqKind.flip : IneqKind → IneqKind
@@ -276,7 +276,7 @@ deriving Repr, DecidableEq, Inhabited
 structure Literal where
   bvar : Nat
   neg : Bool
-deriving Repr, DecidableEq, Inhabited
+deriving Repr, DecidableEq, Inhabited, Hashable
 
 namespace Literal
 
@@ -302,6 +302,8 @@ inductive BoolDef
   | and (a b : BoolDef)
   | or (a b : BoolDef)
   | neg (a : BoolDef)
+  | tru  -- truth: NNF/simplify support (Verus query shapes carry literal True)
+  | fls  -- falsum: the empty-clause base of `Assemble.clauseForm`
 deriving Repr, DecidableEq, Inhabited
 
 inductive Atom

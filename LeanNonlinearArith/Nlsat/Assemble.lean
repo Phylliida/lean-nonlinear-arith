@@ -66,42 +66,49 @@ theorem not_litSatI_forall_dedup (I : Nat → Prop) (C : List Literal) :
 /-- Table-level semantics of a proxy definition (nla-14). Leaves may
 reference OTHER PROXIES — z3's Tseitin nests, and the sharing is the
 point (defs stay small; the definitional-clause checks stay local).
-Proxy chasing descends the atom table on a fuel budget (top-level
-callers use `atoms.size + 1`: an acyclic chain has depth ≤ the proxy
-count; running dry means a CYCLE, which poisons to `False` — the
-sound direction). Arith leaves get the usual semantics; junk slots
-poison. -/
-def boolDefHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (fuel : Nat) (d : BoolDef) : Prop :=
+Proxy chasing descends the atom table guarded by a BOUND: a proxy leaf
+may unfold only to a strictly SMALLER bvar (`bound` starts at
+`atoms.size` in `interp`/`litHolds`). Conformant tables — defs
+reference strictly smaller bvars (Tseitin emission order) — evaluate
+exactly as intended; forward/cyclic references hit the bound guard and
+poison to `False` (the sound direction). The bound makes evaluation
+PATH-INDEPENDENT: entering proxy `p`'s def always recurses at bound
+`p`, no matter where the path started (`boolDefHolds_irrel`). -/
+def boolDefHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (bound : Nat) (d : BoolDef) : Prop :=
   match d with
   | .lit l =>
     match atoms[l.bvar]? with
     | some (some (.bool d')) =>
-      match fuel with
-      | 0 => False
-      | fuel' + 1 =>
-        if l.neg then ¬ boolDefHolds ρ atoms fuel' d'
-        else boolDefHolds ρ atoms fuel' d'
+      if h : l.bvar < bound then
+        (if l.neg then ¬ boolDefHolds ρ atoms l.bvar d'
+         else boolDefHolds ρ atoms l.bvar d')
+      else False
     | some (some a) => ALitHolds ρ a l.neg
     | _ => False
-  | .and a b => boolDefHolds ρ atoms fuel a ∧ boolDefHolds ρ atoms fuel b
-  | .or a b => boolDefHolds ρ atoms fuel a ∨ boolDefHolds ρ atoms fuel b
-  | .neg a => ¬ boolDefHolds ρ atoms fuel a
-termination_by (fuel, d)
+  | .and a b => boolDefHolds ρ atoms bound a ∧ boolDefHolds ρ atoms bound b
+  | .or a b => boolDefHolds ρ atoms bound a ∨ boolDefHolds ρ atoms bound b
+  | .neg a => ¬ boolDefHolds ρ atoms bound a
+  | .tru => True
+  | .fls => False
+termination_by (bound, d)
 
 /-- The atom-table interpretation: bvar `b` holds iff the table maps it
 to an atom that holds at `ρ`; a proxy (`Atom.bool`) holds iff its
-definition does. Undecodable ↦ `False` (sound direction). -/
+definition does (fuel = table size: conformant acyclic chains have
+depth ≤ #proxies ≤ size, and the `.lit`-proxy step's decrement matches
+the `litHolds`-bridge lemmas' fuel flow). Undecodable ↦ `False`
+(sound direction). -/
 def interp (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (b : Nat) : Prop :=
   match atoms[b]? with
-  | some (some (.bool d)) => boolDefHolds ρ atoms (atoms.size + 1) d
+  | some (some (.bool d)) => boolDefHolds ρ atoms atoms.size d
   | some (some a) => Atom.Holds ρ a
   | _ => False
 
 /-- Solver-level literal semantics (the F2 extraction's form). -/
 def litHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (l : Literal) : Prop :=
   match atoms[l.bvar]? with
-  | some (some (.bool d)) => if l.neg then ¬ boolDefHolds ρ atoms (atoms.size + 1) d
-                             else boolDefHolds ρ atoms (atoms.size + 1) d
+  | some (some (.bool d)) => if l.neg then ¬ boolDefHolds ρ atoms atoms.size d
+                             else boolDefHolds ρ atoms atoms.size d
   | some (some a) => ALitHolds ρ a l.neg
   | _ => False
 
@@ -193,6 +200,8 @@ def eval (τ : Literal → Prop) : BoolDef → Prop
   | .and a b => eval τ a ∧ eval τ b
   | .or a b => eval τ a ∨ eval τ b
   | .neg a => ¬ eval τ a
+  | .tru => True
+  | .fls => False
 
 /-- `boolDefHolds` IS `eval` at the leaf-semantics oracle (the bridge
 the discharges consume — proxy leaves abstract, so the `taut` checks
@@ -209,6 +218,8 @@ theorem boolDefHolds_iff_eval (ρ : Nat → ℝ) (atoms : Array (Option Atom)) :
     simp only [boolDefHolds] at iha ihb ⊢; exact or_congr iha ihb
   | neg a ih =>
     simp only [boolDefHolds] at ih ⊢; exact not_congr ih
+  | tru => simp only [boolDefHolds]; exact Iff.rfl
+  | fls => simp only [boolDefHolds]; exact Iff.rfl
 
 /-- Computable evaluation under a Boolean assignment. -/
 def evalB (σ : Literal → Bool) : BoolDef → Bool
@@ -216,6 +227,8 @@ def evalB (σ : Literal → Bool) : BoolDef → Bool
   | .and a b => evalB σ a && evalB σ b
   | .or a b => evalB σ a || evalB σ b
   | .neg a => !evalB σ a
+  | .tru => true
+  | .fls => false
 
 /-- The leaf literals, in occurrence order. -/
 def leaves : BoolDef → List Literal
@@ -223,6 +236,8 @@ def leaves : BoolDef → List Literal
   | .and a b => leaves a ++ leaves b
   | .or a b => leaves a ++ leaves b
   | .neg a => leaves a
+  | .tru => []
+  | .fls => []
 
 /-- `evalB` depends only on the leaves. -/
 theorem evalB_ext {σ₁ σ₂ : Literal → Bool} (f : BoolDef)
@@ -236,6 +251,8 @@ theorem evalB_ext {σ₁ σ₂ : Literal → Bool} (f : BoolDef)
     simp only [evalB, iha fun l hl => h l (List.mem_append_left _ hl),
       ihb fun l hl => h l (List.mem_append_right _ hl)]
   | neg a ih => simp only [evalB, ih h]
+  | tru => rfl
+  | fls => rfl
 
 /-- Computable evaluation at the `decide` oracle agrees with the
 propositional one. -/
@@ -246,6 +263,8 @@ theorem evalB_decide (τ : Literal → Prop) (f : BoolDef) :
   | and a b iha ihb => simp [evalB, eval, iha, ihb]
   | or a b iha ihb => simp [evalB, eval, iha, ihb]
   | neg a ih => simp [evalB, eval, ih]
+  | tru => simp [evalB, eval]
+  | fls => simp [evalB, eval]
 
 /-- All Boolean assignments over a literal list, as lookup lists. -/
 def allAssign : List Literal → List (List (Literal × Bool))
@@ -287,25 +306,77 @@ theorem assignGet_map (ls : List Literal) (τ : Literal → Prop) (l : Literal)
         | tail _ h => exact h
       simp [assignGet, he, ih ht htl]
 
+/-- Polarity normalization: `⟨b, true⟩` leaves become `.neg ⟨b, false⟩`.
+The truth-table engine treats leaves as INDEPENDENT atoms — without
+this, opposite-polarity literals of one bvar enumerate independently
+and `l ∨ ¬l`-shaped forms (exactly what the Tseitin definitional
+clauses become after inlining, nla-14 Slice 2) fail to check. -/
+def normNeg : BoolDef → BoolDef
+  | .lit l => if l.neg then .neg (.lit ⟨l.bvar, false⟩) else .lit l
+  | .and a b => .and (normNeg a) (normNeg b)
+  | .or a b => .or (normNeg a) (normNeg b)
+  | .neg a => .neg (normNeg a)
+  | .tru => .tru
+  | .fls => .fls
+
+/-- Normalization preserves evaluation under polarity-consistent
+oracles (`τ ⟨b, true⟩ ↔ ¬ τ ⟨b, false⟩` — `litHolds` qualifies by
+`litHolds_negate` below). -/
+theorem normNeg_correct (τ : Literal → Prop)
+    (hτ : ∀ l, τ l.negate ↔ ¬ τ l) :
+    ∀ f : BoolDef, (normNeg f).eval τ ↔ f.eval τ := by
+  intro f
+  induction f with
+  | lit l =>
+    cases hn : l.neg with
+    | false =>
+      have hl : l = ⟨l.bvar, false⟩ := by
+        cases l; simp_all
+      rw [hl]
+      simp [normNeg, eval]
+    | true =>
+      have hl : l = Literal.negate ⟨l.bvar, false⟩ := by
+        cases l; simp_all [Literal.negate]
+      rw [hl]
+      simp only [normNeg, eval]
+      simp only [Literal.negate, Bool.not_false]
+      exact (hτ ⟨l.bvar, false⟩).symm
+  | and a b iha ihb => exact and_congr iha ihb
+  | or a b iha ihb => exact or_congr iha ihb
+  | neg a ih =>
+    simp only [normNeg, eval]
+    exact not_congr ih
+  | tru => exact Iff.rfl
+  | fls => exact Iff.rfl
+
 /-- Decidable tautology check: true iff every valuation of the
-(dedup'd) leaves satisfies `f`. -/
+(dedup'd) leaves of the POLARITY-NORMALIZED form satisfies it. -/
 def taut (f : BoolDef) : Bool :=
-  (allAssign f.leaves.dedup).all fun σ => f.evalB (assignGet σ)
+  (allAssign (normNeg f).leaves.dedup).all fun σ => (normNeg f).evalB (assignGet σ)
 
 /-- Soundness of the tautology check: a `true` verdict reflects to
-propositional validity under ANY literal oracle. -/
+propositional validity of the NORMALIZED form under any oracle. -/
 theorem taut_sound {f : BoolDef} (h : f.taut = true) (τ : Literal → Prop) :
-    f.eval τ := by
+    (normNeg f).eval τ := by
   classical
-  have h' : (allAssign f.leaves.dedup).all (fun σ => f.evalB (assignGet σ)) = true := h
-  have hmem := mem_allAssign f.leaves.dedup τ
-  have hb : f.evalB (assignGet (f.leaves.dedup.map fun l => (l, decide (τ l)))) = true :=
+  have h' : (allAssign (normNeg f).leaves.dedup).all
+      (fun σ => (normNeg f).evalB (assignGet σ)) = true := h
+  have hmem := mem_allAssign (normNeg f).leaves.dedup τ
+  have hb : (normNeg f).evalB
+      (assignGet ((normNeg f).leaves.dedup.map fun l => (l, decide (τ l)))) = true :=
     List.all_eq_true.mp h' _ hmem
-  have hget : ∀ l ∈ f.leaves,
-      assignGet (f.leaves.dedup.map fun l' => (l', decide (τ l'))) l = decide (τ l) :=
+  have hget : ∀ l ∈ (normNeg f).leaves,
+      assignGet ((normNeg f).leaves.dedup.map fun l' => (l', decide (τ l'))) l
+        = decide (τ l) :=
     fun l hl => assignGet_map _ _ _ (List.nodup_dedup _) (List.mem_dedup.mpr hl)
-  rw [evalB_ext f hget, evalB_decide] at hb
+  rw [evalB_ext (normNeg f) hget, evalB_decide] at hb
   exact of_decide_eq_true hb
+
+/-- The use-site form: polarity-consistent oracles (e.g. `litHolds`)
+get validity of the ORIGINAL form. -/
+theorem taut_sound_consistent {f : BoolDef} (h : f.taut = true) (τ : Literal → Prop)
+    (hτ : ∀ l, τ l.negate ↔ ¬ τ l) : f.eval τ :=
+  (normNeg_correct τ hτ f).mp (taut_sound h τ)
 
 /-- Consequence check: every valuation satisfying `g` satisfies `f`
 (the root-clause bridge shape — the clause follows from its source
@@ -313,8 +384,8 @@ hypothesis's form). -/
 def conseq (g f : BoolDef) : Bool := taut (or (neg g) f)
 
 theorem conseq_sound {g f : BoolDef} (h : conseq g f = true) (τ : Literal → Prop)
-    (hg : g.eval τ) : f.eval τ := by
-  have h' : (or (neg g) f).eval τ := taut_sound h τ
+    (hτ : ∀ l, τ l.negate ↔ ¬ τ l) (hg : g.eval τ) : f.eval τ := by
+  have h' := taut_sound_consistent h τ hτ
   simp only [eval] at h'
   rcases h' with hn | hf
   · exact absurd hg hn
@@ -322,7 +393,362 @@ theorem conseq_sound {g f : BoolDef} (h : conseq g f = true) (τ : Literal → P
 
 end BoolDef
 
-/-! ## The unit-propagation engine (R1/F3) -/
+/-- `litHolds` is polarity-consistent on DECODABLE literals (junk
+poisons both polarities to `False` — the documented sound direction —
+so the hypothesis is needed; the frontend's literals are all
+registered/decodable). The `taut_sound_consistent` oracle hypothesis. -/
+theorem litHolds_negate (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (l : Literal)
+    (hdec : ∃ a, atoms[l.bvar]? = some (some a)) :
+    litHolds ρ atoms l.negate ↔ ¬ litHolds ρ atoms l := by
+  obtain ⟨a, ha⟩ := hdec
+  obtain ⟨b, n⟩ := l
+  have ha' : atoms[b]? = some (some a) := ha
+  cases a with
+  | ineq ia =>
+    simp only [litHolds, ALitHolds, Literal.negate, ha']
+    cases n <;> simp
+  | root ra =>
+    simp only [litHolds, ALitHolds, Literal.negate, ha']
+    cases n <;> simp
+  | bool d =>
+    simp only [litHolds, Literal.negate, ha']
+    cases n <;> simp
+
+/-- A clause as a Boolean form: the right-associated disjunction of its
+literals, `fls`-terminated. -/
+def clauseForm : List Literal → BoolDef
+  | [] => .fls
+  | l :: C => .or (.lit l) (clauseForm C)
+
+/-- The bridge the walk's bridges consume: `clauseHolds` IS the eval of
+the clause's form under the literal semantics. (nla-14 Slice 2: the
+Tseitin definitional-clause bridges are
+`(clauseHolds_iff_eval …).mpr (taut_sound …)`; root units are direct
+∃-introductions.) -/
+theorem clauseHolds_iff_eval (ρ : Nat → ℝ) (atoms : Array (Option Atom))
+    (C : List Literal) :
+    clauseHolds ρ atoms C ↔ BoolDef.eval (litHolds ρ atoms) (clauseForm C) := by
+  induction C with
+  | nil =>
+    simp only [clauseHolds, clauseForm, BoolDef.eval]
+    constructor
+    · intro h; obtain ⟨l, hl, _⟩ := h; cases hl
+    · intro h; exact h.elim
+  | cons l C ih =>
+    simp only [clauseHolds, clauseForm, BoolDef.eval]
+    constructor
+    · rintro ⟨l', hl', h⟩
+      rw [List.mem_cons] at hl'
+      rcases hl' with rfl | hl'
+      · exact Or.inl h
+      · exact Or.inr (ih.mp ⟨l', hl', h⟩)
+    · intro h
+      rcases h with h | h
+      · exact ⟨l, List.mem_cons_self, h⟩
+      · obtain ⟨l', hl', h'⟩ := ih.mpr h
+        exact ⟨l', List.mem_cons_of_mem _ hl', h'⟩
+
+/-! ## One-step unfolding/bridge lemmas for the frontend (nla-14 Slice 2)
+
+`boolDefHolds` is WF-compiled (fuel × structure measure), so the kernel
+does NOT iota-reduce it — the Tseitin bridge construction is term-mode
+and needs NAMED per-variant unfoldings (the `holds_single_*` idiom).
+Fuel flow: `litHolds`/`interp` enter defs at fuel `atoms.size`; the
+`.lit`-proxy step consumes one unit; conformant (acyclic, in-range)
+tables never hit 0 on a real path (depth ≤ #proxies ≤ size). -/
+
+theorem boolDefHolds_and (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (fuel : Nat)
+    (a b : BoolDef) :
+    boolDefHolds ρ atoms fuel (.and a b) ↔
+    (boolDefHolds ρ atoms fuel a ∧ boolDefHolds ρ atoms fuel b) := by
+  simp only [boolDefHolds]
+
+theorem boolDefHolds_or (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (fuel : Nat)
+    (a b : BoolDef) :
+    boolDefHolds ρ atoms fuel (.or a b) ↔
+    (boolDefHolds ρ atoms fuel a ∨ boolDefHolds ρ atoms fuel b) := by
+  simp only [boolDefHolds]
+
+theorem boolDefHolds_neg (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (fuel : Nat)
+    (a : BoolDef) :
+    boolDefHolds ρ atoms fuel (.neg a) ↔ ¬ boolDefHolds ρ atoms fuel a := by
+  simp only [boolDefHolds]
+
+theorem boolDefHolds_tru (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (fuel : Nat) :
+    boolDefHolds ρ atoms fuel .tru ↔ True := by
+  simp only [boolDefHolds]
+
+theorem boolDefHolds_fls (ρ : Nat → ℝ) (atoms : Array (Option Atom)) (fuel : Nat) :
+    boolDefHolds ρ atoms fuel .fls ↔ False := by
+  simp only [boolDefHolds]
+
+/-- Literal-level unfolding at a proxy slot (the bound guard surfaced
+as a `dite` — applies at any bound by kernel iota on the bound
+numeral + the decidable `<`). -/
+theorem boolDefHolds_lit_bool (ρ : Nat → ℝ) (atoms : Array (Option Atom))
+    (l : Literal) (d : BoolDef) (bound : Nat)
+    (h : atoms[l.bvar]? = some (some (.bool d))) :
+    boolDefHolds ρ atoms bound (.lit l) ↔
+    (if hb : l.bvar < bound then
+       (if l.neg then ¬ boolDefHolds ρ atoms l.bvar d
+        else boolDefHolds ρ atoms l.bvar d)
+     else False) := by
+  simp only [boolDefHolds, h]
+
+/-- Literal-level unfolding at an ineq slot (fuel-free) — the bridge to
+`litHolds` for arith leaves. -/
+theorem boolDefHolds_lit_ineq (ρ : Nat → ℝ) (atoms : Array (Option Atom))
+    (l : Literal) (a : IneqAtom) (fuel : Nat)
+    (h : atoms[l.bvar]? = some (some (.ineq a))) :
+    boolDefHolds ρ atoms fuel (.lit l) ↔ litHolds ρ atoms l := by
+  simp only [boolDefHolds, litHolds, h]
+
+/-- The root-atom counterpart. -/
+theorem boolDefHolds_lit_root (ρ : Nat → ℝ) (atoms : Array (Option Atom))
+    (l : Literal) (a : RootAtom) (fuel : Nat)
+    (h : atoms[l.bvar]? = some (some (.root a))) :
+    boolDefHolds ρ atoms fuel (.lit l) ↔ litHolds ρ atoms l := by
+  simp only [boolDefHolds, litHolds, h]
+
+/-- `litHolds` at a proxy slot unfolds to the def at fuel `atoms.size`. -/
+theorem litHolds_bool (ρ : Nat → ℝ) (atoms : Array (Option Atom))
+    (p : Nat) (neg : Bool) (d : BoolDef)
+    (h : atoms[p]? = some (some (.bool d))) :
+    litHolds ρ atoms ⟨p, neg⟩ ↔
+    (if neg then ¬ boolDefHolds ρ atoms atoms.size d
+     else boolDefHolds ρ atoms atoms.size d) := by
+  simp only [litHolds, h]
+
+/-- `interp` at a proxy slot, same shape. -/
+theorem interp_bool (ρ : Nat → ℝ) (atoms : Array (Option Atom))
+    (p : Nat) (d : BoolDef)
+    (h : atoms[p]? = some (some (.bool d))) :
+    interp ρ atoms p ↔ boolDefHolds ρ atoms atoms.size d := by
+  simp only [interp, h]
+
+/-- Every PROXY leaf of `d` (a leaf indexing a `.bool` slot) sits
+strictly below `bound` (decide-grade). Arith/junk leaves pass. -/
+def proxyLeavesLT (atoms : Array (Option Atom)) (bound : Nat) : BoolDef → Bool
+  | .lit l =>
+    match atoms[l.bvar]? with
+    | some (some (.bool _)) => decide (l.bvar < bound)
+    | _ => true
+  | .and a b => proxyLeavesLT atoms bound a && proxyLeavesLT atoms bound b
+  | .or a b => proxyLeavesLT atoms bound a && proxyLeavesLT atoms bound b
+  | .neg a => proxyLeavesLT atoms bound a
+  | .tru => true
+  | .fls => true
+
+/-- The Tseitin emission-order invariant, checked from index `b`:
+every proxy's def has its proxy leaves strictly below the proxy's own
+bvar (the frontend creates proxies bottom-up). Discharged by `decide`
+on the concrete table. -/
+def boolDefsOrderedFrom (atoms : Array (Option Atom)) (b : Nat) :
+    List (Option Atom) → Bool
+  | [] => true
+  | a :: rest =>
+    (match a with
+     | some (.bool d) => proxyLeavesLT atoms b d
+     | _ => true) && boolDefsOrderedFrom atoms (b + 1) rest
+
+/-- The full-table check. -/
+def boolDefsOrdered (atoms : Array (Option Atom)) : Bool :=
+  boolDefsOrderedFrom atoms 0 atoms.toList
+
+/-- Extraction: a `.bool` slot's def satisfies its leaf bound. -/
+theorem boolDefsOrderedFrom_at (atoms : Array (Option Atom)) (l : List (Option Atom))
+    (n i : Nat) (d : BoolDef)
+    (h : boolDefsOrderedFrom atoms n l = true)
+    (hl : l[i]? = some (some (.bool d))) :
+    proxyLeavesLT atoms (n + i) d = true := by
+  induction l generalizing n i with
+  | nil => simp [List.getElem?_nil] at hl
+  | cons a rest ih =>
+    simp only [boolDefsOrderedFrom, Bool.and_eq_true] at h
+    obtain ⟨ha, hr⟩ := h
+    cases i with
+    | zero =>
+      simp only [List.getElem?_cons_zero] at hl
+      injection hl with hl'
+      subst hl'
+      simpa using ha
+    | succ j =>
+      simp only [List.getElem?_cons_succ] at hl
+      have := ih (n + 1) j hr hl
+      rwa [show n + 1 + j = n + (j + 1) by omega] at this
+
+/-- The table-level entry point. -/
+theorem boolDefsOrdered_at (atoms : Array (Option Atom))
+    (hord : boolDefsOrdered atoms = true) (p : Nat) (d : BoolDef)
+    (hl : atoms[p]? = some (some (.bool d))) :
+    proxyLeavesLT atoms p d = true := by
+  have hl' : atoms.toList[p]? = some (some (.bool d)) := by
+    rwa [← Array.getElem?_toList] at hl
+  have := boolDefsOrderedFrom_at atoms atoms.toList 0 p d hord hl'
+  simpa using this
+
+/-- Path-independence: when both bounds cover `d`'s proxy leaves, the
+bound is invisible (the `.lit`-proxy step recurses at the same child
+bvar from both sides, so the two evaluations never diverge). -/
+theorem boolDefHolds_irrel (ρ : Nat → ℝ) (atoms : Array (Option Atom))
+    (hord : boolDefsOrdered atoms = true) :
+    ∀ (b1 b2 : Nat) (d : BoolDef),
+    proxyLeavesLT atoms b1 d = true → proxyLeavesLT atoms b2 d = true →
+    (boolDefHolds ρ atoms b1 d ↔ boolDefHolds ρ atoms b2 d) := by
+  intro b1 b2 d
+  induction d with
+  | lit l =>
+    intro h1 h2
+    cases hl : atoms[l.bvar]? with
+    | none => simp only [boolDefHolds, hl]
+    | some o =>
+      cases o with
+      | none => simp only [boolDefHolds, hl]
+      | some a =>
+        cases a with
+        | ineq ia => simp only [boolDefHolds, hl]
+        | root ra => simp only [boolDefHolds, hl]
+        | bool d' =>
+          simp only [proxyLeavesLT, hl] at h1 h2
+          have hb1 := of_decide_eq_true h1
+          have hb2 := of_decide_eq_true h2
+          simp only [boolDefHolds, hl, dif_pos hb1, dif_pos hb2]
+  | and a b iha ihb =>
+    intro h1 h2
+    simp only [proxyLeavesLT, Bool.and_eq_true] at h1 h2
+    obtain ⟨h1a, h1b⟩ := h1; obtain ⟨h2a, h2b⟩ := h2
+    simp only [boolDefHolds]
+    exact and_congr (iha h1a h2a) (ihb h1b h2b)
+  | or a b iha ihb =>
+    intro h1 h2
+    simp only [proxyLeavesLT, Bool.and_eq_true] at h1 h2
+    obtain ⟨h1a, h1b⟩ := h1; obtain ⟨h2a, h2b⟩ := h2
+    simp only [boolDefHolds]
+    exact or_congr (iha h1a h2a) (ihb h1b h2b)
+  | neg a ih =>
+    intro h1 h2
+    simp only [proxyLeavesLT] at h1 h2
+    simp only [boolDefHolds]
+    exact not_congr (ih h1 h2)
+  | tru => intro _ _; simp only [boolDefHolds]
+  | fls => intro _ _; simp only [boolDefHolds]
+
+/-- Monotonicity of the leaf bound. -/
+theorem proxyLeavesLT_mono (atoms : Array (Option Atom)) :
+    ∀ (b b' : Nat) (d : BoolDef), proxyLeavesLT atoms b d = true → b ≤ b' →
+    proxyLeavesLT atoms b' d = true := by
+  intro b b' d
+  induction d with
+  | lit l =>
+    intro h hbb
+    cases hl : atoms[l.bvar]? with
+    | none => simp only [proxyLeavesLT, hl]
+    | some o =>
+      cases o with
+      | none => simp only [proxyLeavesLT, hl]
+      | some a =>
+        cases a with
+        | ineq ia => simp only [proxyLeavesLT, hl]
+        | root ra => simp only [proxyLeavesLT, hl]
+        | bool d' =>
+          simp only [proxyLeavesLT, hl, decide_eq_true_eq] at h ⊢
+          exact lt_of_lt_of_le h hbb
+  | and x y ihx ihy =>
+    intro h hbb
+    simp only [proxyLeavesLT, Bool.and_eq_true] at h ⊢
+    obtain ⟨hx, hy⟩ := h
+    exact ⟨ihx hx hbb, ihy hy hbb⟩
+  | or x y ihx ihy =>
+    intro h hbb
+    simp only [proxyLeavesLT, Bool.and_eq_true] at h ⊢
+    obtain ⟨hx, hy⟩ := h
+    exact ⟨ihx hx hbb, ihy hy hbb⟩
+  | neg x ih =>
+    intro h hbb
+    simp only [proxyLeavesLT] at h ⊢
+    exact ih h hbb
+  | tru => intro _ _; rfl
+  | fls => intro _ _; rfl
+
+/-- The boundary bridge: at a conformant (ordered) table, table
+evaluation of a def at a covering bound IS the structural `eval` under
+the literal semantics. This is what lets the frontend's per-proxy Iffs
+compose WITHOUT unfolding shared defs (z3's Tseitin sharing survives
+into the checked proof terms). -/
+theorem boolDefHolds_evalLitHolds (ρ : Nat → ℝ) (atoms : Array (Option Atom))
+    (hord : boolDefsOrdered atoms = true) :
+    ∀ (bound : Nat) (d : BoolDef),
+    proxyLeavesLT atoms bound d = true →
+    (boolDefHolds ρ atoms bound d ↔ BoolDef.eval (litHolds ρ atoms) d) := by
+  intro bound
+  induction bound using Nat.strong_induction_on with
+  | _ bound ihB =>
+    intro d
+    induction d with
+    | lit l =>
+      intro hlt
+      obtain ⟨lb, ln⟩ := l
+      cases hl : atoms[lb]? with
+      | none => simp [boolDefHolds, BoolDef.eval, litHolds, hl]
+      | some o =>
+        cases o with
+        | none => simp [boolDefHolds, BoolDef.eval, litHolds, hl]
+        | some a =>
+          cases a with
+          | ineq ia => simp [boolDefHolds, BoolDef.eval, litHolds, hl]
+          | root ra => simp [boolDefHolds, BoolDef.eval, litHolds, hl]
+          | bool d' =>
+            simp only [proxyLeavesLT, hl] at hlt
+            have hbb := of_decide_eq_true hlt
+            have hltSize : lb < atoms.size := by
+              have h' := Array.getElem?_eq_some_iff.mp hl
+              exact h'.1
+            have hordAt : proxyLeavesLT atoms lb d' = true :=
+              boolDefsOrdered_at atoms hord lb d' hl
+            have hSize : proxyLeavesLT atoms atoms.size d' = true :=
+              proxyLeavesLT_mono atoms lb atoms.size d' hordAt (le_of_lt hltSize)
+            have irS := boolDefHolds_irrel ρ atoms hord atoms.size lb d' hSize hordAt
+            have step1 := boolDefHolds_lit_bool ρ atoms ⟨lb, ln⟩ d' bound hl
+            rw [dif_pos hbb] at step1
+            have step2 := litHolds_bool ρ atoms lb ln d' hl
+            cases ln with
+            | false =>
+              show _ ↔ litHolds ρ atoms ⟨lb, false⟩
+              have s1 : boolDefHolds ρ atoms bound (.lit ⟨lb, false⟩) ↔
+                  boolDefHolds ρ atoms lb d' := by simpa using step1
+              have s2 : litHolds ρ atoms ⟨lb, false⟩ ↔
+                  boolDefHolds ρ atoms atoms.size d' := by
+                simpa using step2
+              exact s1.trans (s2.trans irS).symm
+            | true =>
+              show _ ↔ litHolds ρ atoms ⟨lb, true⟩
+              have s1 : boolDefHolds ρ atoms bound (.lit ⟨lb, true⟩) ↔
+                  ¬ boolDefHolds ρ atoms lb d' := by simpa using step1
+              have s2 : litHolds ρ atoms ⟨lb, true⟩ ↔
+                  ¬ boolDefHolds ρ atoms atoms.size d' := by
+                simpa using step2
+              exact s1.trans (s2.trans (not_congr irS)).symm
+    | and a b iha ihb =>
+      intro hlt
+      simp only [proxyLeavesLT, Bool.and_eq_true] at hlt
+      obtain ⟨ha, hb⟩ := hlt
+      simp only [boolDefHolds, BoolDef.eval]
+      exact and_congr (iha ha) (ihb hb)
+    | or a b iha ihb =>
+      intro hlt
+      simp only [proxyLeavesLT, Bool.and_eq_true] at hlt
+      obtain ⟨ha, hb⟩ := hlt
+      simp only [boolDefHolds, BoolDef.eval]
+      exact or_congr (iha ha) (ihb hb)
+    | neg a ih =>
+      intro hlt
+      simp only [proxyLeavesLT] at hlt
+      simp only [boolDefHolds, BoolDef.eval]
+      exact not_congr (ih hlt)
+    | tru => intro _; simp [boolDefHolds, BoolDef.eval]
+    | fls => intro _; simp [boolDefHolds, BoolDef.eval]
+
+/-! ## The unit-propagation engine (R1/F3) -//-! ## The unit-propagation engine (R1/F3) -//-! ## The unit-propagation engine (R1/F3) -//-! ## The unit-propagation engine (R1/F3) -//-! ## The unit-propagation engine (R1/F3) -/
 
 /-- One literal's status under the partial assignment. -/
 inductive LitStatus | sat | fals | un
