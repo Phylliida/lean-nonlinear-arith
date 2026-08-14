@@ -1,17 +1,14 @@
-# HANDOFF — 2026-08-13 (12e DONE in one session — integer B&B ported
-# end-to-end, G6 closed, **isV0 := !isS1Gated** (the last shape gate
-# lifted); next = nla-14: the `nonlinear_arith` tactic — the largest
-# remaining piece)
+# HANDOFF — 2026-08-13 (eve 2) — nla-14 PLANNED + Slice 1 DONE
+# (Tseitin proxy checker support: `Atom.bool` + `BoolDef` + the
+# taut/conseq reflection, additive, axioms clean; next = Slice 2:
+# reify+Tseitin+bridge)
 
-Read first: `DESIGN-endgame.md`, then `BOARD.md` — newest entries:
-"nla-12e `done`" (the B&B port + decisions 1–2 + the int1 two-round
-walk), "nla-12e plan `done`", "nla-19b Slice 3 design review `done`"
-(**R-iii: pd drivers are source-reading-anchored only — z3-binary
-differential probe boarded for nla-16; int1 folds into that batch**;
-the mk_ineq_atom normalization gap — our mkIneqAtom doesn't
-flip_sign_if_lm_neg ineq factors; search-side, 12c-fidelity/nla-16
-lane). Build system: Nix `lake` on PATH (not elan); full build green
-(7612 jobs), WORKING TREE CLEAN, everything committed.
+Read first: `board/nla-14-plan.md` (the nla-14 spec — decisions 1–5
+RESOLVED by Danielle's standing principles: match every z3 case, the
+right way, now not later, SAME MECHANISM as z3 for performance
+parity), then `board/nla-14-slice-1-booldef-proxy-checker.md` (Slice-1
+close-out with the new traps). Build green (7612 jobs), WORKING TREE
+CLEAN at `72c3b6a`.
 
 **Source-of-truth rule: all ports cite `git show z3-4.12.5:<path>`
 (repo `verus-cad/z3`), never the working tree.** Standing directive
@@ -20,85 +17,81 @@ differential probes: worktree `/tmp/z3-4.12.5` (`make -j shell`).
 
 ## State of the arc
 
-**M3 declared** (19b Slice 3, earlier today) and **12e landed the same
-day**: z3's integer branch-and-bound (`nlsat_solver.cpp:1554-1606`)
-ported search-side (collectIntBounds scan + intLt/tighten +
-initSearch restart + emitIntBranch) with the `intBranch` payload as
-`(x, lo : Int)` — exactly what z3 puts in the emitted clause (decision
-2; R-iv dissolved by construction). Checker side: the split is
-discharged from the CONTEXT's integrality hypothesis **`∃ n : ℤ,
-ρ x = ↑n`** (decision 1 — this is the convention nla-14's frontend
-will emit per Int-typed var; the walk's `introToClauseHyp` intros past
-such hyps). int1 (`{x0² = 2}` over one int var, TWO B&B rounds) walked
-end-to-end; probes pin missing/wrong-var integrality rejection and
-payload-mismatch rejection. `isV0` is now just the S1 fragment gate.
+M3 + 12e landed earlier today (see the previous HANDOFF's git log);
+this evening session planned nla-14 and landed Slice 1. Key plan
+facts: the solver is PURE (`SolverM = StateM Solver`,
+`Solver.run'` — callable from TacticM); L1 needs no changes
+(`saturateCore` + `withLayerHeartbeats` are the §2.7 shape); bool vars
+were ALREADY ported search-side (`mkBoolVar` Solver.lean:183,
+`isArithAtom` :245, decision path :486 — mirrors z3's `mk_bool_var`);
+the walk's goal shape is `∀ ρ, (integrality hyps) → (∀ C ∈ Cs,
+clauseHolds ρ atoms C) → False` with integrality hyps BEFORE the
+clause hyp (12e decision 1).
 
-## Next: nla-14 — the `nonlinear_arith` front-end tactic (2–3 sessions)
+**Slice 1 landed the checker side of Tseitin:** `Atom.bool (d :
+BoolDef)` with flattened arith-literal-leaf definitions,
+`interp`/`litHolds` arms (`boolDefHolds`), and the decide-grade
+`BoolDef.taut`/`conseq` + `taut_sound`/`conseq_sound` reflection
+(the upRefutes idiom). `Walk.precheck`/`clauseDecodable` UNCHANGED by
+design. 12 churn arms in Solver/Refute, all junk/defensive. Pins in
+AssembleTests incl. the end-to-end {¬b1, b0} definitional clause via
+`taut_sound`.
 
-Spec: BOARD "nla-14" + DESIGN-endgame §2.7. The pieces:
-- **Layering:** L1 `nla_saturate` first (fast path, most goals), on
-  failure L2/L3 search+check. Budgets per the BUDGET-SHAPE lesson:
-  `withLayerHeartbeats` (fresh user budget per layer, Z3-per-module
-  analogue) — never fraction-of-remaining.
-- **Int → Real atom mapping** + 12e's integrality-hyp emission
-  (`∃ n : ℤ, ρ x = ↑n` per Int-typed var — the convention decision 1
-  established; the checker consumes it in `intBranchSplitProduce`).
-  ℤ ⊆ ℝ relaxation direction is sound for proving (goal proven over ℝ
-  with ℤ atoms specializes); div/mod never reach L2 (L1-owned) —
-  assert this invariant at the frontend boundary.
-- **Hypothesis selection:** Verus query shape — context-free, only
-  stated `requires` (matches the spinoff query Z3 sees; no
-  ambient-context mining beyond what L1 already does).
-- Owns F-y.
+## Next: nla-14 Slice 2 — reify+Tseitin+bridge
 
-## Roadmap after nla-14 (unchanged)
+Per the plan's slice list. The components: Expr→MPoly/Atom parser
+(ℤ/ℕ/ℝ comparisons; `+ - * ^nat`, casts), var table (ℤ→`mkVar true`
++ integrality hyp emission; ℕ→ℤ + `0 ≤ ↑n` clause per decision 2; ℝ
+direct), Tseitin clausification with `mkBoolVar` slots + flattened
+defs, per-clause bridges (`conseq_sound` for root clauses,
+`taut_sound` for definitional), `byContradiction` assembly. First
+recon question (recorded in the Slice-1 close-out): the proxy-def
+patch applies to the extracted snapshot POST-reorder — defs reference
+bvars (stable across `heuristicReorder`), but the atom table the walk
+sees is the snapshot's internal-order one; bridges are built against
+the same patched table by construction.
 
-nla-15 (tactus wiring, ½ session; toolchains aligned, a `require`
-line + closer-string emission) → nla-16 (parity harness, 1–2 +
-findings; owns G8/G9/G10 + **R-iii: pd-driver + int1 z3-binary
-differential probe** via `/tmp/z3-4.12.5`) = M6. Total-to-M6 ~4–7
-sessions. Tier B (G7 rootGeneric deg ≥ 3, S1 lane) deferred unless
-16's harness shows the corpus needs it. Q7: re-offer 11a (resultants)
-as the interleave lane.
+## Roadmap (unchanged)
 
-## Session mechanics + traps (cumulative; F3/F4 section of commit
-d9d5df1 still accurate for dump/refresh recipes)
+Slices 3 (quote+orchestrate + SAT-model display per decision 4) →
+Slice 4 (the `nonlinear_arith` elab, layering, acceptance + probes,
+design review) = nla-14 (3–4 sessions total) → nla-15 (tactus wiring,
+½) → nla-16 (parity harness; owns G8/G9/G10 + R-iii pd/int1 z3-binary
+probes + mk_ineq_atom gap + glue-subsumption watch) = M6. Tier B
+(G7/S1) deferred unless the harness shows need. Q7 open: re-offer 11a
+(resultants) as interleave.
 
-- **A doc comment (`/-- -/`) directly above `#guard` fails parsing**
-  with "unexpected token '#guard'; expected 'lemma'" — docstrings
-  attach only to declarations; use `/- -/` for guard pins.
-- `scratch_dump.lean` needs `lake env lean --run` (it defines `main`;
-  bare `lake env lean` elaborates silently and prints nothing).
-- Verify `git status` at session start (the 19b-Slice-2 session's
-  board split was uncommitted despite its HANDOFF's "clean tree").
-- **`break` works in do-notation `while` loops** (used in
-  searchCheck's B&B loop); `let mut` still can't be assigned inside a
-  `withContext` closure (thread a state record).
-- **'_tmp✝' kernel free-variable errors are elaboration
-  error-recovery artifacts** — grep for the REAL error first (an
-  `unknown identifier` upstream); do NOT chase the mvar table.
-- `closeAlgRefl`/`closeNumerically`/`closeSigProd` wrap their sandbox
-  in `withoutModifyingState` + `hasMVar` checks on produced terms
-  (the Slice-1 hole class).
-- Inductive PARAMETERS are implicit in constructors (`mkAppOptM …
-  #[some ρ]`).
-- A do-block `try` arm must end in a VALUE, not a bare assignment.
-- Structure-update syntax across a line break misparses inside a
-  nested `try` — keep `{ S with … }` on one line.
-- Inline `nlsat_arith_valid_steps #[…]` payloads with `(-1)` Int
-  literals (or empty monomials) leave mvars at `evalExpr` — named
-  `Array TraceStep` defs with ascriptions.
-- Multi-example scratch files: diagnostics sort by position — logInfo
-  lines don't interleave with errors temporally.
-- The earlier traps stand (block-buffered `--run` output; `lake
-  build <module>` BEFORE `lake env lean scratch.lean`; swallowed
-  try/catch instrumentation recipe; `Eq.mp` forward / `Eq.mpr`
-  BACKWARD; `(0:ℝ)` annotation; `Or.getAppFnArgs` = `#[A, B]`;
-  `Int.lt_or_ge` doesn't exist — use the generic `lt_or_ge`).
+## Session mechanics + traps (cumulative)
 
-Commits this session: `52ee0f8` (board split housekeeping), `09a75b0`
-+ `2b6116e` (19b Slice 3 + M3), `33b2f18` (Slice-3 close-out),
-`f7a0bfc` (poem), `371babf` (Slice-3 design review), `f012646` (12e)
-+ the close-out docs commit. Memory file
-`verus-cad/memory/project_tactus_nonlinear_port.md` updated (12e
-entry; NEXT SESSION ORDER line current).
+New this session (details in the Slice-1 board entry):
+- **`open Classical` inside the namespace** for `decide (τ l)` in
+  STATEMENTS (the `classical` tactic can't help signatures).
+- The MPoly evaluator is **`Check.evalP`** (Semantics.lean:77), NOT
+  Kernel's (that's the PairQ certificate evaluator — the
+  unknown-constant error disguises itself as "Function expected ...
+  has type ?m.1").
+- simp needs `Check.Atom.Holds` in the set BEFORE `holds_single_lt`
+  fires (the Iff head is `Atom.Holds`).
+- simp proofs unfolding the atom table: `cases a` BEFORE `cases n`
+  (a fresh match arm on a variable atom sticks).
+- Prior section (from the 12e HANDOFF, still accurate): doc comment
+  above `#guard` fails parsing; `scratch_dump.lean` needs
+  `lake env lean --run`; verify `git status` at session start;
+  `break` works in do-notation `while`; `let mut` can't be assigned
+  inside `withContext` closures (thread a state record);
+  '_tmp✝' kernel fv errors = upstream elaboration error-recovery —
+  grep for the REAL error; `withoutModifyingState` + `hasMVar` checks
+  on produced terms (the Slice-1 hole class); inductive parameters
+  implicit in constructors (`mkAppOptM … #[some ρ]`); do-block `try`
+  arms end in VALUES; `{ S with … }` structure updates on ONE line;
+  named `Array TraceStep` defs with ascriptions for `evalExpr`;
+  block-buffered `--run` output; `lake build <module>` BEFORE
+  `lake env lean scratch.lean`; swallowed try/catch instrumentation;
+  `Eq.mp` forward / `Eq.mpr` BACKWARD; `(0:ℝ)` annotation;
+  `Or.getAppFnArgs` = `#[A, B]`; generic `lt_or_ge` not
+  `Int.lt_or_ge`; `mkConstWithFreshMVarLevels`-style raw consts as
+  mkAppM args fail — pin via mkAppOptM (Left.neg_pos_iff idiom).
+
+Commits this session: `44e9f04` (nla-14 plan), `72c3b6a` (Slice 1).
+Memory `verus-cad/memory/project_tactus_nonlinear_port.md` appended
+(nla-14 plan + Slice 1).
