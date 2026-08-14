@@ -127,6 +127,11 @@ structure ReifyState where
   defClauses : Array (List Literal × Nat) := #[]
   /-- root clauses. -/
   roots : Array RootEntry := #[]
+  /-- hyps skipped as inert (outside the arithmetic fragment — ∀/∃/
+  unsupported-type comparisons/prop applications; z3's spinoff-inert
+  class: present in the query, never consumed by nlsat). Reported in
+  the SAT-exit message. -/
+  skippedInert : Nat := 0
 
 abbrev RM := StateT ReifyState TacticM
 
@@ -262,7 +267,9 @@ plus the EXPANDED proposition mirroring the form structurally (the
 bridge `orig ↔ expanded` is built separately by `mkNnfIff`; the
 elimination plans navigate the expanded tree). Negations push through
 the Boolean grammar; comparison negations fold into the literal's
-polarity. Unsupported shapes fail loudly. -/
+polarity. Unsupported shapes fail loudly HERE; the phase-1 driver
+decides per hyp whether a failure throws (the goal, div/mod) or skips
+the hyp as inert (nla-15 — z3's spinoff-inert class). -/
 partial def reifyProp (e : Expr) (pol : Bool) : RM FormE := do
   let e := e.consumeMData
   match e with
@@ -1147,12 +1154,36 @@ partial def buildDispatch (bctx : BridgeCtx) (CsE : Expr)
   mkLambdaFVars #[CE, hCE] body
 
 /-- Phase 1: reify + clausify all hypotheses (plus the ℕ nonneg
-clauses, decision 2 — Verus's own z3 encoding adds 0 ≤ n). -/
-def phase1 (hypFvs : Array FVarId) : RM ReifyState := do
+clauses, decision 2 — Verus's own z3 encoding adds 0 ≤ n).
+
+Hyp discipline (nla-15): `strictFvs` (the negated goal `hGN`) and any
+hyp mentioning div/mod (the L1-owned invariant) reify STRICTLY — a
+failure throws with the reifier's own message. All other hyps are
+best-effort: shapes outside the arithmetic fragment (dependent ∀ —
+e.g. the ambient axiom clusters tactus emits into every proof context —
+∃, unsupported-type comparisons, prop applications) are SKIPPED and
+counted, never reified. Skipping is sound (weakening) and z3-faithful:
+the spinoff query carries those facts too, and nlsat never consumes
+them (MBQI off). `internal:`-prefixed failures rethrow — a reify bug
+must never masquerade as an inert hyp. A partially-completed reify may
+leave unused var/atom slots behind (z3's created-but-unused atoms —
+inert: no clause references them, and the walk's precheck compares the
+table against itself). -/
+def mentionsDivMod (e : Expr) : Bool :=
+  (e.find? fun e => e.isAppOf ``HDiv.hDiv || e.isAppOf ``HMod.hMod).isSome
+
+def phase1 (hypFvs : Array FVarId) (strictFvs : Array FVarId) : RM ReifyState := do
   for fv in hypFvs do
     let ty ← instantiateMVars (← fv.getType)
-    let fe ← reifyProp ty true
-    clausify (mkFVar fv) ty fe.2 fe id
+    let strict := strictFvs.contains fv || mentionsDivMod ty
+    try
+      let fe ← reifyProp ty true
+      clausify (mkFVar fv) ty fe.2 fe id
+    catch ex =>
+      let msg ← ex.toMessageData.toString
+      if strict || msg.startsWith "nonlinear_arith: internal:" then
+        throw ex
+      modify fun s => { s with skippedInert := s.skippedInert + 1 }
   for i in [0 : (← get).vars.size] do
     if (← get).varTy[i]! == .nat then
       let nE := (← get).varKeys[i]!
@@ -1182,18 +1213,20 @@ def prelude : TacticM (Option (MVarId × ReifyState)) := do
     g.assign (mkConst ``True.intro)
     replaceMainGoal []
     return none
-  let gFalse ←
-    if target.isConstOf ``False then pure g
+  let (gFalse, strictFvs) ←
+    if target.isConstOf ``False then pure (g, #[])
     else do
       let [g'] ← g.apply (mkConst ``Classical.byContradiction)
         | throwError "nonlinear_arith: internal: byContradiction shape"
-      let (_, g'') ← g'.intro `hGN
-      pure g''
+      let (hgn, g'') ← g'.intro `hGN
+      pure (g'', #[hgn])
   gFalse.withContext (n := TacticM) do
     -- phase 1: reify + clausify all hyps (hGN included — its `Not` flips
-    -- to the goal at negative polarity inside reifyProp)
+    -- to the goal at negative polarity inside reifyProp — and STRICT:
+    -- the goal itself must always reify; other hyps may be skipped as
+    -- inert, see phase1)
     let hypFvs ← gFalse.getNondepPropHyps
-    let st ← (phase1 hypFvs).run' {}
+    let st ← (phase1 hypFvs strictFvs).run' {}
     return some (gFalse, st)
 
 /-- Phase 2 + final assembly, parameterized on the atom table, the
@@ -1417,8 +1450,14 @@ unsafe def orchestrate : TacticM OrchestrateExit := do
       if st.varTy.any (· != .real) then
         m!"\n(note: the model is over ℝ — it need not specialize to the integer-valued vars)"
       else m!""
+    let skipNote : MessageData :=
+      if st.skippedInert == 1 then
+        m!"\n(note: 1 hypothesis outside the arithmetic fragment was ignored — it may rule this model out)"
+      else if st.skippedInert > 1 then
+        m!"\n(note: {st.skippedInert} hypotheses outside the arithmetic fragment were ignored — they may rule this model out)"
+      else m!""
     throwError "nonlinear_arith: satisfiable — the negated goal has a model, \
-      so the goal is not provable:{intNote}\n{MessageData.joinSep lines.toList "\n"}"
+      so the goal is not provable:{intNote}{skipNote}\n{MessageData.joinSep lines.toList "\n"}"
   | _ =>
     throwError "nonlinear_arith: nlsat search exited undef (fragment gate or bound)"
   return .refuted

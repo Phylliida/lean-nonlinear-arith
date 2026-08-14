@@ -477,10 +477,28 @@ boundary hard-fails — byte-identical to the nla_solve surface. -/
 #guard_msgs (error) in
 example (x : ℤ) (h : x / 2 * 2 = x) : False := by nonlinear_arith
 
-/- Corrupted-context rejection: a hypothesis outside the reify grammar
-(an existential) is a loud error, never a silent drop. -/
+/- Inert-hyp skipping (nla-15): a hyp outside the arithmetic fragment
+(an ∃ here; dependent ∀ is the ambient-axiom class tactus emits into
+every proof context) is SKIPPED — z3's spinoff carries such facts and
+nlsat never consumes them; skipping is sound weakening. The goal still
+closes from the arithmetic content alone. -/
+run_cmd nlaL2Runs.set 0
+example (x : ℝ) (h : ∃ y : ℝ, x < y) (h2 : x * x < 0) : False := by nonlinear_arith
+run_cmd do unless (← nlaL2Runs.get) == 1 do
+  throwError "the inert-hyp driver did not take the L2 path"
+
+/- … and on a genuinely-SAT goal the skip is DISCLOSED in the model
+error (a skipped hyp may rule the model out). -/
+/-- error: nonlinear_arith: satisfiable — the negated goal has a model, so the goal is not provable:
+(note: 1 hypothesis outside the arithmetic fragment was ignored — it may rule this model out)
+  x := 1/2 -/
+#guard_msgs (error) in
+example (x : ℝ) (h : ∀ y : ℝ, y < y + 1) (h0 : x ≥ 0) : x ≥ 1 := by nonlinear_arith
+
+/- The GOAL stays strict: an unsupported goal shape is a loud failure,
+never a skip (skipping hGN would change the meaning of the query). -/
 /-- error: nonlinear_arith: unsupported hypothesis shape: ∃ y, x < y -/
 #guard_msgs (error) in
-example (x : ℝ) (h : ∃ y : ℝ, x < y) : x * x < 0 := by nonlinear_arith
+example (x : ℝ) (h : x ≥ 0) : ∃ y : ℝ, x < y := by nonlinear_arith
 
 end LeanNonlinearArith.Nlsat.Tests.NonlinearArith
