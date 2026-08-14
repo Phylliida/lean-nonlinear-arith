@@ -69,6 +69,7 @@ infrastructure investment. Status: `todo` / `active` / `done` / `blocked` /
 - [nla-19b Slice 3 design review `done` (2026-08-13; divergence/regret audit — R-iii pd-binary-differential + R-iv intBranch grammar boarded)](board/nla-19b-slice-3-design-review.md) `done`
 - [nla-12e plan `done` (2026-08-13, planning sweep — G6 integer B&B; decisions 1–2 Danielle-resolved same day)](board/nla-12e-plan.md) `done`
 - [nla-12e `done` (2026-08-13, ONE session) — integer B&B ported end-to-end; G6 closed; isV0 := !isS1Gated (last shape gate lifted)](board/nla-12e-done.md) `done`
+- [nla-14 plan `active` (2026-08-13 eve, planning sweep — the `nonlinear_arith` tactic; decisions 1–5 RESOLVED by Danielle's standing principles incl. performance-parity: full Boolean structure via TSEITIN proxies (z3's mechanism; bool vars already ported search-side, checker-side `Atom.bool` + BoolForm reflection is the new trusted component), SAT-model display in scope)](board/nla-14-plan.md) `active`
 - [nla-19a design review 8 `done` (2026-08-09, post-G1/G2/G3; Danielle-requested gap audit)](board/nla-19a-design-review-8.md) `done`
 - [nla-19a design review 9 `done` (2026-08-09; Danielle-requested: can R-a/R-b/R-c be fixed to full z3 parity?)](board/nla-19a-design-review-9.md) `done`
 - [nla-19a design review 10 `done` (2026-08-09; R-a FULL — Danielle's standing directive: cover ALL cases, never …](board/nla-19a-design-review-10.md) `done`
