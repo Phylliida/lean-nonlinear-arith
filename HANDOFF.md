@@ -5,12 +5,19 @@
 # 1 verified/0 errors (nlinarith structurally can't close it); fixture
 # at its pre-existing baseline. Review R-i fixed same-day
 # (message-classified skip; pre-scan deleted).
-# Next = nla-16 (parity harness) = M6. **PLAN BOARDED 2026-08-14 eve:
-# board/nla-16-plan.md** — recon + census (16 crates, ~2,613 sites),
-# owned-items→slice map, decisions 1–5 for Danielle, slices 0–3.
-# Commit d659a75.
+# **nla-16 Slice 0 DONE (2026-08-14 eve)** — tools/parity suite +
+# NLA16_STATS stats channel (post-hoc per-obligation harvest);
+# pilot: 6/44 violations, ALL 800k-whnf timeouts, arm-ATTRIBUTED by
+# bisect (nonlinear_arith is the sink); o139 post-hoc shows
+# `layer=2 conflicts=6` = z3-4.12.5 exactly. Census re-cut:
+# 15 crates/~2,595 sites (comment-mention inflation; qext=0).
+# Next = nla-16 Slice 1 (R-iii pd-driver differential probes via
+# /tmp/z3-4.12.5) and/or Slice 2 (full-corpus run) — Slice-1 is
+# parallel-safe; Slice-2 decisions sharpened at the Slice-0 close-out.
 
-Read first: `board/nla-14-plan.md` (the nla-14 spec, decisions 1–5),
+Read first: `board/nla-16-slice-0-mechanics.md` (Slice 0: mechanisms,
+PF-1, traps), then `board/nla-16-plan.md` (plan, decisions 1–5
+resolved, census corrected). Older: `board/nla-14-plan.md` (the nla-14 spec, decisions 1–5),
 then `board/nla-14-slice-4-tactic-acceptance.md` (plan + close-out —
 D1 dev elabs stay / D2 round numeral mirrors nla_saturate / D3 no
 maxConflicts threading, all resolved by the standing principles;
