@@ -30,10 +30,15 @@ Everything here is UNTRUSTED meta code: it produces proof terms the
 kernel re-checks against the trusted layer (`Assemble`/`Check`).
 Failure is a tactic failure — sound rejection, never unsound acceptance.
 
-The deliverable is `toRefutationGoal`: the main goal `Γ ⊢ G` becomes
-`⊢ ∀ ρ, (integrality hyps) → (∀ C ∈ Cs, clauseHolds ρ atoms C) → False`
-— the exact shape `Walk.walkRefutation` consumes (Slice 3 runs the
-solver and walks; Slice-2 pins close the refutation goal by hand).
+The deliverables: `toRefutationGoal` (Slice 2) reduces the main goal
+`Γ ⊢ G` to the walk's refutation goal
+`∀ ρ, (integrality hyps) → (∀ C ∈ Cs, clauseHolds ρ atoms C) → False`;
+`orchestrate` (Slice 3, the `nla_solve` dev tactic) runs the full
+pipeline — reify → register → `Solver.checkCapturing` (the permutation
+seam; decision A) → proxy-def patch → referenced-inputs Cs rebuild →
+bridges against the PATCHED internal-order table →
+`Walk.walkRefutation` — closing the goal end-to-end, with the SAT-exit
+model display (decision 4) and the undef bounded-exit error.
 -/
 
 namespace LeanNonlinearArith.Nlsat.Frontend
@@ -529,9 +534,13 @@ def mkAlign (bctx : BridgeCtx) (p : MPoly) (diffE : Expr) : TacticM Expr := do
     setGoals [m.mvarId!]
     let r ← tryCatchRuntimeEx
       (do
+        -- `try` each step: simp can fully close linear alignments
+        -- (Slice-3, o139: `evalP ρ* [(-1,[(1,1)])] = 0 - da` closes by
+        -- reduction), and a trailing step on zero goals must not fail
+        -- the sandbox.
         evalTactic (← `(tactic| simp [Check.evalP, Check.evalM]))
-        evalTactic (← `(tactic| push_cast))
-        evalTactic (← `(tactic| ring))
+        evalTactic (← `(tactic| try push_cast))
+        evalTactic (← `(tactic| try ring))
         let pf ← instantiateMVars m
         if pf.hasMVar then return none
         return some pf)
@@ -634,13 +643,19 @@ def mkLitIff (bctx : BridgeCtx) (lit : Literal) : TacticM Expr := do
       let t2 ← mkIffSymm (← notLt castA castB)
       mkIffTrans t1 (← mkIffTrans t2 (← mkNotCongr tailChain))
     | .le, false =>
-      let t1 ← mkIffSymm (← castLinkLe info.a info.b)
-      let t2 ← mkIffSymm (← notLt castB castA)
-      mkNotCongr (← mkIffTrans t1 (← mkIffTrans t2 (← mkNotCongr tailChain)))
+      -- ¬(a ≤ b) ↔ litHolds ⟨b,false⟩ (positive gt atom): not_congr on
+      -- the cast link, then not_le, then the tail. (Kernel-caught at
+      -- o139: the pre-Slice-3 arm double-negated to ¬¬litHolds.)
+      let t1 ← mkNotCongr (← mkIffSymm (← castLinkLe info.a info.b))
+      let t2 ← mkAppOptM ``not_le
+        #[some (mkConst ``Real), none, some castA, some castB]
+      mkIffTrans t1 (← mkIffTrans t2 tailChain)
     | .ge, false =>
-      let t1 ← mkIffSymm (← castLinkLe info.b info.a)
-      let t2 ← mkIffSymm (← notLt castA castB)
-      mkNotCongr (← mkIffTrans t1 (← mkIffTrans t2 (← mkNotCongr tailChain)))
+      -- ¬(a ≥ b) = ¬(b ≤ a) ↔ litHolds ⟨b,false⟩ (positive lt atom).
+      let t1 ← mkNotCongr (← mkIffSymm (← castLinkLe info.b info.a))
+      let t2 ← mkAppOptM ``not_le
+        #[some (mkConst ``Real), none, some castB, some castA]
+      mkIffTrans t1 (← mkIffTrans t2 tailChain)
   -- (the CmpKind.ne case shares .eq's atom with baseNeg — covered by the
   -- (_, false)/(_, true) split via posChain/not_congr)
   let litE := Refute.litToExpr lit
@@ -1311,6 +1326,8 @@ unsafe def orchestrate : TacticM Unit := do
   -- on the post-registration state below, in TacticM)
   let reg : SolverM Unit := do
     Solver.init
+    for i in [0:st.vars.size] do
+      let _ ← Solver.mkVar (st.varTy[i]! != .real)
     for slot in [1:st.atoms.size] do
       match st.atoms[slot]! with
       | some (.ineq ia) => let _ ← Solver.mkIneqAtom ia
@@ -1325,10 +1342,11 @@ unsafe def orchestrate : TacticM Unit := do
   let ((), sReg) := reg.run Solver.empty
   -- hash-cons collapse guard (mkIneqAtom dedups structurally — the
   -- frontend's arithMap should already prevent it; fail loud if not)
-  unless sReg.atoms.size == st.atoms.size &&
+  unless sReg.isInt.size == st.vars.size && sReg.atoms.size == st.atoms.size &&
       sReg.clauses.size == 1 + st.defClauses.size + st.roots.size do
     throwError "nonlinear_arith: internal: solver registration misaligned \
-      ({sReg.atoms.size} atoms vs {st.atoms.size}, {sReg.clauses.size} clauses vs \
+      ({sReg.isInt.size} vars vs {st.vars.size}, {sReg.atoms.size} atoms vs \
+      {st.atoms.size}, {sReg.clauses.size} clauses vs \
       {1 + st.defClauses.size + st.roots.size})"
   for slot in [1:st.atoms.size] do
     unless (sReg.atoms[slot]! == st.atoms[slot]! ||
@@ -1374,10 +1392,10 @@ unsafe def orchestrate : TacticM Unit := do
       if x < st.varKeys.size then
         let key := st.varKeys[x]!
         let vStr : String := match sFin.store[cid]! with
-          | .rat q => s!"{repr q}"
+          | .rat q => toString q
           | v@(.root ..) =>
             match Kernel.RAlg.refineUntilPrec v 10 with
-            | .rat q => s!"{repr q}"
+            | .rat q => toString q
             | .root p a b _ => s!"root of {repr p} in [{a}, {b}]"
         lines := lines.push m!"  {key} := {vStr}"
     let intNote : MessageData :=

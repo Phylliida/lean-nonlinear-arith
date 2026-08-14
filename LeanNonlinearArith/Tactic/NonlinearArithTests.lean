@@ -87,7 +87,216 @@ example (x y : ℝ) : ¬ (x * x < 0 ∨ y * y < 0) := by
     linarith
 
 /- div/mod never reach L2 (the L1-owned invariant): hard fail. The
-error-surface pin (`#guard_msgs (error) in example …`) lands with the
-Slice-4 error-reporting work. -/
+error-surface pin: div in a hypothesis is rejected at reify. -/
+/-- error: nonlinear_arith: div reaches the L2 frontend — the L1-owned invariant is broken: x / 2 -/
+#guard_msgs (error) in
+example (x : ℤ) (h : x / 2 * 2 = x) : False := by nla_solve
 
 end LeanNonlinearArith.Nlsat.Tests.Frontend
+
+/-! ## nla-14 Slice 3 pins — quote+orchestrate, NO hand-written snapshot
+
+Each `nla_solve` example runs reify → register → solve → patch →
+bridge → walk end-to-end: the solver's refutation snapshot is quoted
+and kernel-checked by `Walk.walkRefutation`. -/
+
+namespace LeanNonlinearArith.Nlsat.Tests.Orchestrate
+
+open LeanNonlinearArith.Nlsat
+
+/-- sq in user syntax, closed by the solver+walk (no hand-written
+snapshot — the WalkTests sq pin's data pipeline replaced end-to-end). -/
+example (x y : ℝ) (h : x * x + y * y < 0) : False := by
+  nla_solve
+
+/-- The disjunctive path through search: Tseitin-free two-literal
+clause, CDCL resolves against the negated-goal units. -/
+example (x y : ℝ) (h : x * x < 0 ∨ y * y < 0) : False := by
+  nla_solve
+
+/-- The proxy path through search: `∧` under `∨` forces a Tseitin
+proxy whose definitional clauses enter the solver as inputs; the
+refutation's learned clauses carry the proxy literal (D-1). -/
+example (x : ℝ) (h : (x ≥ 1 ∧ x < 1) ∨ x * x < 0) : False := by
+  nla_solve
+
+/-- int1 in user syntax: the 12e branch-and-bound path (intBranch
+steps, integrality hyp discharge) from a bare ℤ equation. -/
+example (x : ℤ) (h : x * x = 2) : False := by
+  nla_solve
+
+/-- int2 in user syntax: two integer vars, two rounds of splits. The
+trace references the x-side inputs only — the post-run Cs rebuild to
+the REFERENCED inputs (precheck's contract) is load-bearing here. -/
+example (x y : ℤ) (hx : x * x = 2) (hy : y * y = 3) : False := by
+  nla_solve
+
+/- Genuine-SAT goal: clean error WITH the per-var model display
+(decision 4) — never a wrong close. -/
+/-- error: nonlinear_arith: satisfiable — the negated goal has a model, so the goal is not provable:
+  x := 1/2 -/
+#guard_msgs (error) in
+example (x : ℝ) (h : x ≥ 0) : x ≥ 1 := by
+  nla_solve
+
+/-- Reorder exercised end-to-end: y has the higher degree, so z3's
+`reorder_lt` swaps the var order — the snapshot's atoms are in
+INTERNAL order, and the captured permutation drives ρ*/integrality
+assembly (Slice-3 decision A). -/
+example (x y : ℝ) (h1 : x < y * y) (h2 : y * y < x - 1) : False := by
+  nla_solve
+
+/- The reorder pin at the solver seam: the captured perm is
+non-identity (`perm[internal] = external`) on the same input. -/
+#guard
+  let prog : SolverM (Option LBool × Array Var) := do
+    Solver.init
+    let _ ← Solver.mkVar false  -- x (deg 1)
+    let _ ← Solver.mkVar false  -- y (deg 2)
+    let l1 ← Solver.mkIneqLiteral ⟨.lt, [([(1, [(0, 1)]), ((-1), [(1, 2)])], false)]⟩
+    let _ ← Solver.mkClause #[l1] false
+    let l2 ← Solver.mkIneqLiteral ⟨.lt, [([(1, [(1, 2)]), ((-1), [(0, 1)]), (1, [])], false)]⟩
+    let _ ← Solver.mkClause #[l2] false
+    Solver.checkCapturing (Solver.resolve Explain.explain)
+  let ((r, perm), _) := prog.run Solver.empty
+  r == some .false && perm == #[1, 0]
+
+/- o139 in user syntax — the 6-var transitivity-of-fractions census
+goal through the full pipeline (reorder live, rootGeneric/cellBound/
+factorSplit steps in the walked trace). (Raised budget: reify+bridge+
+walk+kernel recheck in one tactic; Slice 4's per-layer heartbeats own
+the production budgeting.) -/
+set_option maxHeartbeats 800000 in
+example (a b c da db dc : ℝ)
+    (h1 : a * db ≤ b * da) (h2 : b * dc ≤ c * db)
+    (h3 : 0 < da) (h4 : 0 < db) (h5 : 0 < dc) :
+    a * dc ≤ c * da := by
+  nla_solve
+
+/-! ## D-1 + foreign-`.arith`-with-proxy probe infrastructure -/
+
+/-- The proxy driver `(x : ℝ) (h : (x ≥ 1 ∧ x < 1) ∨ x*x < 0)`,
+registered exactly as the frontend does: atom 1 = `lt (x−1)`, atom 2 =
+`lt (x²)`, bvar 3 = the Tseitin proxy over the shared atom. -/
+private def proxyDriverRun : SolverM (Option LBool × Array Var) := do
+  Solver.init
+  let _ ← Solver.mkVar false
+  let _ ← Solver.mkIneqAtom ⟨.lt, [([(1, [(0, 1)]), (-1, [])], false)]⟩
+  let _ ← Solver.mkIneqAtom ⟨.lt, [([(1, [(0, 2)])], false)]⟩
+  let _ ← Solver.mkBoolVar
+  let _ ← Solver.mkClause #[⟨3, true⟩, ⟨1, true⟩] false
+  let _ ← Solver.mkClause #[⟨3, true⟩, ⟨1, false⟩] false
+  let _ ← Solver.mkClause #[⟨3, false⟩, ⟨1, false⟩, ⟨1, true⟩] false
+  let _ ← Solver.mkClause #[⟨3, false⟩, ⟨2, false⟩] false
+  Solver.checkCapturing (Solver.resolve Explain.explain)
+
+/-- The driver's refutation snapshot (computed by the solver at compile
+time — the "no hand transcription" rule), with the proxy's `.bool` def
+patched into slot 3 (the orchestrate patch). -/
+private def proxyDriverSnap : Walk.SnapshotTy :=
+  let ((_, _), s) := proxyDriverRun.run Solver.empty
+  match s.refutation with
+  | some snap => (snap.1.set! 3
+      (some (.bool (.and (.neg (.lit ⟨1, false⟩)) (.lit ⟨1, false⟩)))),
+    snap.2.1, snap.2.2.1, snap.2.2.2)
+  | none => (#[], #[], #[], {})
+
+/- D-1 solver-side: the proxy driver's refutation LEARNS clauses over
+the proxy bvar (z3's Tseitin proxies participate in CDCL search — this
+is why decision 1's in-nlsat proxies are load-bearing) and the final
+bundle resolves them. The nla_solve pin above walks exactly this
+snapshot shape through the patched table. -/
+#guard
+  let ((r, _), s) := proxyDriverRun.run Solver.empty
+  match s.refutation with
+  | none => false
+  | some (_, clauses, _, fin) =>
+    r == some .false &&
+    ((List.range clauses.size).filter fun cid =>
+      clauses[cid]!.learned && clauses[cid]!.lits.any (·.bvar == 3)) == [5, 6] &&
+    (match fin.steps.toList with
+      | [.resolution (.clause 6), .resolution (.clause 5)] => true
+      | _ => false)
+
+/-- RUP-invariant poisoning: replace a `.resolution (.clause cid)`
+antecedent of a proxy-carrying input clause by a FOREIGN `.arith`
+marker whose clause VALUE is identical (`proj ++ core.negate` =
+`clauses[cid].lits`). precheck's F-set/RUP checks are unaffected — the
+rejection must come from the arith discharge. -/
+private def poisonStep (clauses : Array Clause) (bundles : Array (Option TraceBundle))
+    (proxy : Nat) : TraceStep → Option TraceStep
+  | .resolution (.clause cid) =>
+    if cid < bundles.size && bundles[cid]!.isNone &&
+        clauses[cid]!.lits.any (·.bvar == proxy) then
+      some (.resolution (.arith (clauses[cid]!.lits.map Literal.negate) #[]))
+    else none
+  | _ => none
+
+/-- Poison the first poisonable step of a bundle, if any. -/
+private def poisonBundle (clauses : Array Clause) (bundles : Array (Option TraceBundle))
+    (proxy : Nat) (b : TraceBundle) : Option TraceBundle := Id.run do
+  let mut steps : List TraceStep := []
+  let mut found := false
+  for st in b.steps.toList do
+    if !found then
+      match poisonStep clauses bundles proxy st with
+      | some st' => steps := st' :: steps; found := true
+      | none => steps := st :: steps
+    else
+      steps := st :: steps
+  if found then return some { b with steps := steps.reverse.toArray }
+  else return none
+
+/-- The poisoned snapshot: first proxy-carrying input-clause antecedent
+(learned bundles in cid order, then the final bundle) replaced by the
+foreign `.arith` marker. -/
+private def corruptSnap : Walk.SnapshotTy := Id.run do
+  let (atoms, clauses, bundles, fin) := proxyDriverSnap
+  let mut bundles := bundles
+  let mut fin := fin
+  let mut done := false
+  for i in [:bundles.size] do
+    if !done then
+      if let some b := bundles[i]! then
+        if let some b' := poisonBundle clauses bundles 3 b then
+          bundles := bundles.set! i b'
+          done := true
+  if !done then
+    match poisonBundle clauses bundles 3 fin with
+    | some f' => fin := f'
+    | none => pure ()
+  return (atoms, clauses, bundles, fin)
+
+/-- The corrupt snapshot's referenced inputs (the goal's `Cs` must equal
+these — the walk's input-clause contract). -/
+private def corruptCs : List (List Literal) :=
+  (Frontend.referencedInputs corruptSnap.2.1 corruptSnap.2.2.1
+    corruptSnap.2.2.2).toList.map fun cid => corruptSnap.2.1[cid]!.lits.toList
+
+/- Foreign `.arith`-with-proxy: sound rejection. The poisoned `.arith`
+marker mentions the proxy literal; `extractFacts` has no `.bool` lane,
+so the proxy is skipped, the arith glue fails, and the walk rejects —
+never an unsound accept. -/
+/-- error: nlsat_refute: arith lemma [{ bvar := 3, neg := false },
+ { bvar := 2, neg := false }] failed to discharge: Application type mismatch: The argument
+  h_i
+has type
+  litSatI (interp ρ corruptSnap.1) { bvar := 2, neg := false } → False
+but is expected to have type
+  ¬Check.IneqAtom.Holds ρ { kind := IneqKind.lt, factors := [([(1, [(0, 2)])], false)] }
+in the application
+  mt (Check.holds_single_lt ρ [(1, [(0, 2)])]).mpr h_i -/
+#guard_msgs (error) in
+example : ∀ ρ : Nat → ℝ,
+    (∀ C ∈ corruptCs, clauseHolds ρ corruptSnap.1 C) → False := by
+  nlsat_refute corruptSnap
+
+/- undef exit at the solver seam: conflict budget exhausted
+(`maxConflicts := 0`, so the first resolved conflict trips the z3
+budget check, Solver.lean:835) — the orchestrate catch-all reports
+this as the bounded-exit error, never a wrong close. -/
+#guard
+  let ((r, _), _) := proxyDriverRun.run { Solver.empty with maxConflicts := 0 }
+  r == some .undef
+
+end LeanNonlinearArith.Nlsat.Tests.Orchestrate

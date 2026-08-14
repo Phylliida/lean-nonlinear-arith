@@ -1,4 +1,4 @@
-## nla-14 Slice 3 `planning` (2026-08-14) — quote + orchestrate
+## nla-14 Slice 3 `done` (2026-08-14) — quote + orchestrate
 
 Pre-implementation planning sweep, interface inventory verified against
 the tree at `fd87598` (build green 7614, tree clean). Sources:
