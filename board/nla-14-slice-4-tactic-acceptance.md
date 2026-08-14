@@ -144,3 +144,62 @@ Then nla-14 `done` → nla-15 (tactus wiring, ½) → nla-16 (parity
 harness; owns G8/G9/G10 + the R-iii probes + the mk_ineq_atom
 normalization gap + glue-subsumption watch) = M6. Q7 open: re-offer 11a
 (resultants) as the interleave lane.
+
+---
+
+## Close-out (2026-08-14, same day) — LANDED, build green 7615
+
+**Landed as planned.** `Tactic/NonlinearArith.lean` gains the Saturate
+import (acyclic — Saturate imports Templates/Oracle only), the
+`nlaL2Runs`/`nlaL2Conflicts` refs (bumped inside `orchestrate` — its
+only change), `nonlinearArithCore` (the §2.7 layering: saveState →
+tryCatchRuntimeEx(withLayerHeartbeats saturateCore + g0.isAssigned
+check) → on failure full restoreState + withLayerHeartbeats
+orchestrate), and the `nonlinear_arith (n)?` / `nonlinear_arith_stats
+(n)?` elabs (D2: the numeral forwards to L1's maxRounds only). No
+existing pin touched; full build green 7615.
+
+**Probe-verified layer assignments (scratch_layerprobe.lean):** int1,
+int2, AND the R-iii driver close in L1 (the mined `x*x = 2`
+down-propagates to |x| ≤ 1 and the corner refutation fires — no B&B
+needed); the ℝ drivers, the ℕ driver, and o139 fall to L2. The
+probe-first rule caught a real coverage hole in the plan: the planned
+"int1/int2 through the 12e B&B path" acceptance would have been a
+no-op. It is carried instead by the NEW driver `x*(x+1) = 3` (real
+root (−1+√13)/2, no integer one; L1 bounds x only one-sidedly from the
+equation) plus its two-variable reorder variant (perm = #[1,0],
+intBranch discharging at the internal index — the R-iii interaction
+through the layering).
+
+**Pins (Tests.NonlinearArith):** L1-never-touches-L2 (run_cmd counter
+sandwich), tangent specimen with the round numeral, int1-L1, sq-L2 +
+the byte-exact `nonlinear_arith_stats` layer line (4 conflicts — L1
+throws before its stats print, so the layer line is the only info
+message), the disj/proxy/int2/reorder/ℕ acceptance sweep, both B&B
+drivers, o139 end-to-end through the layering (budget on the test,
+fresh per layer), the True short-circuit, the SAT model display and
+div/mod hard-fail byte-identical to their nla_solve surfaces, and the
+new unsupported-hyp-shape rejection (an ∃ hyp — loud, never a silent
+drop).
+
+**Catches worth the books:**
+- **run_cmd counter sandwiches** are the pin mechanism for
+  tactic-internal state: IO.Ref instrumentation set inside the tactic,
+  reset/read by `run_cmd` around the example — deterministic because
+  command elaboration is sequential. (`#guard_msgs` can't pin L1's
+  stats line — it carries wall-clock ms.)
+- **Probe before pinning layers** (the standing lesson, again): two of
+  the plan's assumed-L2 drivers turned out L1-closable; asserting the
+  planned layer would have silently DELETED the B&B acceptance
+  coverage.
+- The registration-order hyp (`y < x` in the reorder drivers) is
+  genuinely unused by the refutation — the unused-variable lint is
+  correct and the hyp is load-bearing meta-structure; suppress with a
+  comment saying why.
+- `nonlinear_arith_stats` resets ALL counters at entry (mirrors
+  `nla_saturate_stats`) — counter pins must set-then-run, never rely
+  on values across a stats call.
+
+**Next:** Slice-4 design review (Danielle — the divergence/regret
+frame on the layering: rollback fidelity, budget shape, per-driver
+layer assignment), then nla-14 `done` → nla-15 (tactus wiring).
